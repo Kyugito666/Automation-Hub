@@ -1,1 +1,11 @@
+# Abaikan SEMUA yang di-clone saat runtime
+bots/*
+!bots/.gitkeep
 
+proxysync/
+
+# File cache dan rahasia lainnya
+__pycache__/
+.venv/
+*.log
+*.env
