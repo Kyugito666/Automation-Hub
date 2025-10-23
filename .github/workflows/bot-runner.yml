@@ -1,0 +1,61 @@
+name: Bot Runner 24/7 (Self-Healing)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+jobs:
+  run-all-bots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: 1. Checkout Framework (Automation-Hub)
+        uses: actions/checkout@v4
+
+      - name: 2. Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: 3. Clone/Pull Semua Bot & Tools
+        run: |
+          pip install -r orchestrator/requirements.txt
+          # Script updater akan clone 'bots/' dan 'proxysync/'
+          python orchestrator/update_bots.py 
+
+      - name: 4. Deploy Proxies (via ProxySync)
+        run: |
+          echo "Menyiapkan ProxySync..."
+          # Salin config lu ke proxysync yang baru di-clone
+          cp config/apilist.txt proxysync/apilist.txt
+          cp config/paths.txt proxysync/paths.txt
+          
+          echo "Menjalankan ProxySync..."
+          cd proxysync
+          pip install -r requirements.txt
+          python main.py # Jalankan proxysync
+          cd ..
+
+      - name: 5. Jalankan Semua Bot
+        run: |
+          echo "--- Memulai Bot PrivateKey ---"
+          BASE_DIR=$PWD/bots/privatekey
+          for bot_dir in $BASE_DIR/*; do
+            if [ -d "$bot_dir" ]; then
+              echo "--- Menjalankan $(basename "$bot_dir") ---"
+              cd "$bot_dir"
+              if [ -f "requirements.txt" ]; then
+                pip install -r requirements.txt
+              fi
+              python run.py &
+              sleep 5
+            fi
+          done
+          # (Loop yang sama untuk bots/token)
+          ...
+          
+          echo "Menunggu semua proses bot selesai..."
+          wait
