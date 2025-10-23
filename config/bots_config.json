@@ -1,1 +1,19 @@
-
+{
+  "bots_and_tools": [
+    {
+      "name": "ProxySync-Tool",
+      "path": "proxysync",
+      "repo_url": "https://github.com/Kyugito666/ProxySync.git"
+    },
+    {
+      "name": "TurnAutoBot-NTE",
+      "path": "bots/privatekey/TurnAutoBot-NTE",
+      "repo_url": "https://github.com/REPO_ORANG_LAIN/TurnAutoBot-NTE.git"
+    },
+    {
+      "name": "AsterAutoBot-NTE",
+      "path": "bots/token/AsterAutoBot-NTE",
+      "repo_url": "https://github.com/REPO_ORANG_LAIN/Aster-Bot.git"
+    }
+  ]
+}
