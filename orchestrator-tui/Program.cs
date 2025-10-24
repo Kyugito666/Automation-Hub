@@ -1,28 +1,24 @@
 using Spectre.Console;
 using System.Linq;
-using System; // <-- Tambahkan using System
+using System;
 
 namespace Orchestrator;
 
 internal static class Program
 {
-    // Flag untuk menandakan Ctrl+C ditekan saat bot interaktif jalan
-    private static bool _interactiveBotCancelled = false;
+    // === UBAH MENJADI PUBLIC STATIC ===
+    public static bool InteractiveBotCancelled = false;
+    // ================================
 
     public static async Task Main(string[] args)
     {
-        // --- TAMBAHKAN HANDLER CTRL+C ---
         Console.CancelKeyPress += (sender, e) =>
         {
             AnsiConsole.MarkupLine("\n[yellow]Ctrl+C terdeteksi. Menghentikan bot saat ini...[/]");
-            // Mencegah aplikasi utama terminate
             e.Cancel = true;
-            // Set flag (meskipun mungkin tidak langsung digunakan, bagus untuk state)
-            _interactiveBotCancelled = true;
-            // Proses anak (bot) akan menerima sinyalnya dan berhenti,
-            // ShellHelper.RunInteractive akan selesai, loop akan lanjut.
+            // Set flag public static
+            InteractiveBotCancelled = true;
         };
-        // --------------------------------
 
         TokenManager.Initialize();
 
@@ -64,10 +60,10 @@ internal static class Program
 
     private static async Task RunInteractive()
     {
-       // ... (Tidak berubah) ...
         while (true)
         {
-            AnsiConsole.Clear();
+            // ... (Tidak berubah) ...
+             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
             AnsiConsole.MarkupLine("[grey]Interactive Proxy Orchestrator - Local Control, Remote Execution[/]");
 
@@ -91,9 +87,9 @@ internal static class Program
                 AnsiConsole.MarkupLine("[green]Goodbye![/]");
                 return;
             }
+            // Reset flag cancel sebelum masuk submenu
+            InteractiveBotCancelled = false;
 
-            // Reset flag cancel sebelum masuk submenu yang mungkin menjalankan bot
-             _interactiveBotCancelled = false;
 
             switch (choice.Split('.')[0])
             {
@@ -112,8 +108,8 @@ internal static class Program
 
     private static async Task ShowSetupMenu()
     {
-        // ... (Tidak berubah) ...
-         while (true)
+       // ... (Tidak berubah) ...
+        while (true)
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
@@ -137,8 +133,8 @@ internal static class Program
             if (selection == "0") return;
 
             bool pause = true;
-             // Reset flag cancel sebelum eksekusi
-             _interactiveBotCancelled = false;
+            // Reset flag cancel sebelum eksekusi
+            InteractiveBotCancelled = false;
             switch (selection)
             {
                 case "1": await CollaboratorManager.ValidateAllTokens(); break;
@@ -155,8 +151,8 @@ internal static class Program
 
     private static async Task ShowLocalMenu()
     {
-        // ... (Tidak berubah) ...
-         while (true)
+       // ... (Tidak berubah) ...
+        while (true)
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Local").Centered().Color(Color.Green));
@@ -178,8 +174,8 @@ internal static class Program
             if (selection == "0") return;
 
             bool pause = true;
-             // Reset flag cancel sebelum eksekusi
-             _interactiveBotCancelled = false;
+            // Reset flag cancel sebelum eksekusi
+            InteractiveBotCancelled = false;
             switch (selection)
             {
                 case "1": await BotUpdater.UpdateAllBots(); break;
@@ -194,9 +190,9 @@ internal static class Program
 
     private static async Task ShowHybridMenu()
     {
-       // ... (Tidak berubah) ...
-         while (true)
+        while (true)
         {
+            // ... (Tidak berubah) ...
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Hybrid").Centered().Color(Color.Blue));
 
@@ -216,8 +212,8 @@ internal static class Program
             if (selection == "0") return;
 
             bool pause = true;
-             // Reset flag cancel sebelum eksekusi
-             _interactiveBotCancelled = false;
+            // Reset flag cancel sebelum eksekusi
+            InteractiveBotCancelled = false;
             switch (selection)
             {
                 case "1": await RunSingleInteractiveBot(); break;
@@ -226,15 +222,17 @@ internal static class Program
             }
 
             // Pause hanya jika tidak cancel dan tidak kembali
-            if (pause && !_interactiveBotCancelled) Pause();
-             _interactiveBotCancelled = false; // Reset lagi setelah pause
+            // === UPDATE LOGIKA PAUSE ===
+            if (pause && !InteractiveBotCancelled) Pause();
+             InteractiveBotCancelled = false; // Reset lagi setelah pause atau skip
+             // ==========================
         }
     }
 
     private static async Task ShowRemoteMenu()
     {
-       // ... (Tidak berubah) ...
-        while (true)
+        // ... (Tidak berubah) ...
+         while (true)
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Remote").Centered().Color(Color.Red));
@@ -255,8 +253,8 @@ internal static class Program
             if (selection == "0") return;
 
             bool pause = true;
-             // Reset flag cancel sebelum eksekusi
-             _interactiveBotCancelled = false;
+            // Reset flag cancel sebelum eksekusi
+            InteractiveBotCancelled = false;
             switch (selection)
             {
                 case "1": await GitHubDispatcher.TriggerAllBotsWorkflow(); break;
@@ -270,8 +268,8 @@ internal static class Program
 
     private static async Task ShowDebugMenu()
     {
-        // ... (Tidak berubah) ...
-         while (true)
+       // ... (Tidak berubah) ...
+        while (true)
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Debug").Centered().Color(Color.Grey));
@@ -291,17 +289,19 @@ internal static class Program
             if (selection == "0") return;
 
             bool pause = true;
-             // Reset flag cancel sebelum eksekusi
-             _interactiveBotCancelled = false;
+            // Reset flag cancel sebelum eksekusi
+            InteractiveBotCancelled = false;
             switch (selection)
             {
                 case "1": await TestLocalBot(); break;
                 default: pause = false; break;
             }
 
-             // Pause hanya jika tidak cancel dan tidak kembali
-            if (pause && !_interactiveBotCancelled) Pause();
-             _interactiveBotCancelled = false; // Reset lagi setelah pause
+            // Pause hanya jika tidak cancel dan tidak kembali
+            // === UPDATE LOGIKA PAUSE ===
+            if (pause && !InteractiveBotCancelled) Pause();
+            InteractiveBotCancelled = false; // Reset lagi setelah pause atau skip
+            // ==========================
         }
     }
 
@@ -315,13 +315,12 @@ internal static class Program
     // METHOD HELPER
     // =================================================================
 
-    // Objek dummy untuk representasi "Back"
     private static readonly BotEntry BackOption = new() { Name = "[[Back]] Kembali", Type = "SYSTEM" };
 
     private static async Task RunSingleInteractiveBot()
     {
-        // ... (Tidak berubah) ...
-        var config = BotConfig.Load();
+       // ... (Tidak berubah) ...
+         var config = BotConfig.Load();
         if (config == null) return;
 
         var bots = config.BotsAndTools
@@ -349,15 +348,14 @@ internal static class Program
         if (selectedBot == BackOption) return;
 
         // Reset flag sebelum menjalankan bot
-        _interactiveBotCancelled = false;
+        InteractiveBotCancelled = false;
         await InteractiveProxyRunner.CaptureAndTriggerBot(selectedBot);
-        // Tidak perlu cek _interactiveBotCancelled di sini, biarkan kembali ke menu
     }
 
     private static async Task RunAllInteractiveBots()
     {
-        // ... (Bagian awal tidak berubah) ...
-         var config = BotConfig.Load();
+       // ... (Bagian awal tidak berubah) ...
+        var config = BotConfig.Load();
         if (config == null) return;
 
         var bots = config.BotsAndTools
@@ -373,7 +371,7 @@ internal static class Program
 
         AnsiConsole.MarkupLine($"[cyan]Found {bots.Count} active bots (Sorted Alphabetically)[/]");
         AnsiConsole.MarkupLine("[yellow]WARNING: This will run all bots locally for input capture.[/]");
-        AnsiConsole.MarkupLine("[grey]You can press Ctrl+C during a bot's run to skip to the next.[/]"); // Hint Ctrl+C
+        AnsiConsole.MarkupLine("[grey]You can press Ctrl+C during a bot's run to skip to the next.[/]");
 
         if (!AnsiConsole.Confirm("Continue?"))
             return;
@@ -383,8 +381,8 @@ internal static class Program
 
         foreach (var bot in bots)
         {
-            // Reset flag _sebelum_ menjalankan setiap bot
-            _interactiveBotCancelled = false;
+            // Reset flag sebelum menjalankan setiap bot
+            InteractiveBotCancelled = false;
 
             AnsiConsole.Write(new Rule($"[cyan]{bot.Name}[/]").Centered());
 
@@ -394,47 +392,51 @@ internal static class Program
                 await InteractiveProxyRunner.CaptureAndTriggerBot(bot);
 
                 // Cek flag *setelah* bot selesai/di-cancel
-                if (!_interactiveBotCancelled)
+                // === UPDATE PENGECEKAN FLAG ===
+                if (InteractiveBotCancelled)
                 {
-                    // Hanya hitung sukses jika tidak di-cancel
-                    successCount++;
-                } else {
-                    // Jika di-cancel, anggap gagal/skipped
                     failCount++;
                     AnsiConsole.MarkupLine("[yellow]Skipped due to Ctrl+C.[/]");
+                } else {
+                    // Hanya hitung sukses jika TIDAK di-cancel
+                     // (Kita asumsikan CaptureAndTriggerBot berhasil jika tidak ada exception & tidak dicancel,
+                     //  meskipun mungkin inputnya kosong)
+                    successCount++;
                 }
+                // =============================
             }
             catch (Exception ex)
             {
                 AnsiConsole.MarkupLine($"[red]Error: {ex.Message}[/]");
                 failCount++;
+                 // Jika error, pastikan flag cancel direset agar pause muncul
+                 InteractiveBotCancelled = false;
             }
 
             // Tampilkan prompt 'next' hanya jika TIDAK di-cancel DAN bukan bot terakhir
-            if (!_interactiveBotCancelled && bot != bots.Last())
+            // === UPDATE LOGIKA NEXT PROMPT ===
+            if (!InteractiveBotCancelled && bot != bots.Last())
             {
                 AnsiConsole.MarkupLine("\n[dim]Press Enter for next bot...[/]");
                 Console.ReadLine();
             }
-            else if (_interactiveBotCancelled)
+            else if (InteractiveBotCancelled)
             {
-                // Jika di-cancel, langsung lanjut ke bot berikutnya tanpa enter
                 AnsiConsole.MarkupLine("\n[grey]Continuing to next bot...[/]");
-                await Task.Delay(1000); // Jeda singkat
+                await Task.Delay(500); // Jeda lebih singkat
             }
-             // Jika bot terakhir (baik sukses maupun cancel), loop akan selesai
+            // ==============================
         }
 
         AnsiConsole.MarkupLine($"\n[bold]Summary:[/]");
-        AnsiConsole.MarkupLine($"[green]✓ Completed/Attempted: {successCount}[/]"); // Ubah label sukses
-        AnsiConsole.MarkupLine($"[yellow]✗ Skipped/Failed: {failCount}[/]"); // Ubah label gagal
+        AnsiConsole.MarkupLine($"[green]✓ Completed/Attempted: {successCount}[/]");
+        AnsiConsole.MarkupLine($"[yellow]✗ Skipped/Failed: {failCount}[/]");
     }
-
 
     private static async Task TestLocalBot()
     {
-        // ... (Tidak berubah) ...
-        var config = BotConfig.Load();
+       // ... (Tidak berubah) ...
+         var config = BotConfig.Load();
         if (config == null) return;
 
         var bots = config.BotsAndTools
@@ -461,8 +463,8 @@ internal static class Program
 
         if (selectedBot == BackOption) return;
 
-         // Reset flag sebelum menjalankan bot
-        _interactiveBotCancelled = false;
+        // Reset flag sebelum menjalankan bot
+        InteractiveBotCancelled = false;
 
         var botPath = Path.Combine("..", selectedBot.Path);
         if (!Directory.Exists(botPath))
@@ -484,6 +486,5 @@ internal static class Program
         AnsiConsole.MarkupLine("[dim]This is a test run. No remote execution.[/]\n");
 
         await ShellHelper.RunInteractive(executor, args, botPath);
-         // Setelah selesai (atau di-cancel), biarkan kembali ke menu debug
     }
 }
