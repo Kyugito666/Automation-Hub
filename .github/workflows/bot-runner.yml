@@ -20,6 +20,12 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
+      - name: 2b. Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
       - name: 3. Install jq (JSON Parser)
         run: sudo apt-get update && sudo apt-get install -y jq
 
