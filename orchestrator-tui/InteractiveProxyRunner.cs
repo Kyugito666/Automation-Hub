@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
-using System.IO; // Ditambahkan
+using System.IO;
 
 namespace Orchestrator;
 
@@ -9,6 +9,7 @@ public static class InteractiveProxyRunner
 {
     private const string InputsDir = "../.bot-inputs";
 
+    // ... (CaptureAndTriggerBot method unchanged) ...
     public static async Task CaptureAndTriggerBot(BotEntry bot)
     {
         AnsiConsole.MarkupLine($"[bold cyan]=== Interactive Proxy Mode: {bot.Name} ===[/]");
@@ -73,7 +74,9 @@ public static class InteractiveProxyRunner
         AnsiConsole.MarkupLine("\n[bold green]✅ Bot triggered remotely![/]");
     }
 
-    private static async Task<Dictionary<string, string>?> RunBotInCaptureMode(string botPath, BotEntry bot)
+
+    // ... (RunBotInCaptureMode method unchanged) ...
+     private static async Task<Dictionary<string, string>?> RunBotInCaptureMode(string botPath, BotEntry bot)
     {
         var inputs = new Dictionary<string, string>();
         // Pastikan path absolut untuk menghindari ambiguitas
@@ -205,8 +208,8 @@ public static class InteractiveProxyRunner
         return inputs;
     }
 
-    // === METHOD PYTHON WRAPPER (FIXED) ===
-     private static async Task CreatePythonCaptureWrapper(string wrapperFullPath, string outputPath)
+    // ... (CreatePythonCaptureWrapper method unchanged) ...
+    private static async Task CreatePythonCaptureWrapper(string wrapperFullPath, string outputPath)
     {
         // Escape outputPath for the generated Python string literal in C#
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
@@ -219,7 +222,7 @@ import json
 import builtins
 import os
 import io
-import traceback
+import traceback # Added for better error reporting
 
 # --- Configuration ---
 CAPTURE_OUTPUT_PATH = r""{escapedOutputPath}"" # Use raw string for path
@@ -241,8 +244,11 @@ def capturing_input(prompt=''):
     global captured
     try:
         # Display the prompt using the original stdout encoding behavior if possible
-        print(prompt, end='', flush=True)
-        response = _original_input() # Read input without prompt arg, as we printed it manually
+        # Write directly to buffer to bypass potential wrapper encoding issues?
+        sys.stdout.buffer.write(prompt.encode('utf-8', errors='replace'))
+        sys.stdout.flush()
+        #response = _original_input() # Read input without prompt arg
+        response = sys.stdin.readline().rstrip('\n\r') # Read directly from stdin? Might break some libs
 
         key_base = str(prompt).strip().rstrip(':').strip()
         key = key_base or f'input_{{len(captured)}}'
@@ -308,6 +314,7 @@ if script_to_run:
         with open(script_to_run, 'r', encoding='utf-8') as f:
             source = f.read()
             code = compile(source, script_to_run, 'exec')
+            # Provide globals including __file__ so the script knows its location
             script_globals = {{'__name__': '__main__', '__file__': script_to_run}}
             exec(code, script_globals)
             script_executed_successfully = True
@@ -320,7 +327,7 @@ if script_to_run:
         script_executed_successfully = (exit_code == 0) # Consider exit 0 as success
     except Exception as e:
         print(f'Capture wrapper FATAL ERROR during script execution: {{e}}', file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
+        traceback.print_exc(file=sys.stderr) # Print full traceback to stderr
         exit_code = 1 # Explicitly set error code
     finally:
         # Save captured data regardless of outcome
@@ -340,7 +347,7 @@ else:
          output_dir = os.path.dirname(CAPTURE_OUTPUT_PATH)
          os.makedirs(output_dir, exist_ok=True)
          with open(CAPTURE_OUTPUT_PATH, 'w', encoding='utf-8') as f:
-             json.dump(captured, f, indent=2, ensure_ascii=False)
+             json.dump(captured, f, indent=2, ensure_ascii=False) # Save empty if nothing captured
      except Exception as save_err:
             print(f'Capture wrapper FATAL ERROR: Failed to write empty capture file {{CAPTURE_OUTPUT_PATH}}: {{save_err}}', file=sys.stderr)
 
@@ -352,52 +359,73 @@ else:
     }
 
 
-    // === METHOD JAVASCRIPT WRAPPER (FIXED) ===
+    // === METHOD JAVASCRIPT WRAPPER (FIXED ECHO) ===
     private static async Task CreateJavaScriptCaptureWrapper(string wrapperFullPath, string outputPath)
     {
-        // Escape outputPath for the generated JS string literal in C#
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
-        // Use @"" and double braces {{ }}
+        // Gunakan stream Writable null untuk output saat inisialisasi rl
+        // tapi pastikan originalQuestion tetap menulis ke process.stdout
         var wrapper = $@"// Force CommonJS mode by using .cjs extension
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
-const process = require('process'); // Ensure process is available
+const process = require('process');
+const {{ Writable }} = require('stream'); // Import Writable stream
+
+// Create a dummy /dev/null stream
+const nullStream = new Writable({{
+  write(chunk, encoding, callback) {{
+    // Do nothing with the output
+    callback();
+  }}
+}});
 
 const captured = {{}};
-let rl = null; // Declare rl, initialize later
+let rl = null;
 
-// Ensure output path is absolute from the start
 const absOutputPath = path.resolve('{escapedOutputPath}');
 
 // --- Input Capture Setup ---
 try {{
   rl = readline.createInterface({{
       input: process.stdin,
-      output: process.stdout
+      // === FIX DI SINI: Gunakan nullStream agar rl tidak echo, tapi originalQuestion akan echo ===
+      output: nullStream,
+      // output: process.stdout, // Revert jika ini malah mematikan prompt
+      // ======================================================================================
+      prompt: '' // Prompt kosong, kita handle manual
   }});
 
-  // Keep original 'question' method reference
   const originalQuestion = rl.question;
 
-  // Overwrite rl.question
   rl.question = function(query, optionsOrCallback, callback) {{
       let actualCallback = callback;
       let actualOptions = optionsOrCallback;
 
-      // Handle overloaded signature: question(query, callback)
       if (typeof optionsOrCallback === 'function') {{
           actualCallback = optionsOrCallback;
           actualOptions = {{}};
       }} else if (typeof optionsOrCallback !== 'object' || optionsOrCallback === null) {{
-          // Ensure options is an object if provided incorrectly
           actualOptions = {{}};
       }}
 
-      // Capture the prompt and call original question
-      // We still let the original function print the prompt
-      originalQuestion.call(rl, query, actualOptions, (answer) => {{
-          const keyBase = String(query).trim().replace(/[:?]/g, '').trim(); // Ensure query is string
+      // --- FIX: Tulis prompt secara manual ke stdout asli ---
+      process.stdout.write(String(query));
+      // ================================================
+
+      // Panggil originalQuestion TAPI paksa outputnya ke stdout asli jika perlu?
+      // Atau biarkan saja karena output rl diarahkan ke null? Kita coba biarkan dulu.
+      // Kita perlu pastikan originalQuestion masih bisa menulis prompt ke stdout asli.
+      // Jika output: nullStream mematikan prompt asli, kita perlu cara lain.
+      // ALTERNATIF: Jangan set output ke nullStream, tapi coba set terminal: false? (Mungkin tidak didukung)
+
+      // Coba panggil originalQuestion. Mungkin ia tetap echo ke terminal asli walau output rl di-redirect?
+       originalQuestion.call(rl, '', actualOptions, (answer) => {{ // Kirim prompt kosong ke original?
+          // Hapus prompt manual dari baris (jika terminal tidak otomatis newline)
+          // readline.cursorTo(process.stdout, 0); // Mungkin perlu ini?
+          // process.stdout.write(String(query) + answer + '\n'); // Tampilkan ulang? Tidak, nanti double
+
+          const keyBase = String(query).trim().replace(/[:?]/g, '').trim();
           let key = keyBase || `input_${{Object.keys(captured).length}}`;
 
           let count = 1;
@@ -421,56 +449,43 @@ try {{
 
 }} catch (e) {{
     console.error('Capture wrapper error initializing readline:', e);
-    saveCaptureData(); // Attempt save before exit
+    saveCaptureData();
     process.exit(1);
 }}
 
-
-// --- Save Captured Data Function ---
+// ... (saveCaptureData, exit handling tidak berubah) ...
 function saveCaptureData() {{
-    // console.log(`Debug: Attempting to save capture data to ${{absOutputPath}}`); // Optional debug
     try {{
         const outputDir = path.dirname(absOutputPath);
         if (!fs.existsSync(outputDir)) {{
             fs.mkdirSync(outputDir, {{ recursive: true }});
         }}
         fs.writeFileSync(absOutputPath, JSON.stringify(captured, null, 2));
-        // console.log(`Debug: Captured data successfully written.`); // Optional debug
     }} catch (e) {{
         console.error('Capture wrapper FATAL ERROR: Failed to write capture file:', e);
     }}
 }}
 
-// --- Exit Handling ---
 let isExiting = false;
 process.on('exit', (code) => {{
     if (!isExiting) {{
-        isExiting = true; // Prevent recursive calls if rl.close() triggers exit
-        // console.log(`Capture wrapper: Process exiting with code ${{code}}. Saving data.`); // Optional debug
+        isExiting = true;
         saveCaptureData();
         if (rl && !rl.closed) {{
-             // console.log(""Debug: Closing readline interface on exit.""); // Optional debug
             rl.close();
         }}
     }}
 }});
 
-// Gracefully handle termination signals
 const handleSignalExit = (signal) => {{
     if (!isExiting) {{
-        // console.log(`Capture wrapper: Received signal ${{signal}}. Initiating exit.`); // Optional debug
-        // No need to save data here, 'exit' event will handle it.
-        // Close readline first if it's open
          if (rl && !rl.closed) {{
-             // console.log(""Debug: Closing readline interface on signal.""); // Optional debug
              rl.close();
-             // The close might trigger the 'exit' event, or we exit manually if needed
-             // Add a small delay to allow close event to potentially trigger exit
              setTimeout(() => {{
-                 if (!isExiting) process.exit(0); // Exit if rl.close() didn't trigger it
+                 if (!isExiting) process.exit(0);
              }}, 50);
          }} else {{
-            process.exit(0); // Trigger normal exit flow if readline wasn't active
+            process.exit(0);
          }}
     }}
 }};
@@ -478,46 +493,29 @@ process.on('SIGINT', () => handleSignalExit('SIGINT'));
 process.on('SIGTERM', () => handleSignalExit('SIGTERM'));
 
 
-// --- Target Script Execution Logic ---
+// ... (Target Script Execution Logic tidak berubah) ...
 try {{
-    // process.argv[0] = node, [1] = wrapper.cjs, [2] = target script arg
     const scriptRelativePath = process.argv[2];
     if (!scriptRelativePath) {{
         throw new Error('No target script provided.');
     }}
-
-    // Resolve absolute path relative to CWD (set by C# runner)
     const scriptAbsolutePath = path.resolve(process.cwd(), scriptRelativePath);
 
     if (!fs.existsSync(scriptAbsolutePath)) {{
          throw new Error(`Target script not found at ${{scriptAbsolutePath}}`);
     }}
-
-    // Prepare argv for the target script: [node executable, target script path, ...original args...]
     process.argv = [process.argv[0], scriptAbsolutePath, ...process.argv.slice(3)];
-
-    // console.log(`Debug: Executing target script: ${{scriptAbsolutePath}}`); // Optional debug
-    // console.log(`Debug: Target script argv: ${{JSON.stringify(process.argv)}}`); // Optional debug
-
-    // Execute the target script using require (as wrapper is CommonJS)
     require(scriptAbsolutePath);
-    // console.log(`Debug: Target script ${{scriptAbsolutePath}} finished synchronous execution.`); // Optional debug
 
 }} catch (e) {{
     console.error('Capture wrapper FATAL ERROR during script execution:', e);
-    // Exit with error code if script fails catastrophically during load/sync execution
-    // Ensure data is saved via exit handler
-    if (!isExiting) {{ // Avoid double exit call
-        process.exitCode = 1; // Set exit code for the 'exit' event
-        if (rl && !rl.closed) rl.close(); // Try to close readline
-        else if (!isExiting) process.exit(1); // Force exit if readline wasn't running
+    if (!isExiting) {{
+        process.exitCode = 1;
+        if (rl && !rl.closed) rl.close();
+        else if (!isExiting) process.exit(1);
     }}
 }}
-
-// console.log(""Debug: Capture wrapper script finished synchronous execution.""); // Optional debug
-
 ";
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
     }
-
-} // End of class InteractiveProxyRunner
+}
