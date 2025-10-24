@@ -20,33 +20,28 @@ import botrunner
 console = Console()
 
 # Event untuk meng-handle Ctrl+C
-# Satu untuk menu utama, satu untuk child process
 main_cancel_event = asyncio.Event()
 child_process_cancel_event = asyncio.Event()
+# Flag untuk menandai jika kita sedang di dalam sub-proses (bot run)
+child_process_active = False 
 
 
 def handle_signal(sig, frame):
     """Handler untuk Ctrl+C."""
-    if not child_process_cancel_event.is_set() and child_process_cancel_event.is_set_called_within_main_task():
+    global child_process_active
+    # 1. Jika child process aktif & BELUM dibatalkan, batalkan child process
+    if child_process_active and not child_process_cancel_event.is_set():
         console.print("\n[yellow]Ctrl+C terdeteksi. Membatalkan bot run...[/]")
         child_process_cancel_event.set()
+    # 2. Jika tidak, batalkan menu utama
     elif not main_cancel_event.is_set():
         console.print("\n[yellow]Ctrl+C terdeteksi. Membatalkan menu...[/]")
         main_cancel_event.set()
+    # 3. Jika semua sudah dibatalkan, informasikan
     else:
         console.print("[grey](Pembatalan sedang diproses...)[/]")
 
-# Menambahkan helper ke Event
-def is_set_called_within_main_task(self):
-    if not hasattr(self, '_loop'):
-        return False
-    try:
-        # Check if the event loop is running and if there's a current task
-        loop = asyncio.get_running_loop()
-        return asyncio.current_task(loop) is not None
-    except RuntimeError: # Raised if no loop is running or no task is current
-        return False
-asyncio.Event.is_set_called_within_main_task = is_set_called_within_main_task
+# === LOGIKA MONKEY-PATCHING LAMA DIHAPUS (baris 43-50 di file lama) ===
 
 
 async def pause(cancel_event: asyncio.Event):
@@ -155,6 +150,7 @@ async def show_local_menu(cancel_event: asyncio.Event):
 
 
 async def show_hybrid_menu(cancel_event: asyncio.Event):
+    global child_process_active # <-- TAMBAH INI
     while not cancel_event.is_set():
         console.clear()
         # --- GANTI FIGLET JADI PANEL ---
@@ -179,8 +175,7 @@ async def show_hybrid_menu(cancel_event: asyncio.Event):
 
             # Reset child cancel event sebelum menjalankan
             child_process_cancel_event.clear()
-            # Tandai bahwa event ini aktif
-            child_process_cancel_event._loop = asyncio.get_running_loop()
+            child_process_active = True # <-- SET FLAG
 
             if selection == "1":
                 await hybridrunner.run_single_interactive_bot(
@@ -193,13 +188,14 @@ async def show_hybrid_menu(cancel_event: asyncio.Event):
             else:
                 pause_needed = False
 
-            child_process_cancel_event._loop = None # Selesai
             if pause_needed and not cancel_event.is_set():
                 await pause(cancel_event)
 
         except (asyncio.CancelledError, KeyboardInterrupt):
             main_cancel_event.set()
             return
+        finally:
+            child_process_active = False # <-- PASTIKAN FLAG DI-UNSET
 
 
 async def show_remote_menu(cancel_event: asyncio.Event):
@@ -241,6 +237,7 @@ async def show_remote_menu(cancel_event: asyncio.Event):
 
 
 async def show_debug_menu(cancel_event: asyncio.Event):
+    global child_process_active # <-- TAMBAH INI
     while not cancel_event.is_set():
         console.clear()
         # --- GANTI FIGLET JADI PANEL ---
@@ -264,7 +261,7 @@ async def show_debug_menu(cancel_event: asyncio.Event):
 
             # Reset child cancel event
             child_process_cancel_event.clear()
-            child_process_cancel_event._loop = asyncio.get_running_loop()
+            child_process_active = True # <-- SET FLAG
 
             if selection == "1":
                 await botrunner.test_local_bot(
@@ -273,13 +270,14 @@ async def show_debug_menu(cancel_event: asyncio.Event):
             else:
                 pause_needed = False
 
-            child_process_cancel_event._loop = None # Selesai
             if pause_needed and not cancel_event.is_set():
                 await pause(cancel_event)
 
         except (asyncio.CancelledError, KeyboardInterrupt):
             main_cancel_event.set()
             return
+        finally:
+            child_process_active = False # <-- PASTIKAN FLAG DI-UNSET
 
 
 async def main_loop():
@@ -297,6 +295,9 @@ async def main_loop():
         # Reset event
         main_cancel_event.clear()
         child_process_cancel_event.clear()
+        # Pastikan flag utama mati
+        global child_process_active
+        child_process_active = False
 
         console.clear()
         # --- GANTI FIGLET JADI PANEL UTAMA ---
@@ -361,6 +362,4 @@ if __name__ == "__main__":
         # Handle jika Ctrl+C ditekan saat asyncio.run() sedang setup
         print("\n[red]Exit paksa.[/]")
     finally:
-        # Pastikan terminal dikembalikan ke state normal (penting di Linux/macOS)
-        # os.system("stty sane") # Mungkin perlu jika terminal jadi aneh
         pass
