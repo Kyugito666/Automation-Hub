@@ -40,7 +40,7 @@ internal static class Program
     }
 
     // =================================================================
-    // NAVIGASI MENU UTAMA
+    // NAVIGASI MENU UTAMA (WRAP AROUND)
     // =================================================================
 
     private static async Task RunInteractive()
@@ -53,9 +53,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    // === HINT DITAMBAHKAN ===
-                    .Title("\n[bold cyan]MAIN MENU[/] [grey](Press '0' to Exit)[/]")
+                    .Title("\n[bold cyan]MAIN MENU[/]") // Hint '0' dihapus
                     .PageSize(10)
+                    .WrapAround() // <-- TAMBAHAN: Navigasi wrap around
                     .AddChoices(new[]
                     {
                         "1. [[SETUP]] Configuration & Token Management",
@@ -63,10 +63,10 @@ internal static class Program
                         "3. [[HYBRID]] Interactive Remote Execution",
                         "4. [[REMOTE]] GitHub Actions Control",
                         "5. [[DEBUG]] Local Bot Testing",
-                        "0. Exit"
+                        "0. Exit" // Opsi '0' tetap ada, tapi tidak lagi shortcut utama
                     }));
 
-            // Langsung handle '0' di sini
+            // Handle '0' untuk Exit secara eksplisit jika dipilih
             if (choice.StartsWith("0"))
             {
                 AnsiConsole.MarkupLine("[green]Goodbye![/]");
@@ -80,13 +80,13 @@ internal static class Program
                 case "3": await ShowHybridMenu(); break;
                 case "4": await ShowRemoteMenu(); break;
                 case "5": await ShowDebugMenu(); break;
-                // case "0" sudah dihandle di atas
+                // case "0" dihandle di atas
             }
         }
     }
 
     // =================================================================
-    // SUB-MENU HANDLERS
+    // SUB-MENU HANDLERS (WRAP AROUND)
     // =================================================================
 
     private static async Task ShowSetupMenu()
@@ -98,9 +98,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    // === HINT DITAMBAHKAN ===
-                    .Title("\n[bold yellow]SETUP & CONFIGURATION[/] [grey](Press '0' to Go Back)[/]")
+                    .Title("\n[bold yellow]SETUP & CONFIGURATION[/]") // Hint '0' dihapus
                     .PageSize(10)
+                    .WrapAround() // <-- TAMBAHAN
                     .AddChoices(new[]
                     {
                         "1. Validate Tokens & Get Usernames",
@@ -112,8 +112,7 @@ internal static class Program
                     }));
 
             var selection = choice.Split('.')[0];
-            // Langsung handle '0' di sini
-            if (selection == "0") return;
+            if (selection == "0") return; // Tetap pakai '0' untuk kembali
 
             bool pause = true;
             switch (selection)
@@ -123,7 +122,6 @@ internal static class Program
                 case "3": await CollaboratorManager.AcceptInvitations(); break;
                 case "4": TokenManager.ShowStatus(); break;
                 case "5": TokenManager.ReloadAllConfigs(); break;
-                // case "0" sudah dihandle di atas
                 default: pause = false; break;
             }
 
@@ -140,9 +138,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    // === HINT DITAMBAHKAN ===
-                    .Title("\n[bold green]LOCAL BOT & PROXY MANAGEMENT[/] [grey](Press '0' to Go Back)[/]")
+                    .Title("\n[bold green]LOCAL BOT & PROXY MANAGEMENT[/]") // Hint '0' dihapus
                     .PageSize(10)
+                    .WrapAround() // <-- TAMBAHAN
                     .AddChoices(new[]
                     {
                         "1. Update All Bots & Tools",
@@ -176,9 +174,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                     // === HINT DITAMBAHKAN ===
-                    .Title("\n[bold blue]HYBRID INTERACTIVE EXECUTION[/] [grey](Press '0' to Go Back)[/]")
+                    .Title("\n[bold blue]HYBRID INTERACTIVE EXECUTION[/]") // Hint '0' dihapus
                     .PageSize(10)
+                    .WrapAround() // <-- TAMBAHAN
                     .AddChoices(new[]
                     {
                         "1. Run Interactive Bot -> Remote",
@@ -210,9 +208,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                     // === HINT DITAMBAHKAN ===
-                    .Title("\n[bold red]GITHUB ACTIONS CONTROL[/] [grey](Press '0' to Go Back)[/]")
+                    .Title("\n[bold red]GITHUB ACTIONS CONTROL[/]") // Hint '0' dihapus
                     .PageSize(10)
+                    .WrapAround() // <-- TAMBAHAN
                     .AddChoices(new[]
                     {
                         "1. Trigger ALL Bots (Workflow)",
@@ -244,9 +242,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    // === HINT DITAMBAHKAN ===
-                    .Title("\n[bold grey]DEBUG & LOCAL TESTING[/] [grey](Press '0' to Go Back)[/]")
+                    .Title("\n[bold grey]DEBUG & LOCAL TESTING[/]") // Hint '0' dihapus
                     .PageSize(10)
+                    .WrapAround() // <-- TAMBAHAN
                     .AddChoices(new[]
                     {
                         "1. Test Local Bot (No Remote)",
@@ -296,6 +294,7 @@ internal static class Program
             new SelectionPrompt<BotEntry>()
                 .Title("[cyan]Select bot for interactive run:[/]")
                 .PageSize(20)
+                .WrapAround() // <-- TAMBAHAN (Konsistensi)
                 .UseConverter(b => $"{b.Name} ({b.Type})")
                 .AddChoices(bots));
 
@@ -372,6 +371,7 @@ internal static class Program
             new SelectionPrompt<BotEntry>()
                 .Title("[cyan]Select bot for local test:[/]")
                 .PageSize(20)
+                .WrapAround() // <-- TAMBAHAN (Konsistensi)
                 .UseConverter(b => $"{b.Name} ({b.Type})")
                 .AddChoices(bots));
 
