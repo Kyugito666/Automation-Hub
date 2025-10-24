@@ -8,6 +8,9 @@ namespace Orchestrator;
 
 public static class ShellHelper
 {
+    // Path ke PTY wrapper kita
+    private const string PtyHelperExe = "pty-helper.exe";
+
     public static async Task RunStream(string command, string args, string? workingDir = null)
     {
         string fileName;
@@ -63,27 +66,30 @@ public static class ShellHelper
         }
     }
 
-    // === METHOD BARU: Windows Interactive Mode (dengan Shell Wrapper) ===
-    public static async Task RunInteractiveWindows(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
+    // === METHOD BARU: PTY INTERAKTIF (MANUAL) ===
+    // Menggantikan RunInteractive dan RunInteractiveWindows
+    public static async Task RunInteractivePty(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (!File.Exists(PtyHelperExe))
         {
-            // Fallback ke method lama kalau bukan Windows
-            await RunInteractive(command, args, workingDir, cancellationToken);
+            AnsiConsole.MarkupLine($"[red]FATAL: Wrapper PTY '{PtyHelperExe}' tidak ditemukan.[/]");
+            AnsiConsole.MarkupLine("[red]Pastikan lu sudah build pty-helper-node (npm run build).[/]");
             return;
         }
 
-        // Di Windows, wrap command dengan cmd.exe /c agar PATH environment ter-inherit
+        // pty-helper <command> <args...>
+        string ptyArgs = $"\"{command}\" {args}";
+
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "cmd.exe",
-                Arguments = $"/c \"{command} {args}\"", // Wrap dengan cmd shell
+                FileName = PtyHelperExe,
+                Arguments = ptyArgs,
                 UseShellExecute = false,
-                CreateNoWindow = false,
+                CreateNoWindow = false, // Harus False agar TTY bisa attach
                 WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory(),
-                // CRITICAL: Jangan redirect I/O agar user bisa interaksi langsung
+                // CRITICAL: Jangan redirect I/O agar PTY bisa mengambil alih
                 RedirectStandardInput = false,
                 RedirectStandardOutput = false,
                 RedirectStandardError = false
@@ -97,8 +103,8 @@ public static class ShellHelper
 
             if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
             {
-                AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
-                throw new Exception($"Process exited with code {process.ExitCode}");
+                AnsiConsole.MarkupLine($"[yellow]Process exited with code {process.ExitCode}[/]");
+                // Jangan throw exception agar alur TUI bisa lanjut
             }
         }
         catch (OperationCanceledException)
@@ -108,65 +114,101 @@ public static class ShellHelper
             {
                 if (!process.HasExited)
                 {
-                    process.Kill(true);
+                    // Kirim Ctrl+C ke PTY
+                    process.Kill(true); // Kirim SIGINT/Break
                 }
             }
             catch { }
-            throw;
+            throw; // Re-throw agar TUI utama tahu (Program.cs)
         }
         catch (Exception ex)
         {
-             AnsiConsole.MarkupLine($"[red]Error saat menjalankan proses interaktif: {ex.Message}[/]");
+             AnsiConsole.MarkupLine($"[red]Error saat menjalankan PTY wrapper: {ex.Message}[/]");
              try { if (!process.HasExited) process.Kill(true); } catch {}
              throw; // Re-throw agar caller tahu ada error
         }
     }
 
-    // Method lama untuk Linux/macOS (tetap pakai raw process)
-    public static async Task RunInteractive(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
+    // === METHOD BARU: PTY DENGAN SCRIPT (AUTO-ANSWER) ===
+    public static async Task RunPtyWithScript(string inputFile, string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
     {
+        if (!File.Exists(PtyHelperExe))
+        {
+            AnsiConsole.MarkupLine($"[red]FATAL: Wrapper PTY '{PtyHelperExe}' tidak ditemukan.[/]");
+            return;
+        }
+
+        // pty-helper <input_file> <command> <args...>
+        // Pastikan path file input absolut dan dalam tanda kutip
+        string absInputFile = Path.GetFullPath(inputFile);
+        string ptyArgs = $"\"{absInputFile}\" \"{command}\" {args}";
+
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = command,
-                Arguments = args,
+                FileName = PtyHelperExe,
+                Arguments = ptyArgs,
                 UseShellExecute = false,
-                CreateNoWindow = false,
-                WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory()
+                CreateNoWindow = true, // Bisa true karena tidak interaktif
+                WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory(),
+                // Kita redirect I/O di sini agar TUI bisa menampilkan log-nya
+                RedirectStandardInput = false, // PTY helper tidak baca stdin di mode script
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
             }
+        };
+
+        process.OutputDataReceived += (s, e) => {
+            if (!string.IsNullOrEmpty(e.Data))
+                AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
+        };
+        process.ErrorDataReceived += (s, e) => {
+            if (!string.IsNullOrEmpty(e.Data))
+                AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
         };
 
         try
         {
             process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
             await process.WaitForExitAsync(cancellationToken);
 
             if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
             {
-                AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
+                AnsiConsole.MarkupLine($"[yellow]Auto-run process exited with code {process.ExitCode}[/]");
             }
         }
         catch (OperationCanceledException)
         {
-            AnsiConsole.MarkupLine("[yellow]Proses interaktif dibatalkan.[/]");
+            AnsiConsole.MarkupLine("[yellow]Auto-run dibatalkan.[/]");
             try
             {
-                if (!process.HasExited)
-                {
-                    process.Kill(true);
-                }
+                if (!process.HasExited) process.Kill(true);
             }
             catch { }
             throw;
         }
         catch (Exception ex)
         {
-             AnsiConsole.MarkupLine($"[red]Error saat menjalankan proses interaktif: {ex.Message}[/]");
+             AnsiConsole.MarkupLine($"[red]Error saat menjalankan PTY auto-run: {ex.Message}[/]");
              try { if (!process.HasExited) process.Kill(true); } catch {}
+             throw;
         }
     }
 
+
+    // === Method lama untuk Linux/macOS (tetap pakai raw process) ===
+    // SAYA COMMENT KARENA KITA SEKARANG PAKAI PTY UNTUK SEMUA
+    /*
+    public static async Task RunInteractive(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
+    {
+        // ... (Implementasi lama) ...
+    }
+    */
+    
+    // Method ini punya fungsi BEDA (buka terminal baru), jadi biarkan saja.
     public static void RunInNewTerminal(string command, string args, string? workingDir = null)
     {
         var absPath = workingDir != null ? Path.GetFullPath(workingDir) : Directory.GetCurrentDirectory();
