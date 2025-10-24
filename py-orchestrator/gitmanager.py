@@ -1,7 +1,13 @@
 import asyncio
 from rich.console import Console
 # --- PERUBAHAN IMPORT DI SINI ---
-from rich import progress # Import modulnya aja
+from rich.progress import (
+    Progress,
+    TextColumn,
+    BarColumn,
+    PercentageColumn,
+    SpinnerColumn
+)
 # --------------------------------
 from tokenmanager import TokenManager
 
@@ -18,23 +24,23 @@ async def validate_all_tokens():
     new_users = 0
 
     # --- PERUBAHAN BLOK 'with' PERTAMA ---
-    with progress.Progress( # Tambah progress.
-        progress.TextColumn("[progress.description]{task.description}"), # Tambah progress.
-        progress.BarColumn(), # Tambah progress.
-        progress.PercentageColumn(), # Tambah progress.
-        progress.SpinnerColumn(), # Tambah progress.
+    with Progress( # Hapus 'progress.'
+        TextColumn("[progress.description]{task.description}"), # Hapus 'progress.'
+        BarColumn(), # Hapus 'progress.'
+        PercentageColumn(), # Hapus 'progress.'
+        SpinnerColumn(), # Hapus 'progress.'
         console=console,
         transient=True
     ) as prog: # Ganti nama variabel jadi 'prog'
-        task = prog.add_task("[green]Memvalidasi token...[/]", total=len(tokens)) # Ganti progress -> prog
+        task = prog.add_task("[green]Memvalidasi token...[/]", total=len(tokens))
 
         for entry in tokens:
             token_display = TokenManager.mask_token(entry.token)
-            prog.update(task, description=f"[green]Memvalidasi:[/] {token_display}") # Ganti progress -> prog
+            prog.update(task, description=f"[green]Memvalidasi:[/] {token_display}")
 
             if entry.token in cache:
                 entry.username = cache[entry.token]
-                prog.advance(task) # Ganti progress -> prog
+                prog.advance(task)
                 continue
 
             try:
@@ -57,7 +63,7 @@ async def validate_all_tokens():
             except Exception as ex:
                 console.print(f"[red]✗[/] Token {token_display} [red]ERROR:[/] {ex}")
 
-            prog.advance(task) # Ganti progress -> prog
+            prog.advance(task)
             await asyncio.sleep(0.5) # Rate limit ringan
     # --- AKHIR PERUBAHAN BLOK 'with' PERTAMA ---
 
@@ -90,19 +96,19 @@ async def invite_collaborators():
 
     success = 0
     # --- PERUBAHAN BLOK 'with' KEDUA ---
-    with progress.Progress( # Tambah progress.
-        progress.TextColumn("[progress.description]{task.description}"), # Tambah progress.
-        progress.BarColumn(), # Tambah progress.
-        progress.PercentageColumn(), # Tambah progress.
-        progress.SpinnerColumn(), # Tambah progress.
+    with Progress( # Hapus 'progress.'
+        TextColumn("[progress.description]{task.description}"), # Hapus 'progress.'
+        BarColumn(), # Hapus 'progress.'
+        PercentageColumn(), # Hapus 'progress.'
+        SpinnerColumn(), # Hapus 'progress.'
         console=console,
         transient=True
     ) as prog: # Ganti nama variabel jadi 'prog'
-        task = prog.add_task("[green]Mengirim undangan...[/]", total=len(users_to_invite)) # Ganti progress -> prog
+        task = prog.add_task("[green]Mengirim undangan...[/]", total=len(users_to_invite))
 
         async with TokenManager.create_http_client(main_token_entry) as client:
             for user in users_to_invite:
-                prog.update(task, description=f"[green]Mengundang:[/] [yellow]@{user.username}[/]") # Ganti progress -> prog
+                prog.update(task, description=f"[green]Mengundang:[/] [yellow]@{user.username}[/]")
                 url = f"https://api.github.com/repos/{owner}/{repo}/collaborators/{user.username}"
                 payload = {"permission": "push"}
 
@@ -122,7 +128,7 @@ async def invite_collaborators():
                 except Exception as ex:
                     console.print(f"[red]✗[/] Gagal mengundang [yellow]@{user.username}[/]: {ex}")
 
-                prog.advance(task) # Ganti progress -> prog
+                prog.advance(task)
                 await asyncio.sleep(1) # Rate limit API invite
     # --- AKHIR PERUBAHAN BLOK 'with' KEDUA ---
 
@@ -140,19 +146,19 @@ async def accept_invitations():
     not_found = 0
 
     # --- PERUBAHAN BLOK 'with' KETIGA ---
-    with progress.Progress( # Tambah progress.
-        progress.TextColumn("[progress.description]{task.description}"), # Tambah progress.
-        progress.BarColumn(), # Tambah progress.
-        progress.PercentageColumn(), # Tambah progress.
-        progress.SpinnerColumn(), # Tambah progress.
+    with Progress( # Hapus 'progress.'
+        TextColumn("[progress.description]{task.description}"), # Hapus 'progress.'
+        BarColumn(), # Hapus 'progress.'
+        PercentageColumn(), # Hapus 'progress.'
+        SpinnerColumn(), # Hapus 'progress.'
         console=console,
         transient=True
     ) as prog: # Ganti nama variabel jadi 'prog'
-        task = prog.add_task("[green]Menerima undangan...[/]", total=len(tokens)) # Ganti progress -> prog
+        task = prog.add_task("[green]Menerima undangan...[/]", total=len(tokens))
 
         for entry in tokens:
             token_display = TokenManager.mask_token(entry.token)
-            prog.update(task, description=f"[green]Mengecek:[/] {entry.username or token_display}") # Ganti progress -> prog
+            prog.update(task, description=f"[green]Mengecek:[/] {entry.username or token_display}")
 
             try:
                 async with TokenManager.create_http_client(entry) as client:
@@ -184,7 +190,7 @@ async def accept_invitations():
             except Exception as ex:
                 console.print(f"[red]✗[/] Error pada {token_display}: {ex}")
 
-            prog.advance(task) # Ganti progress -> prog
+            prog.advance(task)
             await asyncio.sleep(0.5)
     # --- AKHIR PERUBAHAN BLOK 'with' KETIGA ---
 
