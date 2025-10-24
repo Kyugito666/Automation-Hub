@@ -65,11 +65,11 @@ public static class InteractiveProxyRunner
             AnsiConsole.MarkupLine("[yellow]Capture run dibatalkan oleh user (Ctrl+C).[/]");
             throw; // Lempar ulang agar Program.cs bisa menangkap
         }
-        catch (Exception ex)
+        catch (Exception ex) // Termasuk Exception dari ShellHelper jika ExitCode != 0
         {
             AnsiConsole.MarkupLine($"[red]Error selama PTY run: {ex.Message}[/]");
             AnsiConsole.MarkupLine("[yellow]Skipping remote trigger due to error.[/]");
-            return;
+            return; // Penting: Jangan lanjut ke Step 2 jika helper gagal
         }
 
         // --- Lanjutkan ke Step 2 (Trigger) ---
@@ -94,6 +94,7 @@ public static class InteractiveProxyRunner
         // GitHub Action *harus* support jalan non-interaktif (headless).
         var emptyInputs = new Dictionary<string, string>();
 
+        // Panggil GitHubDispatcher seperti biasa
         await GitHubDispatcher.TriggerBotWithInputs(bot, emptyInputs);
         AnsiConsole.MarkupLine("\n[bold green]✅ Bot triggered remotely![/]");
     }
@@ -108,13 +109,10 @@ public static class InteractiveProxyRunner
         // "D:\...net8.0\pty-helper.exe" "python" "run.py"
         string ptyExecutor = PTY_HELPER_PATH;
         
-        // Gabungkan executor asli dan args-nya
-        // (ShellHelper.RunInteractive akan mem-parse ini)
-        string ptyArgs = $"\"{executor}\" {args}";
+        // Gabungkan executor asli dan args-nya, pastikan path/args dengan spasi di-quote
+        string ptyArgs = $"\"{executor}\" {args}"; // ShellHelper akan handle parsing
         
-        // Panggil ShellHelper.RunInteractive, yang sudah support CancellationToken
-        // Ini akan menjalankan Go helper, yang kemudian menjalankan bot.
-        // ShellHelper.RunInteractive akan melempar OperationCanceledException jika di-cancel.
+        // Panggil ShellHelper.RunInteractive, yang sudah support CancellationToken DAN throw Exception on failure
         await ShellHelper.RunInteractive(ptyExecutor, ptyArgs, botPath, cancellationToken);
         
         AnsiConsole.MarkupLine("\n[grey]─────────────────────────────────────[/]");
