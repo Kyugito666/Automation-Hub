@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Spectre.Console;
+using System.Runtime.InteropServices; // Ditambahkan untuk OSPlatform
 
 namespace Orchestrator;
 
@@ -119,6 +120,9 @@ public static class TmuxRunner
             AnsiConsole.MarkupLine($"[red]Error: '{ConfigFile}' tidak ditemukan.[/]");
             return null;
         }
-        return JsonSerializer.Deserialize<BotConfig>(File.ReadAllText(ConfigFile));
+        return JsonSerializer.Deserialize<BotConfig>(File.ReadAllText(ConfigFile), new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
     }
 }
