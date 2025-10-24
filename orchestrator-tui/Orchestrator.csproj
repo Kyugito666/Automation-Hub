@@ -24,7 +24,6 @@
     <Content Include="../config/paths.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       
-
 <Link>config/paths.txt</Link>
     </Content>
   </ItemGroup>
