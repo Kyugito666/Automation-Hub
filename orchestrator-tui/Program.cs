@@ -97,7 +97,6 @@ internal static class Program
                 }
             }
             catch (OperationCanceledException) {
-                 // Ini HANYA akan ke-trigger jika token UTAMA (_cts) dibatalkan
                  AnsiConsole.MarkupLine("\n[yellow]Operation cancelled. Returning to main menu.[/]");
                  PauseWithoutCancel();
             }
@@ -109,14 +108,16 @@ internal static class Program
         }
     }
 
-    // === SUBMENU (Tidak berubah, biarkan exception propagate) ===
-    private static async Task ShowSetupMenu(CancellationToken cancellationToken) { /* ... implementasi ... */
+    // === SUBMENU SETUP (DIUPDATE) ===
+    private static async Task ShowSetupMenu(CancellationToken cancellationToken) {
         while (true)
         {
              cancellationToken.ThrowIfCancellationRequested();
              AnsiConsole.Clear();
              AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
-             var choice = AnsiConsole.Prompt(/* ... menu ... */
+             
+             // === PILIHAN MENU DIUPDATE ===
+             var choice = AnsiConsole.Prompt(
                   new SelectionPrompt<string>()
                     .Title("\n[bold yellow]SETUP & CONFIGURATION[/]")
                     .PageSize(10)
@@ -128,14 +129,15 @@ internal static class Program
                         "3. Accept Invitations",
                         "4. Show Token/Proxy Status",
                         "5. [[SYSTEM]] Refresh All Configs (Reload files)",
+                        "6. [[SCAN]] Cek Kompatibilitas Input Bot (Raw/Line)", // <-- FITUR BARU
                         "0. [[Back]] Kembali ke Menu Utama"
                     }));
+             // === AKHIR UPDATE MENU ===
 
             var selection = choice.Split('.')[0];
             if (selection == "0") return;
 
             bool pause = true;
-            // Tidak perlu try-catch di sini, biarkan exception propagate ke RunInteractive
             switch (selection)
             {
                 case "1": await CollaboratorManager.ValidateAllTokens(); break;
@@ -143,12 +145,16 @@ internal static class Program
                 case "3": await CollaboratorManager.AcceptInvitations(); break;
                 case "4": TokenManager.ShowStatus(); break;
                 case "5": TokenManager.ReloadAllConfigs(); break;
+                case "6": await BotScanner.ScanAllBots(cancellationToken); break; // <-- FITUR BARU
                 default: pause = false; break;
             }
 
-            if (pause) Pause(cancellationToken); // Kirim token ke Pause
+            if (pause) Pause(cancellationToken);
         }
      }
+    
+    // ... (Sisa method ShowLocalMenu, ShowHybridMenu, ShowRemoteMenu, ShowDebugMenu, Pause, dll TIDAK BERUBAH) ...
+    // ... (Cukup copy-paste sisa method dari file Program.cs lama lu) ...
     private static async Task ShowLocalMenu(CancellationToken cancellationToken) { /* ... implementasi ... */
         while (true)
         {
@@ -206,7 +212,6 @@ internal static class Program
             bool pause = true;
             switch (selection)
             {
-                // Kirim token ke method yang menjalankan bot
                 case "1": await RunSingleInteractiveBot(cancellationToken); break;
                 case "2": await RunAllInteractiveBots(cancellationToken); break;
                 default: pause = false; break;
@@ -303,8 +308,6 @@ internal static class Program
      }
 
 
-    // === METHOD HELPER (RunSingle, RunAll, TestLocal diupdate) ===
-
     private static readonly BotEntry BackOption = new() { Name = "[[Back]] Kembali", Type = "SYSTEM" };
 
     private static async Task RunSingleInteractiveBot(CancellationToken cancellationToken)
@@ -321,9 +324,7 @@ internal static class Program
                 .AddChoices(choices));
         if (selectedBot == BackOption) return;
 
-        // === LOGIKA BARU: SET _childProcessCts ===
         _childProcessCts = new CancellationTokenSource();
-        // Gabungkan token utama (cancellationToken) dengan token bot (_childProcessCts)
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _childProcessCts.Token);
         
         try
@@ -332,14 +333,12 @@ internal static class Program
         }
         catch (OperationCanceledException)
         {
-            // Jika token utama (_cts) dibatalkan, biarkan dia propagate ke atas (ke RunInteractive)
             cancellationToken.ThrowIfCancellationRequested(); 
-            // Jika HANYA _childProcessCts yang dibatalkan (Ctrl+C), kita tangkap di sini
             AnsiConsole.MarkupLine("[yellow]Bot run cancelled by user.[/]");
         }
         finally
         {
-            _childProcessCts = null; // Selalu bersihkan
+            _childProcessCts = null;
         }
     }
 
@@ -358,7 +357,6 @@ internal static class Program
 
         foreach (var bot in bots)
         {
-            // Cek token UTAMA di awal loop
             if (cancellationToken.IsCancellationRequested) {
                  AnsiConsole.MarkupLine("\n[yellow]Loop cancelled by main token.[/]");
                  failCount += (bots.Count - (successCount + failCount));
@@ -367,43 +365,35 @@ internal static class Program
 
             AnsiConsole.Write(new Rule($"[cyan]{bot.Name}[/]").Centered());
 
-            // === LOGIKA BARU: SET _childProcessCts PER BOT ===
             _childProcessCts = new CancellationTokenSource();
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _childProcessCts.Token);
 
             try
             {
                 await InteractiveProxyRunner.CaptureAndTriggerBot(bot, linkedCts.Token);
-                // Jika lolos try-catch, bot sukses (CaptureAndTriggerBot TIDAK melempar cancel)
                 successCount++;
             }
             catch (OperationCanceledException)
             {
-                // Tangkap cancel
                 failCount++;
                 
                 if (cancellationToken.IsCancellationRequested)
                 {
-                    // Token UTAMA dibatalkan (misal, pas di "Pause")
                     AnsiConsole.MarkupLine("[yellow]Main operation cancelled. Breaking loop.[/]");
                     break; 
                 }
                 else if (_childProcessCts.IsCancellationRequested)
                 {
-                    // Token BOT dibatalkan (Ctrl+C pas bot jalan)
                     AnsiConsole.MarkupLine("[yellow]Bot run skipped by user (Ctrl+C).[/]");
                     
-                    // === PERTANYAAN KONFIRMASI (SESUAI REQUEST) ===
                     if (!AnsiConsole.Confirm("Continue to next bot?", true))
                     {
                         AnsiConsole.MarkupLine("[yellow]Loop cancelled by user.[/]");
-                        break; // User milih stop
+                        break; 
                     }
-                    // Kalo user milih 'y', loop lanjut ke bot berikutnya
                 }
                 else
                 {
-                    // Seharusnya tidak terjadi, tapi untuk jaga-jaga
                      AnsiConsole.MarkupLine("[red]Unknown cancellation. Breaking loop.[/]");
                      break;
                 }
@@ -412,19 +402,17 @@ internal static class Program
             {
                 AnsiConsole.MarkupLine($"[red]Error processing {bot.Name}: {ex.Message}[/]");
                 failCount++;
-                // Lanjut ke bot berikutnya
             }
             finally
             {
-                 _childProcessCts = null; // Bersihkan token bot
+                 _childProcessCts = null; 
             }
 
-             // Cek lagi token utama sebelum "Pause"
              if (cancellationToken.IsCancellationRequested) break;
 
              if (bot != bots.Last())
              {
-                 Pause(cancellationToken); // Pause ini bisa dibatalkan oleh token utama
+                 Pause(cancellationToken);
              }
         } // End foreach
 
@@ -453,7 +441,6 @@ internal static class Program
         AnsiConsole.MarkupLine($"[green]Running {selectedBot.Name} locally... (Press Ctrl+C to stop)[/]");
         AnsiConsole.MarkupLine("[dim]This is a test run. No remote execution.[/]\n");
 
-        // === LOGIKA BARU: SET _childProcessCts ===
         _childProcessCts = new CancellationTokenSource();
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _childProcessCts.Token);
         
@@ -463,12 +450,12 @@ internal static class Program
         }
         catch (OperationCanceledException)
         {
-            cancellationToken.ThrowIfCancellationRequested(); // Biarkan propagate jika token utama
-            AnsiConsole.MarkupLine("[yellow]Test run cancelled by user.[/]"); // Tangkap jika token bot
+            cancellationToken.ThrowIfCancellationRequested(); 
+            AnsiConsole.MarkupLine("[yellow]Test run cancelled by user.[/]");
         }
         finally
         {
-            _childProcessCts = null; // Selalu bersihkan
+            _childProcessCts = null; 
         }
     }
-} // End class Program
+}
