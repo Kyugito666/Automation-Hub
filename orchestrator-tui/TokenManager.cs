@@ -294,6 +294,7 @@ public class BotExecutionState
     public int TokenIndex { get; set; }
 }
 
+// Definisi GitHubConfig dipindah ke sini dari GitHubDispatcher
 public class GitHubConfig
 {
     [JsonPropertyName("owner")]
