@@ -24,8 +24,15 @@
     <Content Include="../config/paths.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       
+
 <Link>config/paths.txt</Link>
     </Content>
   </ItemGroup>
 
-</Project>
+  <ItemGroup>
+    <Content Include="..\pty-helper\pty-helper.exe" Condition="Exists('..\pty-helper\pty-helper.exe')">
+      <Link>pty-helper.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  </Project>
