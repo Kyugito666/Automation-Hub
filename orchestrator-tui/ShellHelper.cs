@@ -1,50 +1,46 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Spectre.Console;
+using System.Threading; // <-- Tambahkan using
+using System.Threading.Tasks; // <-- Tambahkan using
 
 namespace Orchestrator;
 
 public static class ShellHelper
 {
-    public static async Task RunStream(string command, string args, string? workingDir = null)
+    // ... (RunStream tidak berubah) ...
+     public static async Task RunStream(string command, string args, string? workingDir = null)
     {
         string fileName;
         string finalArgs;
 
-        // === PERUBAHAN DI SINI ===
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            // Jalankan via cmd /c untuk memastikan PATH dibaca
             fileName = "cmd.exe";
-            // Kutip argumen asli untuk mencegah masalah spasi
             finalArgs = $"/c \"{command} {args}\"";
         }
-        else // Linux/macOS
+        else
         {
-             // Jalankan via bash -c
-            fileName = "/bin/bash";
-             // Kutip argumen asli
+             fileName = "/bin/bash";
             finalArgs = $"-c \"{command} {args}\"";
         }
-        // ========================
-
 
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                // Gunakan fileName & finalArgs yang sudah disiapkan
                 FileName = fileName,
                 Arguments = finalArgs,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                UseShellExecute = false, // Tetap false, karena kita panggil shell secara eksplisit
+                UseShellExecute = false,
                 CreateNoWindow = true,
                 WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory()
             },
             EnableRaisingEvents = true
         };
 
+        // ... (event handlers tidak berubah) ...
         process.OutputDataReceived += (sender, e) => {
             if (!string.IsNullOrEmpty(e.Data))
                 AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
@@ -54,24 +50,25 @@ public static class ShellHelper
                 AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
         };
 
+
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        await process.WaitForExitAsync();
+        await process.WaitForExitAsync(); // RunStream tidak perlu cancellation token?
 
         if (process.ExitCode != 0)
         {
             AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
-            // Tambahkan pesan error jika gagal, terutama untuk npm
              if (command == "npm") {
                  AnsiConsole.MarkupLine($"[red]Error running npm. Pastikan Node.js terinstall & ada di PATH.[/]");
              }
         }
     }
 
-    // ... (RunInteractive, RunInNewTerminal, IsCommandAvailable tidak berubah) ...
-     public static async Task RunInteractive(string command, string args, string? workingDir = null)
+
+    // === MODIFIKASI DI SINI ===
+    public static async Task RunInteractive(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
     {
         var process = new Process
         {
@@ -80,21 +77,48 @@ public static class ShellHelper
                 FileName = command,
                 Arguments = args,
                 UseShellExecute = false,
-                CreateNoWindow = false,
+                CreateNoWindow = false, // Tetap false untuk interaktif
                 WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory()
             }
         };
 
-        process.Start();
-        await process.WaitForExitAsync();
-
-        if (process.ExitCode != 0)
+        try
         {
-            AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
+            process.Start();
+            // Tunggu proses selesai ATAU token dibatalkan
+            await process.WaitForExitAsync(cancellationToken);
+
+            if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
+            {
+                AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            AnsiConsole.MarkupLine("[yellow]Proses interaktif dibatalkan.[/]");
+            // Coba hentikan proses jika masih berjalan setelah cancel
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(true); // Kill process tree
+                }
+            }
+            catch { /* Abaikan error saat kill */ }
+            throw; // Re-throw exception agar pemanggil tahu dibatalkan
+        }
+        catch (Exception ex)
+        {
+             AnsiConsole.MarkupLine($"[red]Error saat menjalankan proses interaktif: {ex.Message}[/]");
+             // Coba hentikan jika error
+             try { if (!process.HasExited) process.Kill(true); } catch {}
+             // Pertimbangkan re-throw tergantung kebutuhan
         }
     }
+    // ===========================
 
-    public static void RunInNewTerminal(string command, string args, string? workingDir = null)
+    // ... (RunInNewTerminal, IsCommandAvailable tidak berubah) ...
+      public static void RunInNewTerminal(string command, string args, string? workingDir = null)
     {
         var absPath = workingDir != null ? Path.GetFullPath(workingDir) : Directory.GetCurrentDirectory();
 
@@ -132,42 +156,26 @@ public static class ShellHelper
             });
         }
     }
-
-    private static bool IsCommandAvailable(string command)
+     private static bool IsCommandAvailable(string command)
     {
+        string executor = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "where" : "which";
         try
         {
             var process = Process.Start(new ProcessStartInfo
             {
-                FileName = "which", // 'where' on Windows, 'which' on Unix
+                FileName = executor,
                 Arguments = command,
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             });
             process?.WaitForExit();
-            return process?.ExitCode == 0;
+            // Periksa output stdout juga, 'where' bisa return 0 tapi tidak menemukan
+            string? output = process?.StandardOutput.ReadToEnd();
+            return process?.ExitCode == 0 && !string.IsNullOrWhiteSpace(output);
         }
         catch
         {
-            // On Windows, 'which' might not exist, try 'where'
-             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-             {
-                 try
-                 {
-                     var process = Process.Start(new ProcessStartInfo
-                     {
-                         FileName = "where",
-                         Arguments = command,
-                         RedirectStandardOutput = true,
-                         UseShellExecute = false,
-                         CreateNoWindow = true
-                     });
-                     process?.WaitForExit();
-                     return process?.ExitCode == 0;
-                 }
-                 catch { return false; }
-             }
             return false;
         }
     }
