@@ -9,9 +9,52 @@ namespace Orchestrator;
 
 public static class ShellHelper
 {
-    // UBAH: Pakai Python script
-    private static readonly string PtyHelperScript = Path.Combine("..", "pty-helper-py", "pty_helper.py");
-    private static string PythonExecutable => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python" : "python3";
+    // CRITICAL FIX: Gunakan absolute path yang diresolve saat startup
+    private static readonly string PtyHelperScript;
+    private static readonly string PythonExecutable;
+
+    static ShellHelper()
+    {
+        // Resolve absolute path saat class di-load (HANYA SEKALI)
+        var baseDir = AppDomain.CurrentDomain.BaseDirectory; // bin/Debug/net8.0/
+        var projectRoot = Path.GetFullPath(Path.Combine(baseDir, "..", "..", ".."));
+        PtyHelperScript = Path.Combine(projectRoot, "pty-helper-py", "pty_helper.py");
+
+        // Detect Python executable dengan fallback
+        PythonExecutable = DetectPythonExecutable();
+
+        // Validasi saat startup
+        if (!File.Exists(PtyHelperScript))
+        {
+            AnsiConsole.MarkupLine($"[red]CRITICAL: PTY helper script NOT FOUND at: {PtyHelperScript}[/]");
+            AnsiConsole.MarkupLine("[yellow]Sistem akan tetap jalan, tapi fitur Proxy Mode akan error.[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[dim]✓ PTY helper loaded: {Path.GetFileName(PtyHelperScript)}[/]");
+        }
+
+        AnsiConsole.MarkupLine($"[dim]✓ Python executable: {PythonExecutable}[/]");
+    }
+
+    private static string DetectPythonExecutable()
+    {
+        // Priority: python3 > python > py
+        string[] candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? new[] { "python", "py", "python3" }
+            : new[] { "python3", "python" };
+
+        foreach (var candidate in candidates)
+        {
+            if (IsCommandAvailable(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        // Fallback default
+        return RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python" : "python3";
+    }
 
     public static async Task RunStream(string command, string args, string? workingDir = null)
     {
@@ -25,7 +68,7 @@ public static class ShellHelper
         }
         else
         {
-             fileName = "/bin/bash";
+            fileName = "/bin/bash";
             finalArgs = $"-c \"{command} {args}\"";
         }
 
@@ -44,12 +87,14 @@ public static class ShellHelper
             EnableRaisingEvents = true
         };
 
-        process.OutputDataReceived += (sender, e) => {
+        process.OutputDataReceived += (sender, e) =>
+        {
             if (!string.IsNullOrEmpty(e.Data))
                 AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
         };
-        process.ErrorDataReceived += (sender, e) => {
-             if (!string.IsNullOrEmpty(e.Data))
+        process.ErrorDataReceived += (sender, e) =>
+        {
+            if (!string.IsNullOrEmpty(e.Data))
                 AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
         };
 
@@ -62,9 +107,10 @@ public static class ShellHelper
         if (process.ExitCode != 0)
         {
             AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
-             if (command == "npm") {
-                 AnsiConsole.MarkupLine($"[red]Error running npm. Pastikan Node.js terinstall & ada di PATH.[/]");
-             }
+            if (command == "npm")
+            {
+                AnsiConsole.MarkupLine($"[red]Error running npm. Pastikan Node.js terinstall & ada di PATH.[/]");
+            }
         }
     }
 
@@ -73,11 +119,12 @@ public static class ShellHelper
         if (!File.Exists(PtyHelperScript))
         {
             AnsiConsole.MarkupLine($"[red]FATAL: PTY helper script tidak ditemukan: {PtyHelperScript}[/]");
-            AnsiConsole.MarkupLine("[yellow]Pastikan folder 'pty-helper-py' ada di root project.[/]");
+            AnsiConsole.MarkupLine("[yellow]Fallback: Menjalankan tanpa PTY (mungkin tidak interaktif)...[/]");
+            await RunStreamInteractive(command, args, workingDir, cancellationToken);
             return;
         }
 
-        // python pty_helper.py <command> <args>
+        // CRITICAL FIX: Gunakan absolute path yang sudah diresolve
         string pythonArgs = $"\"{PtyHelperScript}\" \"{command}\" {args}";
 
         var process = new Process
@@ -120,9 +167,11 @@ public static class ShellHelper
         }
         catch (Exception ex)
         {
-             AnsiConsole.MarkupLine($"[red]Error saat menjalankan PTY wrapper: {ex.Message}[/]");
-             try { if (!process.HasExited) process.Kill(true); } catch {}
-             throw;
+            AnsiConsole.MarkupLine($"[red]Error saat menjalankan PTY wrapper: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[dim]Command: {PythonExecutable} {pythonArgs}[/]");
+            AnsiConsole.MarkupLine($"[dim]WorkDir: {workingDir ?? Directory.GetCurrentDirectory()}[/]");
+            try { if (!process.HasExited) process.Kill(true); } catch { }
+            throw;
         }
     }
 
@@ -131,11 +180,21 @@ public static class ShellHelper
         if (!File.Exists(PtyHelperScript))
         {
             AnsiConsole.MarkupLine($"[red]FATAL: PTY helper script tidak ditemukan: {PtyHelperScript}[/]");
+            AnsiConsole.MarkupLine("[yellow]Fallback: Menjalankan tanpa auto-answer (mungkin hang)...[/]");
+            await RunStreamInteractive(command, args, workingDir, cancellationToken);
             return;
         }
 
         string absInputFile = Path.GetFullPath(inputFile);
-        // python pty_helper.py <input_file> <command> <args>
+        
+        // Validasi input file
+        if (!File.Exists(absInputFile))
+        {
+            AnsiConsole.MarkupLine($"[red]ERROR: Input file tidak ditemukan: {absInputFile}[/]");
+            return;
+        }
+
+        // CRITICAL FIX: Gunakan absolute path
         string pythonArgs = $"\"{PtyHelperScript}\" \"{absInputFile}\" \"{command}\" {args}";
 
         var process = new Process
@@ -153,11 +212,13 @@ public static class ShellHelper
             }
         };
 
-        process.OutputDataReceived += (s, e) => {
+        process.OutputDataReceived += (s, e) =>
+        {
             if (!string.IsNullOrEmpty(e.Data))
                 AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
         };
-        process.ErrorDataReceived += (s, e) => {
+        process.ErrorDataReceived += (s, e) =>
+        {
             if (!string.IsNullOrEmpty(e.Data))
                 AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
         };
@@ -186,9 +247,54 @@ public static class ShellHelper
         }
         catch (Exception ex)
         {
-             AnsiConsole.MarkupLine($"[red]Error saat menjalankan PTY auto-run: {ex.Message}[/]");
-             try { if (!process.HasExited) process.Kill(true); } catch {}
-             throw;
+            AnsiConsole.MarkupLine($"[red]Error saat menjalankan PTY auto-run: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[dim]Command: {PythonExecutable} {pythonArgs}[/]");
+            AnsiConsole.MarkupLine($"[dim]Input: {absInputFile}[/]");
+            try { if (!process.HasExited) process.Kill(true); } catch { }
+            throw;
+        }
+    }
+
+    // FALLBACK: Run without PTY (basic subprocess)
+    private static async Task RunStreamInteractive(string command, string args, string? workingDir, CancellationToken cancellationToken)
+    {
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = command,
+                Arguments = args,
+                UseShellExecute = false,
+                CreateNoWindow = false,
+                WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory(),
+                RedirectStandardInput = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            }
+        };
+
+        process.OutputDataReceived += (s, e) =>
+        {
+            if (!string.IsNullOrEmpty(e.Data))
+                AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
+        };
+        process.ErrorDataReceived += (s, e) =>
+        {
+            if (!string.IsNullOrEmpty(e.Data))
+                AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
+        };
+
+        try
+        {
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            await process.WaitForExitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (!process.HasExited) process.Kill(true); } catch { }
+            throw;
         }
     }
 
