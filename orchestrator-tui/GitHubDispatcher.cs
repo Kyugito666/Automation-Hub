@@ -8,9 +8,8 @@ namespace Orchestrator;
 
 public static class GitHubDispatcher
 {
-    // Dihapus: Client, _token, _owner, _repo, Initialize()
-    // Semua state sekarang di-manage oleh TokenManager
-
+    // ... (TriggerAllBotsWorkflow, GetWorkflowRuns tidak berubah) ...
+    
     public static async Task TriggerAllBotsWorkflow()
     {
         AnsiConsole.MarkupLine("[cyan]Triggering workflow 'run-all-bots.yml' di GitHub Actions...[/]");
@@ -65,73 +64,6 @@ public static class GitHubDispatcher
         if (!success)
         {
             AnsiConsole.MarkupLine("[red]Gagal trigger workflow setelah beberapa kali percobaan.[/]");
-        }
-    }
-
-    public static async Task TriggerSingleBot(BotEntry bot, int durationMinutes = 340)
-    {
-        AnsiConsole.MarkupLine($"[cyan]Triggering single bot: {bot.Name}...[/]");
-
-        bool success = false;
-        for (int i = 0; i < 5; i++)
-        {
-            try
-            {
-                var (_, _, owner, repo) = TokenManager.GetCurrentToken();
-                if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo))
-                {
-                    AnsiConsole.MarkupLine("[red]Owner/Repo GitHub tidak dikonfigurasi di tokens.txt[/]");
-                    return;
-                }
-
-                using var client = TokenManager.CreateHttpClient();
-                var url = $"https://api.github.com/repos/{owner}/{repo}/actions/workflows/run-single-bots.yml/dispatches";
-                
-                var payload = new
-                {
-                    @ref = "main",
-                    inputs = new
-                    {
-                        bot_name = bot.Name,
-                        bot_path = bot.Path,
-                        bot_repo = bot.RepoUrl,
-                        bot_type = bot.Type,
-                        duration_minutes = durationMinutes.ToString()
-                    }
-                };
-
-                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-                var response = await client.PostAsync(url, content);
-                
-                if (response.IsSuccessStatusCode)
-                {
-                    AnsiConsole.MarkupLine($"[green]✓ {bot.Name} triggered![/]");
-                    success = true;
-                    break;
-                }
-
-                var error = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[red]✗ Failed: {response.StatusCode}[/]");
-                AnsiConsole.MarkupLine($"[dim]{error}[/]");
-
-                if (response.StatusCode == System.Net.HttpStatusCode.Forbidden || response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-                {
-                    if (TokenManager.HandleRateLimitError(new Exception("Rate limit"))) continue;
-                }
-
-                break;
-            }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"[red]✗ Exception: {ex.Message}[/]");
-                if (TokenManager.HandleRateLimitError(ex)) continue;
-                break;
-            }
-        }
-        
-        if (!success)
-        {
-            AnsiConsole.MarkupLine($"[red]Gagal trigger bot {bot.Name}.[/]");
         }
     }
 
@@ -198,23 +130,101 @@ public static class GitHubDispatcher
             }
         }
     }
-
-    // Method yang hilang, dibutuhkan oleh InteractiveProxyRunner
-    public static async Task TriggerBotWithInputs(BotEntry bot, Dictionary<string, string> capturedInputs)
+    
+    // ==========================================================
+    // === PERUBAHAN DI SINI ===
+    // ==========================================================
+    
+    // Method ini tidak dipakai lagi, digantikan oleh TriggerBotWithInputs
+    public static async Task TriggerSingleBot(BotEntry bot, int durationMinutes = 340)
     {
-        AnsiConsole.MarkupLine("[yellow]Mode 'WithInputs' belum diimplementasikan di CI.[/]");
-        AnsiConsole.MarkupLine("[dim]Input yang di-capture (jika ada) disimpan di '.bot-inputs/'.[/]");
-        AnsiConsole.MarkupLine("[dim]Menjalankan bot di remote TANPA input...[/]");
+        // Cukup panggil method baru dengan input kosong
+        await TriggerBotWithInputs(bot, new Dictionary<string, string>(), durationMinutes);
+    }
+    
+    public static async Task TriggerBotWithInputs(BotEntry bot, Dictionary<string, string> capturedInputs, int durationMinutes = 340)
+    {
+        AnsiConsole.MarkupLine($"[cyan]Triggering single bot: {bot.Name}...[/]");
+
+        // Serialisasi input (bisa jadi "{}")
+        string inputsJson = "{}";
+        try
+        {
+            inputsJson = JsonSerializer.Serialize(capturedInputs ?? new Dictionary<string, string>());
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Gagal serialisasi input: {ex.Message}[/]");
+            return;
+        }
+
+        bool success = false;
+        for (int i = 0; i < 5; i++)
+        {
+            try
+            {
+                var (_, _, owner, repo) = TokenManager.GetCurrentToken();
+                if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo))
+                {
+                    AnsiConsole.MarkupLine("[red]Owner/Repo GitHub tidak dikonfigurasi di tokens.txt[/]");
+                    return;
+                }
+
+                using var client = TokenManager.CreateHttpClient();
+                var url = $"https://api.github.com/repos/{owner}/{repo}/actions/workflows/run-single-bots.yml/dispatches";
+                
+                var payload = new
+                {
+                    @ref = "main",
+                    inputs = new
+                    {
+                        bot_name = bot.Name,
+                        bot_path = bot.Path,
+                        bot_repo = bot.RepoUrl,
+                        bot_type = bot.Type,
+                        duration_minutes = durationMinutes.ToString(),
+                        bot_inputs = inputsJson // <-- INPUT BARU
+                    }
+                };
+
+                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                var response = await client.PostAsync(url, content);
+                
+                if (response.IsSuccessStatusCode)
+                {
+                    AnsiConsole.MarkupLine($"[green]✓ {bot.Name} triggered![/]");
+                    success = true;
+                    break;
+                }
+
+                var error = await response.Content.ReadAsStringAsync();
+                AnsiConsole.MarkupLine($"[red]✗ Failed: {response.StatusCode}[/]");
+                AnsiConsole.MarkupLine($"[dim]{error}[/]");
+
+                if (response.StatusCode == System.Net.HttpStatusCode.Forbidden || response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    if (TokenManager.HandleRateLimitError(new Exception("Rate limit"))) continue;
+                }
+
+                break;
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗ Exception: {ex.Message}[/]");
+                if (TokenManager.HandleRateLimitError(ex)) continue;
+                break;
+            }
+        }
         
-        // Cukup panggil TriggerSingleBot, karena CI tidak di-setup untuk menerima input JSON
-        await TriggerSingleBot(bot);
+        if (!success)
+        {
+            AnsiConsole.MarkupLine($"[red]Gagal trigger bot {bot.Name}.[/]");
+        }
     }
 }
 
-// Definisi GitHubConfig dipindah ke TokenManager.cs
-// Hapus definisi duplikat dari sini.
-// public class GitHubConfig { ... } 
 
+// ... (Class WorkflowRunsResponse dan WorkflowRun tidak berubah) ...
 public class WorkflowRunsResponse
 {
     [JsonPropertyName("workflow_runs")]
