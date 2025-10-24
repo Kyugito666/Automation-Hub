@@ -34,12 +34,25 @@ public static class ProxyManager
         AnsiConsole.MarkupLine("\n2. Menjalankan 'pip install -r requirements.txt' untuk ProxySync...");
         await ShellHelper.RunStream("pip", "install -r requirements.txt", ProxySyncPath);
 
-        AnsiConsole.MarkupLine("\n3. Menjalankan 'python main.py'...");
-        ShellHelper.RunInNewTerminal("python", "main.py", ProxySyncPath);
-        
-        AnsiConsole.MarkupLine("[green]Terminal eksternal dibuka. Selesaikan proses di terminal tersebut.[/]");
-        AnsiConsole.MarkupLine("[dim]Tekan Enter di sini setelah selesai...[/]");
-        Console.ReadLine();
+        // Cek apakah ada auto_deploy.py
+        var autoDeployScript = Path.Combine(ProxySyncPath, "auto_deploy.py");
+        var hasAutoScript = File.Exists(autoDeployScript);
+
+        if (hasAutoScript)
+        {
+            AnsiConsole.MarkupLine("\n3. Menjalankan ProxySync (Auto Mode)...");
+            AnsiConsole.MarkupLine("[dim]Download → Convert → Test → Distribute[/]");
+            await ShellHelper.RunStream("python", "auto_deploy.py", ProxySyncPath);
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("\n3. Menjalankan ProxySync (Manual Mode)...");
+            AnsiConsole.MarkupLine("[yellow]auto_deploy.py tidak ditemukan, membuka terminal interaktif...[/]");
+            ShellHelper.RunInNewTerminal("python", "main.py", ProxySyncPath);
+            AnsiConsole.MarkupLine("[green]Terminal eksternal dibuka.[/]");
+            AnsiConsole.MarkupLine("[dim]Tekan Enter setelah selesai...[/]");
+            Console.ReadLine();
+        }
         
         AnsiConsole.MarkupLine("\n[bold green]✅ Proses deploy proxy selesai.[/]");
     }
