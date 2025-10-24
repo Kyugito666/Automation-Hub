@@ -36,6 +36,13 @@ jobs:
             path=$(echo "$bot_config" | jq -r '.path')
             url=$(echo "$bot_config" | jq -r '.repo_url')
             name=$(echo "$bot_config" | jq -r '.name')
+            enabled=$(echo "$bot_config" | jq -r '.enabled')
+            
+            # Skip disabled bots
+            if [ "$enabled" != "true" ]; then
+              echo "--- [$name] DISABLED, skipping ---"
+              continue
+            fi
             
             echo "--- [$name] ---"
             if [ -d "$path/.git" ]; then
@@ -49,7 +56,7 @@ jobs:
           done
           echo "✓ Semua tools dan bot berhasil di-sync."
 
-      - name: 5. Deploy Proxies (via ProxySync)
+      - name: 5. Deploy Proxies (via ProxySync Auto Mode)
         run: |
           if [ ! -d "proxysync" ]; then
             echo "ERROR: ProxySync tidak ditemukan!"
@@ -60,13 +67,22 @@ jobs:
           cp config/apilist.txt proxysync/apilist.txt
           cp config/paths.txt proxysync/paths.txt
           
-          echo "Running ProxySync..."
+          echo "Installing ProxySync deps..."
           cd proxysync
           pip install --no-cache-dir -r requirements.txt
-          python main.py
+          
+          # CRITICAL: Gunakan auto mode jika tersedia
+          if [ -f "auto_deploy.py" ]; then
+            echo "Running ProxySync in AUTO mode..."
+            python auto_deploy.py
+          else
+            echo "ERROR: auto_deploy.py tidak ditemukan!"
+            echo "ProxySync tidak bisa jalan di CI/CD tanpa auto mode."
+            exit 1
+          fi
           cd ..
 
-      - name: 6. Jalankan Semua Bot (Parallel Execution)
+      - name: 6. Jalankan Semua Bot (Headless Mode Only)
         run: |
           run_bot_category() {
             local category=$1
@@ -88,20 +104,40 @@ jobs:
                   
                   # Install dependencies
                   if [ -f "requirements.txt" ]; then
-                    pip install --no-cache-dir -r requirements.txt
+                    pip install --no-cache-dir -q -r requirements.txt
                   fi
                   
                   if [ -f "package.json" ]; then
                     npm install --silent
                   fi
                   
-                  # Run bot
+                  # CRITICAL: Cari run file dengan headless/auto flag
                   if [ -f "run.py" ]; then
-                    python run.py 2>&1 | sed "s/^/[$bot_name] /" &
+                    # Cek apakah support --headless atau --auto
+                    if grep -q "headless\|auto\|no-interactive" run.py; then
+                      echo "[$bot_name] Running in headless mode..."
+                      timeout 340m python run.py --headless 2>&1 | sed "s/^/[$bot_name] /" &
+                    else
+                      echo "[$bot_name] WARNING: No headless mode detected, may hang!"
+                      # Jalankan dengan timeout ketat
+                      timeout 10m python run.py 2>&1 | sed "s/^/[$bot_name] /" || echo "[$bot_name] TIMEOUT/ERROR"
+                    fi
                   elif [ -f "index.js" ]; then
-                    node index.js 2>&1 | sed "s/^/[$bot_name] /" &
+                    if grep -q "headless\|auto\|no-interactive" index.js; then
+                      echo "[$bot_name] Running in headless mode..."
+                      timeout 340m node index.js --headless 2>&1 | sed "s/^/[$bot_name] /" &
+                    else
+                      echo "[$bot_name] WARNING: No headless mode detected, may hang!"
+                      timeout 10m node index.js 2>&1 | sed "s/^/[$bot_name] /" || echo "[$bot_name] TIMEOUT/ERROR"
+                    fi
+                  elif [ -f "main.py" ]; then
+                    if grep -q "headless\|auto" main.py; then
+                      timeout 340m python main.py --headless 2>&1 | sed "s/^/[$bot_name] /" &
+                    else
+                      timeout 10m python main.py 2>&1 | sed "s/^/[$bot_name] /" || echo "[$bot_name] TIMEOUT/ERROR"
+                    fi
                   else
-                    echo "[$bot_name] ERROR: No run.py or index.js found!"
+                    echo "[$bot_name] ERROR: No run file found!"
                   fi
                 ) &
                 
@@ -117,3 +153,13 @@ jobs:
           echo "=== Waiting for all bot processes ==="
           wait
           echo "✓ All bots completed."
+
+      - name: 7. Upload Logs (On Failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-logs
+          path: |
+            bots/**/logs/
+            bots/**/*.log
+          retention-days: 7
