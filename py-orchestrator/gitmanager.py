@@ -1,13 +1,11 @@
 import asyncio
 from rich.console import Console
-# --- IMPORT YANG BENAR (SETELAH UPGRADE RICH) ---
 from rich.progress import (
     Progress,
     TextColumn,
     BarColumn,
     SpinnerColumn
 )
-# --------------------------------
 from tokenmanager import TokenManager
 
 console = Console()
@@ -17,6 +15,7 @@ async def validate_all_tokens():
     tokens = TokenManager.get_all_token_entries()
     owner, repo = TokenManager.get_repo_info()
     if not tokens:
+        console.print("[red]Tidak ada token ditemukan di github_tokens.txt[/]")
         return
 
     cache = TokenManager.get_username_cache()
@@ -35,10 +34,11 @@ async def validate_all_tokens():
             token_display = TokenManager.mask_token(entry.token)
             prog.update(task, description=f"[green]Memvalidasi:[/] {token_display}")
 
-            if entry.token in cache:
-                entry.username = cache[entry.token]
-                prog.advance(task)
-                continue
+            # Force validasi ulang untuk debug (hapus cache check sementara)
+            # if entry.token in cache:
+            #     entry.username = cache[entry.token]
+            #     prog.advance(task)
+            #     continue
 
             try:
                 async with TokenManager.create_http_client(entry) as client:
