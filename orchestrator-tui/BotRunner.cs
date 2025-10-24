@@ -1,15 +1,16 @@
 using System.Text.Json;
 using Spectre.Console;
 using System.Runtime.InteropServices;
-using System.IO; // <-- Tambahkan using ini
+using System.IO;
 
 namespace Orchestrator;
 
 public static class BotRunner
 {
     private const string ConfigFile = "../config/bots_config.json";
+    private const string VenvDirName = ".venv"; // Nama folder venv standar
 
-    // ... (RunAllBots, RunSequential, RunParallel, RunBackground, InstallDependencies tidak berubah) ...
+    // ... (RunAllBots, RunSequential, RunParallel, RunBackground tidak berubah) ...
      public static async Task RunAllBots()
     {
         var config = LoadConfig();
@@ -70,26 +71,26 @@ public static class BotRunner
         {
             AnsiConsole.MarkupLine($"\n[cyan]▶ {bot.Name}[/]");
 
-            var botPath = Path.Combine("..", bot.Path);
+            var botPath = Path.GetFullPath(Path.Combine("..", bot.Path)); // Get full path
             if (!Directory.Exists(botPath))
             {
                 AnsiConsole.MarkupLine($"[red]  ✗ Folder tidak ditemukan: {botPath}[/]");
                 continue;
             }
 
-            // Install deps
+            // Install deps (will handle venv)
             await InstallDependencies(botPath, bot.Type);
 
-            // Determine run command
+            // Determine run command (will use venv python if applicable)
             var (executor, args) = GetRunCommand(botPath, bot.Type);
             if (string.IsNullOrEmpty(executor))
             {
-                AnsiConsole.MarkupLine($"[red]  ✗ Tidak ada run file atau npm start[/]"); // Updated message
+                AnsiConsole.MarkupLine($"[red]  ✗ Tidak ada run file, npm start, atau venv python[/]"); // Updated message
                 continue;
             }
 
             // Open terminal
-            AnsiConsole.MarkupLine($"[green]  ✓ Membuka terminal untuk '{executor} {args}'...[/]");
+            AnsiConsole.MarkupLine($"[green]  ✓ Membuka terminal untuk '{Path.GetFileName(executor)} {args}'...[/]");
             ShellHelper.RunInNewTerminal(executor, args, botPath);
 
             AnsiConsole.MarkupLine($"[dim]  Tekan Enter untuk lanjut ke bot berikutnya...[/]");
@@ -100,84 +101,104 @@ public static class BotRunner
     {
         AnsiConsole.MarkupLine("[yellow]Membuka semua bot dalam terminal terpisah...[/]");
 
+        // Lakukan instalasi dependensi secara sekuensial dulu untuk menghindari race condition
+        AnsiConsole.MarkupLine("[cyan]Menginstall dependensi (mungkin perlu waktu)...[/]");
+        bool firstInstall = true;
+        foreach (var bot in bots) {
+             var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
+             if (Directory.Exists(botPath)) {
+                 if (!firstInstall) AnsiConsole.Write("."); // Tunjukkan progress
+                 _ = InstallDependencies(botPath, bot.Type).Result; // Jalankan sinkron tapi abaikan output detail
+                 firstInstall = false;
+             }
+        }
+        AnsiConsole.WriteLine("\n[green]Instalasi dependensi selesai.[/]");
+
+
+        AnsiConsole.MarkupLine("[yellow]Meluncurkan bot secara paralel...[/]");
         foreach (var bot in bots)
         {
-            var botPath = Path.Combine("..", bot.Path);
+            var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
             if (!Directory.Exists(botPath))
             {
                 AnsiConsole.MarkupLine($"[red]✗ {bot.Name}: Folder tidak ditemukan[/]");
                 continue;
             }
 
-            // Install dependencies first (run silently in background)
-            // Note: This might cause issues if multiple npm installs run in parallel? Consider sequential install first.
-            // For now, let's keep it simple.
-            _ = InstallDependencies(botPath, bot.Type); // Fire and forget install
-
             var (executor, args) = GetRunCommand(botPath, bot.Type);
             if (string.IsNullOrEmpty(executor))
             {
-                AnsiConsole.MarkupLine($"[red]✗ {bot.Name}: Tidak ada run file atau npm start[/]");
+                AnsiConsole.MarkupLine($"[red]✗ {bot.Name}: Tidak ada run file, npm start, atau venv python[/]");
                 continue;
             }
 
-            AnsiConsole.MarkupLine($"[cyan]✓ Launching {bot.Name} ('{executor} {args}')...[/]");
+            AnsiConsole.MarkupLine($"[cyan]✓ Launching {bot.Name} ('{Path.GetFileName(executor)} {args}')...[/]");
             ShellHelper.RunInNewTerminal(executor, args, botPath);
 
-            Thread.Sleep(2000); // Delay between launches
+            Thread.Sleep(500); // Perkecil delay antar launch
         }
 
         AnsiConsole.MarkupLine("\n[dim]Semua bot telah diluncurkan di terminal terpisah.[/]");
     }
-     private static async Task RunBackground(List<BotEntry> bots)
+    private static async Task RunBackground(List<BotEntry> bots)
     {
         var processes = new List<System.Diagnostics.Process>();
 
         AnsiConsole.MarkupLine("[yellow]Menjalankan bot di background (non-interactive)...[/]");
         AnsiConsole.MarkupLine("[red]WARNING: Bot dengan menu interaktif akan hang![/]\n");
 
+         // Install deps sequentially first
+        AnsiConsole.MarkupLine("[cyan]Menginstall dependensi (mungkin perlu waktu)...[/]");
+        bool firstInstallBg = true;
+        foreach (var bot in bots) {
+             var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
+             if (Directory.Exists(botPath)) {
+                  if (!firstInstallBg) AnsiConsole.Write(".");
+                 _ = InstallDependencies(botPath, bot.Type).Result;
+                  firstInstallBg = false;
+             }
+        }
+        AnsiConsole.WriteLine("\n[green]Instalasi dependensi selesai.[/]");
+
+
+        AnsiConsole.MarkupLine("[yellow]Memulai bot di background...[/]");
         foreach (var bot in bots)
         {
-            var botPath = Path.Combine("..", bot.Path);
+            var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
             if (!Directory.Exists(botPath))
             {
                 AnsiConsole.MarkupLine($"[red]✗ {bot.Name}: Folder tidak ditemukan[/]");
                 continue;
             }
 
-            // Install deps first
-            await InstallDependencies(botPath, bot.Type);
-
             var (executor, args) = GetRunCommand(botPath, bot.Type);
             if (string.IsNullOrEmpty(executor))
             {
-                AnsiConsole.MarkupLine($"[red]✗ {bot.Name}: Tidak ada run file atau npm start[/]");
+                AnsiConsole.MarkupLine($"[red]✗ {bot.Name}: Tidak ada run file, npm start, atau venv python[/]");
                 continue;
             }
 
-            AnsiConsole.MarkupLine($"[cyan]✓ Starting {bot.Name} ('{executor} {args}')...[/]");
+            AnsiConsole.MarkupLine($"[cyan]✓ Starting {bot.Name} ('{Path.GetFileName(executor)} {args}')...[/]");
 
-            var process = new System.Diagnostics.Process
-            {
-                StartInfo = new System.Diagnostics.ProcessStartInfo
+            // Buat ProcessStartInfo dengan executor absolut
+             var startInfo = new System.Diagnostics.ProcessStartInfo
                 {
-                    // Use ShellHelper's logic to handle cmd/bash execution
-                    FileName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "cmd.exe" : "/bin/bash",
-                    Arguments = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                        ? $"/c \"{executor} {args}\""
-                        : $"-c \"{executor} {args}\"",
+                    FileName = executor, // Gunakan path absolut dari GetRunCommand
+                    Arguments = args,
                     WorkingDirectory = botPath,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true
-                }
-            };
+                };
+
+            // Tidak perlu wrap dengan cmd/bash karena kita panggil executable langsung
+            var process = new System.Diagnostics.Process { StartInfo = startInfo };
+
 
             process.OutputDataReceived += (s, e) =>
             {
                 if (!string.IsNullOrEmpty(e.Data))
-                    // Use AnsiConsole for thread-safe writing potentially
                     AnsiConsole.MarkupLineInterpolated($"[[{bot.Name}]] [grey]{e.Data.EscapeMarkup()}[/]");
             };
 
@@ -187,14 +208,21 @@ public static class BotRunner
                     AnsiConsole.MarkupLineInterpolated($"[[{bot.Name}]] [yellow]{e.Data.EscapeMarkup()}[/]");
             };
 
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+            try
+            {
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                processes.Add(process);
+                AnsiConsole.MarkupLine($"[green]  Started (PID: {process.Id})[/]");
+            }
+            catch (Exception ex)
+            {
+                 AnsiConsole.MarkupLine($"[red]  ✗ Gagal start PID: {ex.Message}[/]");
+            }
 
-            processes.Add(process);
-            AnsiConsole.MarkupLine($"[green]  Started (PID: {process.Id})[/]");
 
-            await Task.Delay(3000); // Stagger start
+            await Task.Delay(1000); // Stagger start
         }
 
         AnsiConsole.MarkupLine("\n[yellow]Semua bot berjalan. Tekan Enter untuk stop semua...[/]");
@@ -208,7 +236,7 @@ public static class BotRunner
                 if (!p.HasExited)
                 {
                     AnsiConsole.MarkupLine($"[dim]  Stopping PID {p.Id}...[/]");
-                    p.Kill(true); // Force kill process tree
+                    p.Kill(true);
                 }
             }
             catch (Exception ex)
@@ -219,22 +247,46 @@ public static class BotRunner
 
         AnsiConsole.MarkupLine("[green]✓ Semua bot dihentikan.[/]");
     }
-     public static async Task InstallDependencies(string botPath, string type)
+
+    // === METHOD YANG DIMODIFIKASI ===
+    public static async Task InstallDependencies(string botPath, string type)
     {
+        string botName = Path.GetFileName(botPath);
         if (type == "python" && File.Exists(Path.Combine(botPath, "requirements.txt")))
         {
-            AnsiConsole.MarkupLine($"[dim]  Installing Python deps for '{Path.GetFileName(botPath)}'...[/]");
-            await ShellHelper.RunStream("pip", "install --no-cache-dir -q -r requirements.txt", botPath);
-        }
+            string venvPath = Path.Combine(botPath, VenvDirName);
+            string pythonExe = GetPythonExecutableInVenv(botPath) ?? "python"; // Fallback ke python global jika venv gagal dibuat
+            string pipExe = GetPipExecutableInVenv(botPath);
 
-        if (type == "javascript" && File.Exists(Path.Combine(botPath, "package.json")))
-        {
-            AnsiConsole.MarkupLine($"[dim]  Installing Node deps for '{Path.GetFileName(botPath)}'...[/]");
-            // Cek jika node_modules sudah ada dan package-lock.json ada, mungkin `npm ci` lebih cepat?
-            if (Directory.Exists(Path.Combine(botPath, "node_modules")) && File.Exists(Path.Combine(botPath, "package-lock.json"))) {
-                 await ShellHelper.RunStream("npm", "ci --silent", botPath);
+            // 1. Buat Venv jika belum ada
+            if (!Directory.Exists(venvPath))
+            {
+                AnsiConsole.MarkupLine($"[dim]  Membuat venv untuk '{botName}'...[/]");
+                // Gunakan python global untuk membuat venv
+                await ShellHelper.RunStream("python", $"-m venv \"{VenvDirName}\"", botPath);
+                // Update executable paths setelah venv dibuat
+                pythonExe = GetPythonExecutableInVenv(botPath) ?? pythonExe;
+                pipExe = GetPipExecutableInVenv(botPath);
+            }
+
+            // 2. Install requirements menggunakan pip dari venv
+            if (!string.IsNullOrEmpty(pipExe))
+            {
+                 AnsiConsole.MarkupLine($"[dim]  Installing Python deps for '{botName}' using venv...[/]");
+                 // Langsung panggil pip dari venv, tidak perlu aktivasi shell
+                await ShellHelper.RunStream($"\"{pipExe}\"", "install --no-cache-dir -q -r requirements.txt", botPath);
             } else {
-                 await ShellHelper.RunStream("npm", "install --silent", botPath);
+                 AnsiConsole.MarkupLine($"[red]  ✗ Tidak bisa menemukan pip di venv untuk '{botName}'. Instalasi dependensi mungkin gagal.[/]");
+            }
+
+        }
+        else if (type == "javascript" && File.Exists(Path.Combine(botPath, "package.json")))
+        {
+            AnsiConsole.MarkupLine($"[dim]  Installing Node deps for '{botName}'...[/]");
+            if (Directory.Exists(Path.Combine(botPath, "node_modules")) && File.Exists(Path.Combine(botPath, "package-lock.json"))) {
+                 await ShellHelper.RunStream("npm", "ci --silent --no-progress", botPath); // Tambah --no-progress
+            } else {
+                 await ShellHelper.RunStream("npm", "install --silent --no-progress", botPath); // Tambah --no-progress
             }
         }
     }
@@ -244,15 +296,33 @@ public static class BotRunner
     {
         if (type == "python")
         {
-            if (File.Exists(Path.Combine(botPath, "run.py")))
-                return ("python", "run.py");
-            if (File.Exists(Path.Combine(botPath, "main.py")))
-                return ("python", "main.py");
-            if (File.Exists(Path.Combine(botPath, "bot.py")))
-                return ("python", "bot.py");
+            // Prioritaskan Python dari venv
+            string pythonInVenv = GetPythonExecutableInVenv(botPath);
+            if (!string.IsNullOrEmpty(pythonInVenv))
+            {
+                if (File.Exists(Path.Combine(botPath, "run.py")))
+                    return (pythonInVenv, "run.py");
+                if (File.Exists(Path.Combine(botPath, "main.py")))
+                    return (pythonInVenv, "main.py");
+                if (File.Exists(Path.Combine(botPath, "bot.py")))
+                    return (pythonInVenv, "bot.py");
+
+                // Jika file spesifik tidak ada tapi venv ada, return venv python tanpa args?
+                // Atau anggap error? Untuk saat ini anggap error jika file utama tidak ada.
+                AnsiConsole.MarkupLine($"[yellow]Warning: Venv ditemukan di '{Path.GetFileName(botPath)}' tapi tidak ada run.py/main.py/bot.py.[/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[yellow]Warning: Venv tidak ditemukan atau gagal dibuat untuk '{Path.GetFileName(botPath)}'. Mencoba python global (mungkin gagal).[/]");
+                // Fallback ke python global jika venv tidak ada (meskipun dependensi mungkin tidak cocok)
+                if (File.Exists(Path.Combine(botPath, "run.py"))) return ("python", "run.py");
+                if (File.Exists(Path.Combine(botPath, "main.py"))) return ("python", "main.py");
+                if (File.Exists(Path.Combine(botPath, "bot.py"))) return ("python", "bot.py");
+            }
         }
         else if (type == "javascript")
         {
+            // Logika npm start tetap sama
             string packageJsonPath = Path.Combine(botPath, "package.json");
             if (File.Exists(packageJsonPath))
             {
@@ -265,34 +335,60 @@ public static class BotRunner
                         startScript.ValueKind == JsonValueKind.String &&
                         !string.IsNullOrWhiteSpace(startScript.GetString()))
                     {
-                        // Ditemukan "scripts": { "start": "..." }
                         return ("npm", "start");
                     }
                 }
                 catch (JsonException ex)
                 {
                     AnsiConsole.MarkupLine($"[yellow]Warning: Gagal parse package.json di {botPath}: {ex.Message}[/]");
-                    // Lanjutkan ke fallback filename check
                 }
             }
-
-            // Fallback: Cari file spesifik jika npm start tidak ada
-            if (File.Exists(Path.Combine(botPath, "index.js")))
-                return ("node", "index.js");
-            if (File.Exists(Path.Combine(botPath, "main.js")))
-                return ("node", "main.js");
-            if (File.Exists(Path.Combine(botPath, "bot.js")))
-                return ("node", "bot.js");
+            // Fallback cari file JS
+            if (File.Exists(Path.Combine(botPath, "index.js"))) return ("node", "index.js");
+            if (File.Exists(Path.Combine(botPath, "main.js"))) return ("node", "main.js");
+            if (File.Exists(Path.Combine(botPath, "bot.js"))) return ("node", "bot.js");
         }
 
-        // Tidak ada yang ditemukan
         return (string.Empty, string.Empty);
     }
-    // =============================
+
+    // === HELPER BARU untuk path venv ===
+    private static string GetPythonExecutableInVenv(string botPath)
+    {
+        string venvPath = Path.Combine(botPath, VenvDirName);
+        string exePath;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            exePath = Path.Combine(venvPath, "Scripts", "python.exe");
+        }
+        else // Linux or macOS
+        {
+            exePath = Path.Combine(venvPath, "bin", "python");
+        }
+        return File.Exists(exePath) ? Path.GetFullPath(exePath) : null; // Return full path if exists
+    }
+
+    private static string GetPipExecutableInVenv(string botPath)
+    {
+        string venvPath = Path.Combine(botPath, VenvDirName);
+        string exePath;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            exePath = Path.Combine(venvPath, "Scripts", "pip.exe");
+        }
+        else // Linux or macOS
+        {
+            exePath = Path.Combine(venvPath, "bin", "pip");
+        }
+         return File.Exists(exePath) ? Path.GetFullPath(exePath) : null; // Return full path if exists
+    }
+    // ===================================
+
 
     private static BotConfig? LoadConfig()
     {
-        if (!File.Exists(ConfigFile))
+        // ... (Tidak berubah) ...
+         if (!File.Exists(ConfigFile))
         {
             AnsiConsole.MarkupLine($"[red]Error: '{ConfigFile}' tidak ditemukan.[/]");
             return null;
@@ -312,10 +408,11 @@ public static class BotRunner
             return null;
         }
     }
-     // Helper function for pausing
+
     private static void Pause()
     {
-        AnsiConsole.MarkupLine("\n[grey]Press Enter to continue...[/]");
+        // ... (Tidak berubah) ...
+         AnsiConsole.MarkupLine("\n[grey]Press Enter to continue...[/]");
         Console.ReadLine();
     }
 }
