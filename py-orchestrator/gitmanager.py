@@ -1,6 +1,6 @@
 import asyncio
 from rich.console import Console
-# --- PERUBAHAN IMPORT DI SINI ---
+# --- IMPORT YANG BENAR (SETELAH UPGRADE RICH) ---
 from rich.progress import (
     Progress,
     TextColumn,
@@ -23,15 +23,14 @@ async def validate_all_tokens():
     cache = TokenManager.get_username_cache()
     new_users = 0
 
-    # --- PERUBAHAN BLOK 'with' PERTAMA ---
-    with Progress( # Hapus 'progress.'
-        TextColumn("[progress.description]{task.description}"), # Hapus 'progress.'
-        BarColumn(), # Hapus 'progress.'
-        PercentageColumn(), # Hapus 'progress.'
-        SpinnerColumn(), # Hapus 'progress.'
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        PercentageColumn(),
+        SpinnerColumn(),
         console=console,
         transient=True
-    ) as prog: # Ganti nama variabel jadi 'prog'
+    ) as prog:
         task = prog.add_task("[green]Memvalidasi token...[/]", total=len(tokens))
 
         for entry in tokens:
@@ -65,7 +64,6 @@ async def validate_all_tokens():
 
             prog.advance(task)
             await asyncio.sleep(0.5) # Rate limit ringan
-    # --- AKHIR PERUBAHAN BLOK 'with' PERTAMA ---
 
     TokenManager.save_token_cache(cache)
     console.print(f"[green]✓ Validasi selesai. {new_users} username baru ditambahkan ke cache.[/]")
@@ -95,15 +93,14 @@ async def invite_collaborators():
         return
 
     success = 0
-    # --- PERUBAHAN BLOK 'with' KEDUA ---
-    with Progress( # Hapus 'progress.'
-        TextColumn("[progress.description]{task.description}"), # Hapus 'progress.'
-        BarColumn(), # Hapus 'progress.'
-        PercentageColumn(), # Hapus 'progress.'
-        SpinnerColumn(), # Hapus 'progress.'
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        PercentageColumn(),
+        SpinnerColumn(),
         console=console,
         transient=True
-    ) as prog: # Ganti nama variabel jadi 'prog'
+    ) as prog:
         task = prog.add_task("[green]Mengirim undangan...[/]", total=len(users_to_invite))
 
         async with TokenManager.create_http_client(main_token_entry) as client:
@@ -130,7 +127,6 @@ async def invite_collaborators():
 
                 prog.advance(task)
                 await asyncio.sleep(1) # Rate limit API invite
-    # --- AKHIR PERUBAHAN BLOK 'with' KEDUA ---
 
     console.print(f"[green]✓ Proses undangan selesai. {success}/{len(users_to_invite)} berhasil.[/]")
 
@@ -145,15 +141,14 @@ async def accept_invitations():
     accepted = 0
     not_found = 0
 
-    # --- PERUBAHAN BLOK 'with' KETIGA ---
-    with Progress( # Hapus 'progress.'
-        TextColumn("[progress.description]{task.description}"), # Hapus 'progress.'
-        BarColumn(), # Hapus 'progress.'
-        PercentageColumn(), # Hapus 'progress.'
-        SpinnerColumn(), # Hapus 'progress.'
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        PercentageColumn(),
+        SpinnerColumn(),
         console=console,
         transient=True
-    ) as prog: # Ganti nama variabel jadi 'prog'
+    ) as prog:
         task = prog.add_task("[green]Menerima undangan...[/]", total=len(tokens))
 
         for entry in tokens:
@@ -192,6 +187,5 @@ async def accept_invitations():
 
             prog.advance(task)
             await asyncio.sleep(0.5)
-    # --- AKHIR PERUBAHAN BLOK 'with' KETIGA ---
 
     console.print(f"[green]✓ Proses selesai. Undangan diterima: {accepted}. Tidak ditemukan: {not_found}.[/]")
