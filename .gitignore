@@ -15,6 +15,7 @@ __pycache__/
 # File state & input rahasia dari Orchestrator
 .token-state.json
 .bot-inputs/
+.token-cache.json
 
 # Abaikan file .NET build (bin/obj)
 **/bin/
