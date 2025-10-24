@@ -21,6 +21,7 @@ async def main():
     while True:
         show_menu()
         try:
+            # Perbaikan UI: Gunakan input() standar untuk menghindari prompt "?" yang berantakan
             choice = input("Pilih menu (1-4): ").strip()
             if choice == "1":
                 await gitmanager.validate_all_tokens()
@@ -39,7 +40,7 @@ async def main():
         except Exception as e:
             console.print(f"[red]Error: {e}[/]")
         
-        # Tunggu input untuk lanjut, tanpa prompt yang berantakan
+        # Perbaikan UI: Gunakan input() standar untuk prompt lanjut yang bersih
         input("Tekan Enter untuk lanjut...")
 
 if __name__ == "__main__":
