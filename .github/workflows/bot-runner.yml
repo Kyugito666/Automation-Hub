@@ -3,59 +3,111 @@ name: Bot Runner 24/7 (Self-Healing)
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */6 * * *' # Self-healing setiap 6 jam
 
 jobs:
   run-all-bots:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 350 # Berhenti sebelum batas 6 jam (360m)
 
     steps:
       - name: 1. Checkout Framework (Automation-Hub)
         uses: actions/checkout@v4
 
-      - name: 2. Setup Python
+      - name: 2. Setup Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           cache: 'pip'
 
-      - name: 3. Clone/Pull Semua Bot & Tools
-        run: |
-          pip install -r orchestrator/requirements.txt
-          # Script updater akan clone 'bots/' dan 'proxysync/'
-          python orchestrator/update_bots.py 
+      - name: 3. Install jq (JSON Parser)
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: 4. Deploy Proxies (via ProxySync)
+      - name: 4. Clone/Pull Semua Bot & Tools (via Bash+jq)
         run: |
-          echo "Menyiapkan ProxySync..."
-          # Salin config lu ke proxysync yang baru di-clone
+          echo "=== Memproses bots_config.json ==="
+          jq -c '.bots_and_tools[]' config/bots_config.json | while IFS= read -r bot_config; do
+            path=$(echo "$bot_config" | jq -r '.path')
+            url=$(echo "$bot_config" | jq -r '.repo_url')
+            name=$(echo "$bot_config" | jq -r '.name')
+            
+            echo "--- [$name] ---"
+            if [ -d "$path/.git" ]; then
+              echo "Updating existing repo..."
+              (cd "$path" && git pull --rebase || echo "WARN: Pull failed for $name") || true
+            else
+              echo "Cloning new repo..."
+              mkdir -p "$(dirname "$path")"
+              git clone --depth 1 "$url" "$path" || echo "ERROR: Clone failed for $name"
+            fi
+          done
+          echo "✓ Semua tools dan bot berhasil di-sync."
+
+      - name: 5. Deploy Proxies (via ProxySync)
+        run: |
+          if [ ! -d "proxysync" ]; then
+            echo "ERROR: ProxySync tidak ditemukan!"
+            exit 1
+          fi
+          
+          echo "Copying proxy configs..."
           cp config/apilist.txt proxysync/apilist.txt
           cp config/paths.txt proxysync/paths.txt
           
-          echo "Menjalankan ProxySync..."
+          echo "Running ProxySync..."
           cd proxysync
-          pip install -r requirements.txt
-          python main.py # Jalankan proxysync
+          pip install --no-cache-dir -r requirements.txt
+          python main.py
           cd ..
 
-      - name: 5. Jalankan Semua Bot
+      - name: 6. Jalankan Semua Bot (Parallel Execution)
         run: |
-          echo "--- Memulai Bot PrivateKey ---"
-          BASE_DIR=$PWD/bots/privatekey
-          for bot_dir in $BASE_DIR/*; do
-            if [ -d "$bot_dir" ]; then
-              echo "--- Menjalankan $(basename "$bot_dir") ---"
-              cd "$bot_dir"
-              if [ -f "requirements.txt" ]; then
-                pip install -r requirements.txt
-              fi
-              python run.py &
-              sleep 5
+          run_bot_category() {
+            local category=$1
+            local base_dir="$PWD/bots/$category"
+            
+            if [ ! -d "$base_dir" ]; then
+              echo "WARN: Folder $category tidak ditemukan, skip..."
+              return
             fi
-          done
-          # (Loop yang sama untuk bots/token)
-          ...
+            
+            echo "=== Starting $category bots ==="
+            for bot_dir in "$base_dir"/*; do
+              if [ -d "$bot_dir" ]; then
+                bot_name=$(basename "$bot_dir")
+                echo "--- Launching: $bot_name ---"
+                
+                (
+                  cd "$bot_dir"
+                  
+                  # Install dependencies
+                  if [ -f "requirements.txt" ]; then
+                    pip install --no-cache-dir -r requirements.txt
+                  fi
+                  
+                  if [ -f "package.json" ]; then
+                    npm install --silent
+                  fi
+                  
+                  # Run bot
+                  if [ -f "run.py" ]; then
+                    python run.py 2>&1 | sed "s/^/[$bot_name] /" &
+                  elif [ -f "index.js" ]; then
+                    node index.js 2>&1 | sed "s/^/[$bot_name] /" &
+                  else
+                    echo "[$bot_name] ERROR: No run.py or index.js found!"
+                  fi
+                ) &
+                
+                sleep 3 # Delay untuk menghindari race condition
+              fi
+            done
+          }
           
-          echo "Menunggu semua proses bot selesai..."
+          # Run kedua kategori bot
+          run_bot_category "privatekey"
+          run_bot_category "token"
+          
+          echo "=== Waiting for all bot processes ==="
           wait
+          echo "✓ All bots completed."
