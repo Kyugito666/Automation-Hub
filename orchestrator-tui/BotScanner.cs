@@ -11,18 +11,36 @@ public static class BotScanner
 {
     private const string LogFile = "../.raw-bots.log";
 
-    // Keyword berbahaya yang menandakan Raw Input
-    private static readonly string[] PyRawKeywords = { "msvcrt.getch", "termios.tcsetattr", "tty.setraw" };
-    private static readonly string[] JsRawKeywords = { ".setRawMode(true)", "process.stdin.on('data'" };
+    // === KEYWORD DIPERBANYAK ===
+    // Keyword Python
+    private static readonly string[] PyRawKeywords = 
+    { 
+        "msvcrt.getch", 
+        "termios.tcsetattr", 
+        "tty.setraw",
+        "readchar" // Library 'readchar'
+    };
     
-    // File entry point yang umum
-    private static readonly string[] PyEntryPoints = { "run.py", "main.py", "bot.py" };
-    private static readonly string[] JsEntryPoints = { "index.js", "main.js", "bot.js" };
+    // Keyword JavaScript (ditambah library TUI populer)
+    private static readonly string[] JsRawKeywords = 
+    { 
+        ".setRawMode(true)", 
+        "process.stdin.on('data'", 
+        "process.stdin.on('keypress'", // Keyword penting
+        "require('enquirer')",       // Library TUI
+        "require('prompts')",        // Library TUI
+        "require('inquirer')",       // Library TUI
+        "require('keypress')"        // Library Raw Input
+    };
+    
+    // File entry point (TIDAK DIPAKAI LAGI, TAPI DISIMPAN BUAT REFERENSI)
+    // private static readonly string[] PyEntryPoints = { "run.py", "main.py", "bot.py" };
+    // private static readonly string[] JsEntryPoints = { "index.js", "main.js", "bot.js" };
 
     public static async Task ScanAllBots(CancellationToken cancellationToken)
     {
-        AnsiConsole.MarkupLine("[bold cyan]--- Memulai Scan Kompatibilitas Input Bot ---[/]");
-        AnsiConsole.MarkupLine("[dim]Menganalisa file kode... (Tidak menjalankan bot, proses cepat)[/]");
+        AnsiConsole.MarkupLine("[bold cyan]--- Memulai Scan Kompatibilitas Input Bot (Deep Scan) ---[/]");
+        AnsiConsole.MarkupLine("[dim]Menganalisa SEMUA file kode... (Tidak menjalankan bot, proses cepat)[/]");
         
         var config = BotConfig.Load();
         if (config == null) return;
@@ -30,7 +48,7 @@ public static class BotScanner
         var bots = config.BotsAndTools.Where(b => b.Enabled && b.IsBot).ToList();
         var rawBots = new List<BotEntry>();
 
-        var table = new Table().Title("Hasil Scan Kompatibilitas Input").Expand();
+        var table = new Table().Title("Hasil Scan Kompatibilitas Input (Deep Scan)").Expand();
         table.AddColumn("Bot");
         table.AddColumn("Tipe");
         table.AddColumn("Status");
@@ -53,7 +71,8 @@ public static class BotScanner
                     cancellationToken.ThrowIfCancellationRequested();
                     task.Description = $"[green]Scanning:[/] {bot.Name}";
 
-                    var (isRaw, note) = await IsBotRawInput(bot);
+                    // === PANGGIL SCANNER BARU ===
+                    var (isRaw, note) = await IsBotRawInputRecursive(bot, cancellationToken);
 
                     if (isRaw)
                     {
@@ -91,7 +110,8 @@ public static class BotScanner
         }
     }
 
-    private static async Task<(bool IsRaw, string Note)> IsBotRawInput(BotEntry bot)
+    // === METHOD SCAN DIRUBAH TOTAL ===
+    private static async Task<(bool IsRaw, string Note)> IsBotRawInputRecursive(BotEntry bot, CancellationToken cancellationToken)
     {
         var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
         if (!Directory.Exists(botPath))
@@ -99,52 +119,75 @@ public static class BotScanner
             return (false, "Folder bot tidak ditemukan");
         }
 
-        string[] entryPoints;
         string[] keywords;
+        string searchPattern;
 
         if (bot.Type == "python")
         {
-            entryPoints = PyEntryPoints;
             keywords = PyRawKeywords;
+            searchPattern = "*.py";
         }
         else if (bot.Type == "javascript")
         {
-            entryPoints = JsEntryPoints;
             keywords = JsRawKeywords;
+            searchPattern = "*.js";
         }
         else
         {
             return (false, "Tipe bot tidak dikenal");
         }
 
-        foreach (var entry in entryPoints)
+        try
         {
-            var filePath = Path.Combine(botPath, entry);
-            if (File.Exists(filePath))
+            // Scan semua file di semua sub-folder
+            var files = Directory.EnumerateFiles(botPath, searchPattern, SearchOption.AllDirectories);
+
+            foreach (var file in files)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // Dapatkan path relatif untuk filtering
+                var relativePath = Path.GetRelativePath(botPath, file);
+
+                // Skip folder 'node_modules' atau '.git'
+                if (relativePath.StartsWith("node_modules", StringComparison.OrdinalIgnoreCase) || 
+                    relativePath.StartsWith(".git", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // Scan file baris per baris
                 try
                 {
-                    // Baca file dengan toleransi (bisa sangat besar)
-                    using var reader = new StreamReader(filePath);
-                    string line;
-                    while ((line = await reader.ReadLineAsync()) != null)
+                    using var reader = new StreamReader(file);
+                    string? line;
+                    int lineNum = 0;
+                    while ((line = await reader.ReadLineAsync(cancellationToken)) != null)
                     {
+                        lineNum++;
                         foreach (var keyword in keywords)
                         {
                             if (line.Contains(keyword, StringComparison.OrdinalIgnoreCase))
                             {
-                                return (true, $"Terdeteksi: '{keyword}' di {entry}");
+                                // KETEMU!
+                                return (true, $"Terdeteksi: '{keyword}' di [bold]{relativePath}[/] (Line {lineNum})");
                             }
                         }
                     }
                 }
+                catch (OperationCanceledException) { throw; } // Propagate cancel
                 catch (Exception ex)
                 {
-                    return (false, $"Gagal baca {entry}: {ex.Message}");
+                    return (false, $"Gagal baca {relativePath}: {ex.Message[..20]}...");
                 }
             }
         }
+        catch (Exception ex)
+        {
+            return (false, $"Gagal scan folder: {ex.Message[..20]}...");
+        }
         
-        return (false, "Tidak ada keyword 'raw input' ditemukan");
+        // Aman, nggak nemu apa-apa
+        return (false, "Tidak ada keyword 'raw input' ditemukan (scan mendalam)");
     }
 }
