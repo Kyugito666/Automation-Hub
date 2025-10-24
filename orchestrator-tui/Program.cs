@@ -40,6 +40,10 @@ internal static class Program
         }
     }
 
+    // =================================================================
+    // NAVIGASI MENU UTAMA (BARU)
+    // =================================================================
+
     private static async Task RunInteractive()
     {
         while (true)
@@ -51,85 +55,213 @@ internal static class Program
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("\n[bold cyan]MAIN MENU[/]")
-                    .PageSize(20) // Ditambah
+                    .PageSize(10)
                     .AddChoices(new[]
                     {
-                        // --- MENU SETUP BARU ---
-                        "A. (SETUP) Validate Tokens & Get Usernames",
-                        "B. (SETUP) Invite Collaborators",
-                        "C. (SETUP) Accept Invitations",
-                        "---",
-                        // --- Menu Lama ---
-                        "1. (LOCAL) Update All Bots & Tools",
-                        "2. (LOCAL) Deploy Proxies",
-                        "3. (LOCAL) Show Bot Config",
-                        "4. (LOCAL) Show Token/Proxy Status", // Tambahan
-                        "---",
-                        "5. (HYBRID) Run Interactive Bot → Remote Execution",
-                        "6. (HYBRID) Run All Interactive Bots → Remote Execution",
-                        "---",
-                        "7. (REMOTE) Trigger ALL Bots (No Interaction)",
-                        "8. (REMOTE) View Workflow Status",
-                        "---",
-                        "9. (DEBUG) Test Local Bot (No Remote)",
+                        "1. [SETUP] Configuration & Token Management",
+                        "2. [LOCAL] Bot & Proxy Management",
+                        "3. [HYBRID] Interactive Remote Execution",
+                        "4. [REMOTE] GitHub Actions Control",
+                        "5. [DEBUG] Local Bot Testing",
                         "0. Exit"
                     }));
 
-            switch (choice.Split('.')[0].ToUpper())
+            switch (choice.Split('.')[0])
             {
-                // --- HANDLER BARU ---
-                case "A":
-                    await CollaboratorManager.ValidateAllTokens();
-                    break;
-                case "B":
-                    await CollaboratorManager.InviteCollaborators();
-                    break;
-                case "C":
-                    await CollaboratorManager.AcceptInvitations();
-                    break;
-                
-                // --- HANDLER LAMA ---
-                case "1":
-                    await BotUpdater.UpdateAllBots();
-                    break;
-                case "2":
-                    await ProxyManager.DeployProxies();
-                    break;
-                case "3":
-                    BotUpdater.ShowConfig();
-                    break;
-                case "4":
-                    TokenManager.ShowStatus(); // Tambahan
-                    break;
-                case "5":
-                    await RunSingleInteractiveBot();
-                    break;
-                case "6":
-                    await RunAllInteractiveBots();
-                    break;
-                case "7":
-                    await GitHubDispatcher.TriggerAllBotsWorkflow();
-                    break;
-                case "8":
-                    await GitHubDispatcher.GetWorkflowRuns();
-                    break;
-                case "9":
-                    await TestLocalBot();
-                    break;
+                case "1": await ShowSetupMenu(); break;
+                case "2": await ShowLocalMenu(); break;
+                case "3": await ShowHybridMenu(); break;
+                case "4": await ShowRemoteMenu(); break;
+                case "5": await ShowDebugMenu(); break;
                 case "0":
                     AnsiConsole.MarkupLine("[green]Goodbye![/]");
                     return;
-                case "---":
-                    continue;
-            }
-
-            if (choice != "---")
-            {
-                AnsiConsole.MarkupLine("\n[grey]Press Enter to continue...[/]");
-                Console.ReadLine();
             }
         }
     }
+    
+    // =================================================================
+    // SUB-MENU HANDLERS (BARU)
+    // =================================================================
+
+    private static async Task ShowSetupMenu()
+    {
+        while (true)
+        {
+            AnsiConsole.Clear();
+            AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
+            
+            var choice = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("\n[bold yellow]SETUP & CONFIGURATION[/]")
+                    .PageSize(10)
+                    .AddChoices(new[]
+                    {
+                        "1. Validate Tokens & Get Usernames",
+                        "2. Invite Collaborators",
+                        "3. Accept Invitations",
+                        "4. Show Token/Proxy Status",
+                        "0. [Back] Kembali ke Menu Utama"
+                    }));
+
+            var selection = choice.Split('.')[0];
+            bool pause = true;
+
+            switch (selection)
+            {
+                case "1": await CollaboratorManager.ValidateAllTokens(); break;
+                case "2": await CollaboratorManager.InviteCollaborators(); break;
+                case "3": await CollaboratorManager.AcceptInvitations(); break;
+                case "4": TokenManager.ShowStatus(); break;
+                case "0": return;
+                default: pause = false; break;
+            }
+
+            if (pause) Pause();
+        }
+    }
+
+    private static async Task ShowLocalMenu()
+    {
+        while (true)
+        {
+            AnsiConsole.Clear();
+            AnsiConsole.Write(new FigletText("Local").Centered().Color(Color.Green));
+            
+            var choice = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("\n[bold green]LOCAL BOT & PROXY MANAGEMENT[/]")
+                    .PageSize(10)
+                    .AddChoices(new[]
+                    {
+                        "1. Update All Bots & Tools",
+                        "2. Deploy Proxies",
+                        "3. Show Bot Config",
+                        "0. [Back] Kembali ke Menu Utama"
+                    }));
+
+            var selection = choice.Split('.')[0];
+            bool pause = true;
+
+            switch (selection)
+            {
+                case "1": await BotUpdater.UpdateAllBots(); break;
+                case "2": await ProxyManager.DeployProxies(); break;
+                case "3": BotUpdater.ShowConfig(); break;
+                case "0": return;
+                default: pause = false; break;
+            }
+
+            if (pause) Pause();
+        }
+    }
+
+    private static async Task ShowHybridMenu()
+    {
+        while (true)
+        {
+            AnsiConsole.Clear();
+            AnsiConsole.Write(new FigletText("Hybrid").Centered().Color(Color.Blue));
+            
+            var choice = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("\n[bold blue]HYBRID INTERACTIVE EXECUTION[/]")
+                    .PageSize(10)
+                    .AddChoices(new[]
+                    {
+                        "1. Run Interactive Bot -> Remote",
+                        "2. Run ALL Interactive Bots -> Remote",
+                        "0. [Back] Kembali ke Menu Utama"
+                    }));
+
+            var selection = choice.Split('.')[0];
+            bool pause = true;
+
+            switch (selection)
+            {
+                case "1": await RunSingleInteractiveBot(); break;
+                case "2": await RunAllInteractiveBots(); break;
+                case "0": return;
+                default: pause = false; break;
+            }
+
+            if (pause) Pause();
+        }
+    }
+
+    private static async Task ShowRemoteMenu()
+    {
+        while (true)
+        {
+            AnsiConsole.Clear();
+            AnsiConsole.Write(new FigletText("Remote").Centered().Color(Color.Red));
+            
+            var choice = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("\n[bold red]GITHUB ACTIONS CONTROL[/]")
+                    .PageSize(10)
+                    .AddChoices(new[]
+                    {
+                        "1. Trigger ALL Bots (Workflow)",
+                        "2. View Workflow Status",
+                        "0. [Back] Kembali ke Menu Utama"
+                    }));
+
+            var selection = choice.Split('.')[0];
+            bool pause = true;
+
+            switch (selection)
+            {
+                case "1": await GitHubDispatcher.TriggerAllBotsWorkflow(); break;
+                case "2": await GitHubDispatcher.GetWorkflowRuns(); break;
+                case "0": return;
+                default: pause = false; break;
+            }
+
+            if (pause) Pause();
+        }
+    }
+
+    private static async Task ShowDebugMenu()
+    {
+        while (true)
+        {
+            AnsiConsole.Clear();
+            AnsiConsole.Write(new FigletText("Debug").Centered().Color(Color.Grey));
+            
+            var choice = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("\n[bold grey]DEBUG & LOCAL TESTING[/]")
+                    .PageSize(10)
+                    .AddChoices(new[]
+                    {
+                        "1. Test Local Bot (No Remote)",
+                        "0. [Back] Kembali ke Menu Utama"
+                    }));
+
+            var selection = choice.Split('.')[0];
+            bool pause = true;
+
+            switch (selection)
+            {
+                case "1": await TestLocalBot(); break;
+                case "0": return;
+                default: pause = false; break;
+            }
+
+            if (pause) Pause();
+        }
+    }
+    
+    private static void Pause()
+    {
+        AnsiConsole.MarkupLine("\n[grey]Press Enter to continue...[/]");
+        Console.ReadLine();
+    }
+
+    // =================================================================
+    // METHOD HELPER (Tidak berubah)
+    // =================================================================
 
     private static async Task RunSingleInteractiveBot()
     {
