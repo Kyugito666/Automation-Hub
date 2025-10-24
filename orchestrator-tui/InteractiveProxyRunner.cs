@@ -40,7 +40,8 @@ public static class InteractiveProxyRunner
         }
         catch (OperationCanceledException)
         {
-            // Tangkap pembatalan
+            // === PERUBAHAN DI SINI ===
+            // Tangkap pembatalan (Ctrl+C)
             cancelledDuringRun = true;
             AnsiConsole.MarkupLine("[yellow]Capture run cancelled by user (Ctrl+C).[/]");
             // Coba baca input parsial
@@ -51,9 +52,14 @@ public static class InteractiveProxyRunner
             } else {
                  AnsiConsole.MarkupLine("[grey]No input data captured before cancellation.[/]");
             }
+            
+            // LEMPAR ULANG exception-nya biar RunAllInteractiveBots bisa nangkep
+            throw; 
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // === PERUBAHAN DI SINI === (when...)
+            // Tangkap error non-cancel
              AnsiConsole.MarkupLine($"[red]Error during capture run: {ex.Message}[/]");
              AnsiConsole.MarkupLine("[yellow]Skipping remote trigger due to error.[/]");
              // Hapus file .tmp jika error terjadi setelah file dibuat
@@ -63,18 +69,12 @@ public static class InteractiveProxyRunner
         }
 
         // --- Lanjutkan ke Step 2 (Trigger) ---
-        // Kita tetap lanjut meskipun dibatalkan, tapi konfirmasi dulu
+        // Kode ini HANYA akan jalan jika bot selesai NORMAL (tidak di-cancel, tidak error)
 
-        // Jika dibatalkan DAN tidak ada input sama sekali, jangan tanya apa-apa, langsung skip
-        if (cancelledDuringRun && (capturedInputs == null || capturedInputs.Count == 0)) {
-            AnsiConsole.MarkupLine("[yellow]Skipping remote trigger step due to cancellation without input.[/]");
-            return;
-        }
-
-        // Tampilkan input (jika ada) meskipun dibatalkan
+        // Tampilkan input (jika ada)
         if (capturedInputs != null && capturedInputs.Any())
         {
-            var table = new Table().Title("Captured Inputs" + (cancelledDuringRun ? " (Partial due to Cancel)" : ""));
+            var table = new Table().Title("Captured Inputs");
             table.AddColumn("Key");
             table.AddColumn("Value");
             foreach (var (key, value) in capturedInputs)
@@ -82,17 +82,16 @@ public static class InteractiveProxyRunner
                 table.AddRow(key, value.Length > 50 ? value[..47] + "..." : value);
             }
             AnsiConsole.Write(table);
-        } else if (!cancelledDuringRun) {
+        } else {
              AnsiConsole.MarkupLine("[yellow]No inputs captured (run finished normally). Bot might not be interactive.[/]");
         }
 
 
-        // Simpan file input (bisa parsial jika dicancel, atau kosong)
-        // Kita simpan agar user bisa lihat apa yang sempat ter-capture
-        var inputsFile = Path.Combine(InputsDir, $"{bot.Name}{(cancelledDuringRun ? ".partial" : "")}.json");
+        // Simpan file input
+        var inputsFile = Path.Combine(InputsDir, $"{bot.Name}.json");
         var inputsJson = JsonSerializer.Serialize(capturedInputs ?? new Dictionary<string,string>(), new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(inputsFile, inputsJson);
-        AnsiConsole.MarkupLine($"[green]✓ {(cancelledDuringRun?"Partial inputs":"Inputs")} saved to: {inputsFile}[/]");
+        AnsiConsole.MarkupLine($"[green]✓ Inputs saved to: {inputsFile}[/]");
 
 
         AnsiConsole.MarkupLine("\n[yellow]Step 2: Trigger remote execution on GitHub Actions?[/]");
@@ -105,12 +104,11 @@ public static class InteractiveProxyRunner
         }
 
         AnsiConsole.MarkupLine("[cyan]Triggering remote job...[/]");
-        // Kirim input yang berhasil di-capture (bisa kosong/parsial)
         await GitHubDispatcher.TriggerBotWithInputs(bot, capturedInputs ?? new Dictionary<string, string>());
         AnsiConsole.MarkupLine("\n[bold green]✅ Bot triggered remotely![/]");
     }
 
-    // === METHOD CAPTURE DENGAN WRAPPER (KEMBALI) ===
+    // === METHOD CAPTURE DENGAN WRAPPER (Tidak Berubah) ===
     private static async Task<Dictionary<string, string>?> RunBotInCaptureMode(string botPath, BotEntry bot, CancellationToken cancellationToken)
     {
         var inputs = new Dictionary<string, string>();
@@ -134,7 +132,6 @@ public static class InteractiveProxyRunner
         }
         else if (bot.Type == "javascript")
         {
-            // === PASTIKAN ESCAPING BENAR ===
             await CreateJavaScriptCaptureWrapper(jsWrapperFullPath, inputCapturePath);
         }
 
@@ -184,13 +181,12 @@ public static class InteractiveProxyRunner
         cancellationToken.ThrowIfCancellationRequested();
 
         // Jalankan wrapper script secara interaktif
+        // Ini akan melempar OperationCanceledException jika token dibatalkan (baik _cts atau _childProcessCts)
         await ShellHelper.RunInteractive(executor, args, absoluteBotPath, cancellationToken);
-        // OperationCanceledException akan dilempar jika Ctrl+C
 
         AnsiConsole.MarkupLine("\n[grey]─────────────────────────────────────[/]");
 
-        // Baca file .tmp HANYA jika tidak ada cancel exception
-        // Jika cancel, biarkan pemanggil yang handle pembacaan parsial
+        // Baca file .tmp
         inputs = ReadAndDeleteCaptureFile(inputCapturePath);
 
         // Cleanup wrapper
@@ -202,6 +198,8 @@ public static class InteractiveProxyRunner
         return inputs;
     }
 
+    // === Sisanya (ReadAndDelete, Confirm, CreateWrappers) tidak berubah ===
+    // ... (copy-paste sisa method dari file asli lu) ...
     // Helper baca file capture (tetap dipakai)
     private static Dictionary<string, string> ReadAndDeleteCaptureFile(string filePath) {
         Dictionary<string, string> data = new Dictionary<string, string>();
