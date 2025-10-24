@@ -6,7 +6,6 @@ internal static class Program
 {
     public static async Task Main(string[] args)
     {
-        // Initialize GitHub API client
         GitHubDispatcher.Initialize();
 
         if (args.Length > 0)
@@ -46,24 +45,26 @@ internal static class Program
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
-            AnsiConsole.MarkupLine("[grey]Remote Orchestrator - GitHub Actions Edition[/]");
+            AnsiConsole.MarkupLine("[grey]Interactive Proxy Orchestrator - Local Control, Remote Execution[/]");
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold cyan]MENU UTAMA[/]")
-                    .PageSize(12)
+                    .Title("\n[bold cyan]MAIN MENU[/]")
+                    .PageSize(15)
                     .AddChoices(new[]
                     {
-                        "1. (LOCAL) Clone/Update Semua Bot & Tools",
+                        "1. (LOCAL) Update All Bots & Tools",
                         "2. (LOCAL) Deploy Proxies",
-                        "3. (LOCAL) Tampilkan Konfigurasi Bot",
+                        "3. (LOCAL) Show Bot Config",
                         "---",
-                        "4. (REMOTE) Trigger ALL Bots di GitHub Actions",
-                        "5. (REMOTE) Trigger Single Bot di GitHub Actions",
-                        "6. (REMOTE) Lihat Status Workflow Runs",
+                        "4. (HYBRID) Run Interactive Bot → Remote Execution",
+                        "5. (HYBRID) Run All Interactive Bots → Remote Execution",
                         "---",
-                        "7. (FULL) Setup + Trigger Workflow",
-                        "8. Keluar"
+                        "6. (REMOTE) Trigger ALL Bots (No Interaction)",
+                        "7. (REMOTE) View Workflow Status",
+                        "---",
+                        "8. (DEBUG) Test Local Bot (No Remote)",
+                        "9. Exit"
                     }));
 
             switch (choice.Split('.')[0])
@@ -78,19 +79,22 @@ internal static class Program
                     BotUpdater.ShowConfig();
                     break;
                 case "4":
-                    await GitHubDispatcher.TriggerAllBotsWorkflow();
+                    await RunSingleInteractiveBot();
                     break;
                 case "5":
-                    await TriggerSingleBotMenu();
+                    await RunAllInteractiveBots();
                     break;
                 case "6":
-                    await GitHubDispatcher.GetWorkflowRuns();
+                    await GitHubDispatcher.TriggerAllBotsWorkflow();
                     break;
                 case "7":
-                    await FullSetupAndTrigger();
+                    await GitHubDispatcher.GetWorkflowRuns();
                     break;
                 case "8":
-                    AnsiConsole.MarkupLine("[green]Sampai jumpa![/]");
+                    await TestLocalBot();
+                    break;
+                case "9":
+                    AnsiConsole.MarkupLine("[green]Goodbye![/]");
                     return;
                 case "---":
                     continue;
@@ -98,53 +102,129 @@ internal static class Program
 
             if (choice != "---")
             {
-                AnsiConsole.MarkupLine("\n[grey]Tekan Enter untuk kembali ke menu...[/]");
+                AnsiConsole.MarkupLine("\n[grey]Press Enter to continue...[/]");
                 Console.ReadLine();
             }
         }
     }
 
-    private static async Task TriggerSingleBotMenu()
+    private static async Task RunSingleInteractiveBot()
     {
-        var config = BotUpdater.LoadConfig();
+        var config = BotConfig.Load();
         if (config == null) return;
 
         var bots = config.BotsAndTools
-            .Where(b => b.Enabled && (b.Path.Contains("/privatekey/") || b.Path.Contains("/token/")))
+            .Where(b => b.Enabled && b.IsBot)
             .ToList();
 
         if (!bots.Any())
         {
-            AnsiConsole.MarkupLine("[yellow]Tidak ada bot aktif.[/]");
+            AnsiConsole.MarkupLine("[yellow]No active bots found.[/]");
             return;
         }
 
         var selectedBot = AnsiConsole.Prompt(
             new SelectionPrompt<BotEntry>()
-                .Title("[cyan]Pilih bot untuk di-trigger:[/]")
-                .PageSize(15)
-                .UseConverter(b => b.Name)
+                .Title("[cyan]Select bot for interactive run:[/]")
+                .PageSize(20)
+                .UseConverter(b => $"{b.Name} ({b.Type})")
                 .AddChoices(bots));
 
-        await GitHubDispatcher.TriggerSingleBot(
-            selectedBot.Name,
-            selectedBot.Path,
-            selectedBot.RepoUrl,
-            selectedBot.Type
-        );
+        await InteractiveProxyRunner.CaptureAndTriggerBot(selectedBot);
     }
 
-    private static async Task FullSetupAndTrigger()
+    private static async Task RunAllInteractiveBots()
     {
-        AnsiConsole.MarkupLine("[bold cyan]=== FULL SETUP & TRIGGER ===[/]");
+        var config = BotConfig.Load();
+        if (config == null) return;
+
+        var bots = config.BotsAndTools
+            .Where(b => b.Enabled && b.IsBot)
+            .ToList();
+
+        if (!bots.Any())
+        {
+            AnsiConsole.MarkupLine("[yellow]No active bots found.[/]");
+            return;
+        }
+
+        AnsiConsole.MarkupLine($"[cyan]Found {bots.Count} active bots[/]");
+        AnsiConsole.MarkupLine("[yellow]WARNING: This will run all bots locally for input capture.[/]");
         
-        AnsiConsole.MarkupLine("\n[yellow]Step 1/2: Update Bot & Tools (Lokal)[/]");
-        await BotUpdater.UpdateAllBots();
-        
-        AnsiConsole.MarkupLine("\n[yellow]Step 2/2: Trigger Workflow (Remote)[/]");
-        await GitHubDispatcher.TriggerAllBotsWorkflow();
-        
-        AnsiConsole.MarkupLine("\n[bold green]✅ SETUP & TRIGGER SELESAI[/]");
-        AnsiConsole.MarkupLine("[dim]Workflow akan berjalan di GitHub Actions dalam beberapa detik...[/]");
+        if (!AnsiConsole.Confirm("Continue?"))
+            return;
+
+        var successCount = 0;
+        var failCount = 0;
+
+        foreach (var bot in bots)
+        {
+            AnsiConsole.Rule($"[cyan]{bot.Name}[/]");
+            
+            try
+            {
+                await InteractiveProxyRunner.CaptureAndTriggerBot(bot);
+                successCount++;
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Error: {ex.Message}[/]");
+                failCount++;
+            }
+
+            if (bot != bots.Last())
+            {
+                AnsiConsole.MarkupLine("\n[dim]Press Enter for next bot...[/]");
+                Console.ReadLine();
+            }
+        }
+
+        AnsiConsole.MarkupLine($"\n[bold]Summary:[/]");
+        AnsiConsole.MarkupLine($"[green]✓ Success: {successCount}[/]");
+        AnsiConsole.MarkupLine($"[red]✗ Failed: {failCount}[/]");
+    }
+
+    private static async Task TestLocalBot()
+    {
+        var config = BotConfig.Load();
+        if (config == null) return;
+
+        var bots = config.BotsAndTools
+            .Where(b => b.Enabled && b.IsBot)
+            .ToList();
+
+        if (!bots.Any())
+        {
+            AnsiConsole.MarkupLine("[yellow]No active bots found.[/]");
+            return;
+        }
+
+        var selectedBot = AnsiConsole.Prompt(
+            new SelectionPrompt<BotEntry>()
+                .Title("[cyan]Select bot for local test:[/]")
+                .PageSize(20)
+                .UseConverter(b => $"{b.Name} ({b.Type})")
+                .AddChoices(bots));
+
+        var botPath = Path.Combine("..", selectedBot.Path);
+        if (!Directory.Exists(botPath))
+        {
+            AnsiConsole.MarkupLine($"[red]Bot path not found: {botPath}[/]");
+            return;
+        }
+
+        await BotRunner.InstallDependencies(botPath, selectedBot.Type);
+
+        var (executor, args) = BotRunner.GetRunCommand(botPath, selectedBot.Type);
+        if (string.IsNullOrEmpty(executor))
+        {
+            AnsiConsole.MarkupLine("[red]No run file found[/]");
+            return;
+        }
+
+        AnsiConsole.MarkupLine($"[green]Running {selectedBot.Name} locally...[/]");
+        AnsiConsole.MarkupLine("[dim]This is a test run. No remote execution.[/]\n");
+
+        await ShellHelper.RunInteractive(executor, args, botPath);
     }
 }
