@@ -7,39 +7,84 @@ namespace Orchestrator;
 
 public class TokenManager
 {
-    private static readonly string ConfigPath = "../config/github_tokens.json";
+    private static readonly string TokensPath = "../config/github_tokens.txt";
     private static readonly string StatePath = "../.token-state.json";
-    private static TokenConfig? _config;
+    private static readonly string ProxyListPath = "../proxysync/proxy.txt";
+    private static List<TokenEntry> _tokens = new();
+    private static List<string> _proxyList = new();
     private static TokenState? _state;
+    private static string _owner = "";
+    private static string _repo = "";
 
     public static void Initialize()
     {
-        LoadConfig();
+        LoadTokens();
+        LoadProxyList();
         LoadState();
+        AssignProxiesToTokens();
     }
 
-    private static void LoadConfig()
+    private static void LoadTokens()
     {
-        if (!File.Exists(ConfigPath))
+        if (!File.Exists(TokensPath))
         {
-            AnsiConsole.MarkupLine($"[red]ERROR: {ConfigPath} tidak ditemukan![/]");
+            AnsiConsole.MarkupLine($"[red]ERROR: {TokensPath} tidak ditemukan![/]");
             AnsiConsole.MarkupLine("[yellow]Buat file dengan format:[/]");
-            AnsiConsole.MarkupLine(@"[dim]{
-  ""tokens"": [
-    {""token"": ""ghp_xxx"", ""proxy"": ""http://proxy1:port""},
-    {""token"": ""ghp_yyy"", ""proxy"": ""http://proxy2:port""}
-  ],
-  ""owner"": ""username"",
-  ""repo"": ""automation-hub""
-}[/]");
-            _config = new TokenConfig();
+            AnsiConsole.MarkupLine("[dim]ghp_token1,ghp_token2,ghp_token3[/]");
             return;
         }
 
-        var json = File.ReadAllText(ConfigPath);
-        _config = JsonSerializer.Deserialize<TokenConfig>(json) ?? new TokenConfig();
+        var content = File.ReadAllText(TokensPath).Trim();
+        var tokens = content.Split(',', StringSplitOptions.RemoveEmptyEntries);
         
-        AnsiConsole.MarkupLine($"[green]Loaded {_config.Tokens.Count} GitHub tokens[/]");
+        _tokens = tokens.Select(t => new TokenEntry { Token = t.Trim() }).ToList();
+        
+        AnsiConsole.MarkupLine($"[green]Loaded {_tokens.Count} GitHub tokens[/]");
+
+        // Load owner/repo dari github_config.json (fallback)
+        var oldConfigPath = "../config/github_config.json";
+        if (File.Exists(oldConfigPath))
+        {
+            try
+            {
+                var json = File.ReadAllText(oldConfigPath);
+                var config = JsonSerializer.Deserialize<GitHubConfig>(json);
+                _owner = config?.Owner ?? "";
+                _repo = config?.Repo ?? "";
+            }
+            catch { }
+        }
+
+        // Atau dari environment
+        _owner = Environment.GetEnvironmentVariable("GITHUB_OWNER") ?? _owner;
+        _repo = Environment.GetEnvironmentVariable("GITHUB_REPO") ?? _repo;
+    }
+
+    private static void LoadProxyList()
+    {
+        if (File.Exists(ProxyListPath))
+        {
+            _proxyList = File.ReadAllLines(ProxyListPath)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+            
+            AnsiConsole.MarkupLine($"[green]Loaded {_proxyList.Count} proxies from ProxySync[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[yellow]ProxySync proxy.txt not found[/]");
+        }
+    }
+
+    private static void AssignProxiesToTokens()
+    {
+        if (!_proxyList.Any()) return;
+
+        for (int i = 0; i < _tokens.Count; i++)
+        {
+            var proxyIndex = i % _proxyList.Count;
+            _tokens[i].Proxy = _proxyList[proxyIndex];
+        }
     }
 
     private static void LoadState()
@@ -65,23 +110,23 @@ public class TokenManager
 
     public static (string token, string? proxy, string owner, string repo) GetCurrentToken()
     {
-        if (_config == null || _config.Tokens.Count == 0)
+        if (!_tokens.Any())
         {
             throw new Exception("No tokens configured");
         }
 
-        var current = _config.Tokens[_state!.CurrentIndex];
-        return (current.Token, current.Proxy, _config.Owner, _config.Repo);
+        var current = _tokens[_state!.CurrentIndex];
+        return (current.Token, current.Proxy, _owner, _repo);
     }
 
     public static void SwitchToNextToken()
     {
-        if (_config == null || _config.Tokens.Count == 0) return;
+        if (!_tokens.Any()) return;
 
-        _state!.CurrentIndex = (_state.CurrentIndex + 1) % _config.Tokens.Count;
+        _state!.CurrentIndex = (_state.CurrentIndex + 1) % _tokens.Count;
         SaveState();
 
-        var current = _config.Tokens[_state.CurrentIndex];
+        var current = _tokens[_state.CurrentIndex];
         AnsiConsole.MarkupLine($"[yellow]Switched to token #{_state.CurrentIndex + 1}[/]");
         if (!string.IsNullOrEmpty(current.Proxy))
         {
@@ -95,7 +140,7 @@ public class TokenManager
         {
             AnsiConsole.MarkupLine("[red]Rate limit detected![/]");
             
-            if (_config!.Tokens.Count > 1)
+            if (_tokens.Count > 1)
             {
                 SwitchToNextToken();
                 return true;
@@ -155,9 +200,17 @@ public class TokenManager
         return client;
     }
 
+    public static void ReloadProxies()
+    {
+        AnsiConsole.MarkupLine("[cyan]Reloading proxies from ProxySync...[/]");
+        LoadProxyList();
+        AssignProxiesToTokens();
+        AnsiConsole.MarkupLine("[green]Proxies reloaded and assigned to tokens[/]");
+    }
+
     public static void ShowStatus()
     {
-        if (_config == null) return;
+        if (!_tokens.Any()) return;
 
         var table = new Table().Title("GitHub Tokens Status");
         table.AddColumn("Index");
@@ -165,23 +218,34 @@ public class TokenManager
         table.AddColumn("Proxy");
         table.AddColumn("Active");
 
-        for (int i = 0; i < _config.Tokens.Count; i++)
+        for (int i = 0; i < _tokens.Count; i++)
         {
-            var token = _config.Tokens[i];
+            var token = _tokens[i];
             var isActive = i == _state!.CurrentIndex ? "[green]✓[/]" : "";
             var tokenDisplay = token.Token.Length > 20 
                 ? token.Token[..10] + "..." + token.Token[^7..] 
                 : token.Token;
             
+            var proxyDisplay = token.Proxy ?? "[yellow]no proxy[/]";
+            if (!string.IsNullOrEmpty(token.Proxy) && token.Proxy.Length > 40)
+            {
+                proxyDisplay = token.Proxy[..37] + "...";
+            }
+            
             table.AddRow(
                 (i + 1).ToString(),
                 tokenDisplay,
-                token.Proxy ?? "-",
+                proxyDisplay,
                 isActive
             );
         }
 
         AnsiConsole.Write(table);
+
+        if (_proxyList.Any())
+        {
+            AnsiConsole.MarkupLine($"\n[dim]Total proxies from ProxySync: {_proxyList.Count}[/]");
+        }
 
         if (_state!.History.Any())
         {
@@ -207,24 +271,9 @@ public class TokenManager
     }
 }
 
-public class TokenConfig
-{
-    [JsonPropertyName("tokens")]
-    public List<TokenEntry> Tokens { get; set; } = new();
-
-    [JsonPropertyName("owner")]
-    public string Owner { get; set; } = string.Empty;
-
-    [JsonPropertyName("repo")]
-    public string Repo { get; set; } = string.Empty;
-}
-
 public class TokenEntry
 {
-    [JsonPropertyName("token")]
     public string Token { get; set; } = string.Empty;
-
-    [JsonPropertyName("proxy")]
     public string? Proxy { get; set; }
 }
 
@@ -250,4 +299,13 @@ public class BotExecutionState
 
     [JsonPropertyName("token_index")]
     public int TokenIndex { get; set; }
+}
+
+public class GitHubConfig
+{
+    [JsonPropertyName("owner")]
+    public string? Owner { get; set; }
+
+    [JsonPropertyName("repo")]
+    public string? Repo { get; set; }
 }
