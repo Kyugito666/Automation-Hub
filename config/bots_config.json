@@ -1,4 +1,4 @@
-{
+e{
   "schema_version": "1.0",
   "update_strategy": "clone_or_pull",
   "bots_and_tools": [
@@ -47,7 +47,7 @@
     {
       "name": "Galkite-AutoInteraction",
       "path": "bots/privatekey/Galkite-AutoInteraction",
-      "repo_url": "https://github.com/UNKNOWN_OWNER/Galkite-AutoInteraction.git",
+      "repo_url": "https://github.com/Svz1404/Galkite-AutoInteraction.git",
       "enabled": true,
       "type": "python"
     },
@@ -229,7 +229,7 @@
     {
       "name": "Interlink-BOT",
       "path": "bots/token/Interlink-BOT",
-      "repo_url": "https://github.com/UNKNOWN_OWNER/Interlink-BOT.git",
+      "repo_url": "https://github.com/vonssy/Interlink-BOT.git",
       "enabled": true,
       "type": "python"
     },
