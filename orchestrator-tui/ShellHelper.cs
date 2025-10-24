@@ -1,15 +1,14 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Spectre.Console;
-using System.Threading; // <-- Tambahkan using
-using System.Threading.Tasks; // <-- Tambahkan using
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Orchestrator;
 
 public static class ShellHelper
 {
-    // ... (RunStream tidak berubah) ...
-     public static async Task RunStream(string command, string args, string? workingDir = null)
+    public static async Task RunStream(string command, string args, string? workingDir = null)
     {
         string fileName;
         string finalArgs;
@@ -40,7 +39,6 @@ public static class ShellHelper
             EnableRaisingEvents = true
         };
 
-        // ... (event handlers tidak berubah) ...
         process.OutputDataReceived += (sender, e) => {
             if (!string.IsNullOrEmpty(e.Data))
                 AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
@@ -50,12 +48,11 @@ public static class ShellHelper
                 AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
         };
 
-
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        await process.WaitForExitAsync(); // RunStream tidak perlu cancellation token?
+        await process.WaitForExitAsync();
 
         if (process.ExitCode != 0)
         {
@@ -66,8 +63,66 @@ public static class ShellHelper
         }
     }
 
+    // === METHOD BARU: Windows Interactive Mode (dengan Shell Wrapper) ===
+    public static async Task RunInteractiveWindows(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            // Fallback ke method lama kalau bukan Windows
+            await RunInteractive(command, args, workingDir, cancellationToken);
+            return;
+        }
 
-    // === MODIFIKASI DI SINI ===
+        // Di Windows, wrap command dengan cmd.exe /c agar PATH environment ter-inherit
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c \"{command} {args}\"", // Wrap dengan cmd shell
+                UseShellExecute = false,
+                CreateNoWindow = false,
+                WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory(),
+                // CRITICAL: Jangan redirect I/O agar user bisa interaksi langsung
+                RedirectStandardInput = false,
+                RedirectStandardOutput = false,
+                RedirectStandardError = false
+            }
+        };
+
+        try
+        {
+            process.Start();
+            await process.WaitForExitAsync(cancellationToken);
+
+            if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
+            {
+                AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
+                throw new Exception($"Process exited with code {process.ExitCode}");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            AnsiConsole.MarkupLine("[yellow]Proses interaktif dibatalkan.[/]");
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(true);
+                }
+            }
+            catch { }
+            throw;
+        }
+        catch (Exception ex)
+        {
+             AnsiConsole.MarkupLine($"[red]Error saat menjalankan proses interaktif: {ex.Message}[/]");
+             try { if (!process.HasExited) process.Kill(true); } catch {}
+             throw; // Re-throw agar caller tahu ada error
+        }
+    }
+
+    // Method lama untuk Linux/macOS (tetap pakai raw process)
     public static async Task RunInteractive(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
     {
         var process = new Process
@@ -77,7 +132,7 @@ public static class ShellHelper
                 FileName = command,
                 Arguments = args,
                 UseShellExecute = false,
-                CreateNoWindow = false, // Tetap false untuk interaktif
+                CreateNoWindow = false,
                 WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory()
             }
         };
@@ -85,7 +140,6 @@ public static class ShellHelper
         try
         {
             process.Start();
-            // Tunggu proses selesai ATAU token dibatalkan
             await process.WaitForExitAsync(cancellationToken);
 
             if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
@@ -96,29 +150,24 @@ public static class ShellHelper
         catch (OperationCanceledException)
         {
             AnsiConsole.MarkupLine("[yellow]Proses interaktif dibatalkan.[/]");
-            // Coba hentikan proses jika masih berjalan setelah cancel
             try
             {
                 if (!process.HasExited)
                 {
-                    process.Kill(true); // Kill process tree
+                    process.Kill(true);
                 }
             }
-            catch { /* Abaikan error saat kill */ }
-            throw; // Re-throw exception agar pemanggil tahu dibatalkan
+            catch { }
+            throw;
         }
         catch (Exception ex)
         {
              AnsiConsole.MarkupLine($"[red]Error saat menjalankan proses interaktif: {ex.Message}[/]");
-             // Coba hentikan jika error
              try { if (!process.HasExited) process.Kill(true); } catch {}
-             // Pertimbangkan re-throw tergantung kebutuhan
         }
     }
-    // ===========================
 
-    // ... (RunInNewTerminal, IsCommandAvailable tidak berubah) ...
-      public static void RunInNewTerminal(string command, string args, string? workingDir = null)
+    public static void RunInNewTerminal(string command, string args, string? workingDir = null)
     {
         var absPath = workingDir != null ? Path.GetFullPath(workingDir) : Directory.GetCurrentDirectory();
 
@@ -156,7 +205,8 @@ public static class ShellHelper
             });
         }
     }
-     private static bool IsCommandAvailable(string command)
+
+    private static bool IsCommandAvailable(string command)
     {
         string executor = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "where" : "which";
         try
@@ -170,7 +220,6 @@ public static class ShellHelper
                 CreateNoWindow = true
             });
             process?.WaitForExit();
-            // Periksa output stdout juga, 'where' bisa return 0 tapi tidak menemukan
             string? output = process?.StandardOutput.ReadToEnd();
             return process?.ExitCode == 0 && !string.IsNullOrWhiteSpace(output);
         }
