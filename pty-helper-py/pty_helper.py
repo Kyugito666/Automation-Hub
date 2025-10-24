@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-PTY Helper for C# Orchestrator - Windows PATH Fix
-Cross-platform subprocess automation with robust error handling
+PTY Helper for C# Orchestrator - Self-Healing Windows Handler
+Auto-detects and fixes common Windows subprocess issues
 """
 
 import sys
@@ -22,6 +22,8 @@ if sys.platform == 'win32':
 
 # Global process untuk cleanup
 _current_process = None
+_retry_count = 0
+MAX_RETRIES = 3
 
 def cleanup_handler(signum, frame):
     """Handle Ctrl+C gracefully"""
@@ -41,11 +43,12 @@ def log_info(msg):
     """Info logging"""
     print(f"[PTY-HELPER] {msg}", file=sys.stderr, flush=True)
 
+def log_warn(msg):
+    """Warning logging"""
+    print(f"[PTY-HELPER WARN] {msg}", file=sys.stderr, flush=True)
+
 def resolve_command(command):
-    """
-    Resolve command menggunakan shutil.which() untuk handle Windows PATH
-    CRITICAL FIX: npm/node/python tidak ditemukan tanpa ini
-    """
+    """Resolve command menggunakan shutil.which() untuk handle Windows PATH"""
     if os.path.isabs(command) and os.path.isfile(command):
         return command
     
@@ -66,10 +69,7 @@ def resolve_command(command):
     return command
 
 def run_interactive(command, args, cwd):
-    """
-    Mode interaktif manual (real-time I/O passthrough)
-    Untuk testing dan debugging
-    """
+    """Mode interaktif manual (real-time I/O passthrough)"""
     global _current_process
     
     resolved_cmd = resolve_command(command)
@@ -105,7 +105,6 @@ def run_interactive(command, args, cwd):
     except FileNotFoundError:
         log_error(f"Command not found: {command}")
         log_error("Make sure the executable is in PATH")
-        log_error(f"Current PATH: {os.environ.get('PATH', 'NOT SET')[:200]}...")
         return 127
         
     except Exception as e:
@@ -114,26 +113,213 @@ def run_interactive(command, args, cwd):
         traceback.print_exc()
         return 1
 
-def run_with_script(input_file, command, args, cwd):
-    """
-    Mode auto-answer dengan input dari file JSON/TXT
-    Untuk automasi CI/CD
-    """
+def detect_error_type(error_msg):
+    """Self-healing: Detect error type and suggest fix strategy"""
+    error_lower = str(error_msg).lower()
+    
+    if 'winerror 6' in error_lower or 'handle is invalid' in error_lower:
+        return 'stdin_handle_error'
+    elif 'winerror 2' in error_lower or 'cannot find the file' in error_lower:
+        return 'file_not_found'
+    elif 'winerror 5' in error_lower or 'access is denied' in error_lower:
+        return 'access_denied'
+    elif 'eof when reading' in error_lower or 'unexpected eof' in error_lower:
+        return 'premature_eof'
+    elif 'brokenpipeerror' in error_lower:
+        return 'broken_pipe'
+    else:
+        return 'unknown'
+
+def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
+    """Strategy 1: Standard mode dengan stdin pipe"""
     global _current_process
     
-    log_info(f"Starting auto-answer mode")
+    log_info("Trying Strategy 1: Standard stdin pipe")
+    
+    resolved_cmd = resolve_command(command)
+    cmd_list = [resolved_cmd] + args
+    use_shell = sys.platform == 'win32' and command in ['npm', 'node', 'python', 'py']
+    
+    env = os.environ.copy()
+    if sys.platform == 'win32':
+        env['PYTHONIOENCODING'] = 'utf-8'
+    
+    _current_process = subprocess.Popen(
+        cmd_list,
+        cwd=cwd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        shell=use_shell,
+        env=env
+    )
+    
+    def send_input():
+        try:
+            time.sleep(0.5)
+            _current_process.stdin.write(inputs.encode('utf-8'))
+            _current_process.stdin.flush()
+            
+            # Keep stdin alive
+            while _current_process.poll() is None:
+                time.sleep(0.1)
+            
+            try:
+                _current_process.stdin.close()
+            except:
+                pass
+        except Exception as e:
+            log_warn(f"Input thread error: {e}")
+    
+    input_thread = threading.Thread(target=send_input, daemon=True)
+    input_thread.start()
+    
+    output = []
+    while True:
+        chunk = _current_process.stdout.read(1024)
+        if not chunk:
+            break
+        text = chunk.decode('utf-8', errors='replace')
+        print(text, end='', flush=True)
+        output.append(text)
+    
+    returncode = _current_process.wait()
+    _current_process = None
+    
+    return returncode, ''.join(output)
+
+def run_with_script_strategy_2(input_file, command, args, cwd, inputs):
+    """Strategy 2: Temp file mode (untuk handle error Windows)"""
+    global _current_process
+    
+    log_info("Trying Strategy 2: Temp file input redirect")
+    
+    import tempfile
+    
+    # Create temp input file
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8', suffix='.txt') as f:
+        f.write(inputs)
+        temp_input = f.name
+    
+    try:
+        resolved_cmd = resolve_command(command)
+        cmd_list = [resolved_cmd] + args
+        use_shell = sys.platform == 'win32' and command in ['npm', 'node', 'python', 'py']
+        
+        env = os.environ.copy()
+        if sys.platform == 'win32':
+            env['PYTHONIOENCODING'] = 'utf-8'
+        
+        # Redirect stdin from file instead of pipe
+        with open(temp_input, 'r', encoding='utf-8') as input_f:
+            _current_process = subprocess.Popen(
+                cmd_list,
+                cwd=cwd,
+                stdin=input_f,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                shell=use_shell,
+                env=env
+            )
+            
+            output = []
+            while True:
+                chunk = _current_process.stdout.read(1024)
+                if not chunk:
+                    break
+                text = chunk.decode('utf-8', errors='replace')
+                print(text, end='', flush=True)
+                output.append(text)
+            
+            returncode = _current_process.wait()
+            _current_process = None
+            
+            return returncode, ''.join(output)
+    finally:
+        try:
+            os.unlink(temp_input)
+        except:
+            pass
+
+def run_with_script_strategy_3(input_file, command, args, cwd, inputs):
+    """Strategy 3: Batch script wrapper (ultimate Windows fallback)"""
+    global _current_process
+    
+    log_info("Trying Strategy 3: Batch script wrapper")
+    
+    import tempfile
+    
+    # Create temp files
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8', suffix='.txt') as f:
+        f.write(inputs)
+        temp_input = f.name
+    
+    resolved_cmd = resolve_command(command)
+    
+    # Create batch wrapper
+    if sys.platform == 'win32':
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.bat', encoding='utf-8') as f:
+            f.write('@echo off\n')
+            f.write('chcp 65001 >nul\n')  # UTF-8 codepage
+            f.write(f'cd /d "{cwd}"\n')
+            f.write(f'"{resolved_cmd}" {" ".join(args)} < "{temp_input}"\n')
+            batch_file = f.name
+    else:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.sh', encoding='utf-8') as f:
+            f.write('#!/bin/bash\n')
+            f.write(f'cd "{cwd}"\n')
+            f.write(f'"{resolved_cmd}" {" ".join(args)} < "{temp_input}"\n')
+            batch_file = f.name
+        os.chmod(batch_file, 0o755)
+    
+    try:
+        _current_process = subprocess.Popen(
+            [batch_file],
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=True
+        )
+        
+        output = []
+        while True:
+            chunk = _current_process.stdout.read(1024)
+            if not chunk:
+                break
+            text = chunk.decode('utf-8', errors='replace')
+            print(text, end='', flush=True)
+            output.append(text)
+        
+        returncode = _current_process.wait()
+        _current_process = None
+        
+        return returncode, ''.join(output)
+    finally:
+        try:
+            os.unlink(temp_input)
+            os.unlink(batch_file)
+        except:
+            pass
+
+def run_with_script(input_file, command, args, cwd):
+    """
+    Self-healing auto-answer mode
+    Tries multiple strategies if one fails
+    """
+    global _retry_count
+    
+    log_info(f"Starting auto-answer mode (self-healing)")
     log_info(f"Input file: {input_file}")
     log_info(f"Command: {command} {' '.join(args)}")
     log_info(f"Working directory: {cwd}")
     
     try:
-        resolved_cmd = resolve_command(command)
-        
         input_path = Path(input_file)
         if not input_path.exists():
             log_error(f"Input file not found: {input_file}")
             return 1
         
+        # Parse input
         if input_file.endswith('.json'):
             try:
                 with open(input_path, 'r', encoding='utf-8') as f:
@@ -160,103 +346,61 @@ def run_with_script(input_file, command, args, cwd):
             
             log_info(f"Loaded {len(inputs.splitlines())} lines from text file")
         
-        cmd_list = [resolved_cmd] + args
-        use_shell = sys.platform == 'win32' and command in ['npm', 'node', 'python', 'py']
+        # Self-healing: Try multiple strategies
+        strategies = [
+            run_with_script_strategy_1,
+            run_with_script_strategy_2,
+            run_with_script_strategy_3
+        ]
         
-        log_info(f"Shell mode: {use_shell}")
+        last_error = None
+        last_output = ""
         
-        # Set environment to force UTF-8
-        env = os.environ.copy()
-        if sys.platform == 'win32':
-            env['PYTHONIOENCODING'] = 'utf-8'
-        
-        _current_process = subprocess.Popen(
-            cmd_list,
-            cwd=cwd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            shell=use_shell,
-            env=env
-        )
-        
-        input_sent = threading.Event()
-        stdin_closed = threading.Event()
-        
-        def send_input():
+        for i, strategy in enumerate(strategies, 1):
             try:
-                time.sleep(0.5)
+                returncode, output = strategy(input_file, command, args, cwd, inputs)
+                last_output = output
                 
-                # Send all inputs
-                _current_process.stdin.write(inputs.encode('utf-8'))
-                _current_process.stdin.flush()
+                # Check if output contains error
+                error_type = detect_error_type(output)
                 
-                # Keep stdin open but send empty data periodically
-                # This prevents "handle is invalid" on Windows
-                input_sent.set()
-                log_info("Input sent successfully, keeping stdin alive...")
-                
-                # Monitor process and keep stdin alive
-                while _current_process.poll() is None:
-                    try:
-                        time.sleep(0.1)
-                    except:
-                        break
-                
-                # Process ended, now close stdin
-                try:
-                    _current_process.stdin.close()
-                except:
-                    pass
-                stdin_closed.set()
-                log_info("Process ended, stdin closed")
-                
-            except BrokenPipeError:
-                log_error("BrokenPipeError: Process terminated before input finished")
+                if error_type == 'unknown' or returncode == 0:
+                    log_info(f"Strategy {i} succeeded with exit code {returncode}")
+                    return returncode
+                else:
+                    log_warn(f"Strategy {i} completed but detected error: {error_type}")
+                    if i < len(strategies):
+                        log_info(f"Retrying with next strategy...")
+                        time.sleep(1)
+                        continue
+                    else:
+                        log_warn(f"All strategies exhausted, returning last exit code")
+                        return returncode
+                        
             except Exception as e:
-                log_error(f"Error sending input: {e}")
+                error_type = detect_error_type(str(e))
+                log_error(f"Strategy {i} failed: {e}")
+                log_info(f"Detected error type: {error_type}")
+                last_error = e
+                
+                if i < len(strategies):
+                    log_info(f"Attempting recovery with strategy {i+1}...")
+                    time.sleep(1)
+                else:
+                    log_error(f"All {len(strategies)} strategies failed")
+                    raise last_error
         
-        input_thread = threading.Thread(target=send_input, daemon=True)
-        input_thread.start()
-        
-        output_lines = 0
-        try:
-            while True:
-                chunk = _current_process.stdout.read(1024)
-                if not chunk:
-                    break
-                try:
-                    text = chunk.decode('utf-8', errors='replace')
-                    print(text, end='', flush=True)
-                    output_lines += text.count('\n')
-                except Exception as e:
-                    log_error(f"Error decoding output: {e}")
-                    
-        except KeyboardInterrupt:
-            log_info("KeyboardInterrupt during output streaming")
-            _current_process.terminate()
-        
-        returncode = _current_process.wait()
-        _current_process = None
-        
-        log_info(f"Process completed with exit code {returncode}")
-        log_info(f"Output lines: {output_lines}")
-        
-        if not input_sent.wait(timeout=5):
-            log_error("WARNING: Input thread did not complete in time")
-        
-        return returncode
+        return 1
         
     except FileNotFoundError:
         log_error(f"Command not found: {command}")
         log_error("Common causes:")
         log_error("  - npm/node not in PATH")
         log_error("  - Executable name typo")
-        log_error(f"Current PATH: {os.environ.get('PATH', 'NOT SET')[:200]}...")
         return 127
         
     except Exception as e:
-        log_error(f"Auto-answer mode failed: {e}")
+        log_error(f"Auto-answer mode failed after all strategies: {e}")
         import traceback
         traceback.print_exc()
         return 1
@@ -287,7 +431,7 @@ def main():
         return 1
     
     if len(sys.argv) < 2:
-        print("PTY Helper - Subprocess Automation for C# Orchestrator", file=sys.stderr)
+        print("PTY Helper - Self-Healing Subprocess Automation", file=sys.stderr)
         print("", file=sys.stderr)
         print("Usage (manual interactive):", file=sys.stderr)
         print("  pty_helper.py <command> [args...]", file=sys.stderr)
