@@ -6,7 +6,8 @@ internal static class Program
 {
     public static async Task Main(string[] args)
     {
-        GitHubDispatcher.Initialize();
+        // Menggunakan TokenManager v2, bukan GitHubDispatcher v1
+        TokenManager.Initialize();
 
         if (args.Length > 0)
         {
