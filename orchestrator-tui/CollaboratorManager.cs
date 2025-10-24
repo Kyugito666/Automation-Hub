@@ -78,7 +78,11 @@ public static class CollaboratorManager
                 }
             });
 
-        TokenManager.SaveUsernameCache(cache);
+        // === FIX DI SINI ===
+        // Salah: TokenManager.SaveUsernameCache(cache);
+        // Benar:
+        TokenManager.SaveTokenCache(cache);
+        
         AnsiConsole.MarkupLine($"[green]✓ Validasi selesai. {newUsers} username baru ditambahkan ke cache.[/]");
     }
 
@@ -152,7 +156,7 @@ public static class CollaboratorManager
                     }
                     catch (Exception ex)
                     {
-                         AnsiConsole.MarkupLine($"[red]✗[/] Greal mengundang [yellow]@{user.Username}[/]: {ex.Message}");
+                         AnsiConsole.MarkupLine($"[red]✗[/] Gagal mengundang [yellow]@{user.Username}[/]: {ex.Message}");
                     }
                     task.Increment(1);
                     await Task.Delay(1000); // Rate limit API invite
