@@ -15,7 +15,10 @@ public static class BotUpdater
             return null;
         }
         var json = File.ReadAllText(ConfigFile);
-        return JsonSerializer.Deserialize<BotConfig>(json);
+        return JsonSerializer.Deserialize<BotConfig>(json, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
     }
 
     public static void ShowConfig()
