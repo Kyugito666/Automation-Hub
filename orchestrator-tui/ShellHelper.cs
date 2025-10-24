@@ -3,13 +3,15 @@ using System.Runtime.InteropServices;
 using Spectre.Console;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO;
 
 namespace Orchestrator;
 
 public static class ShellHelper
 {
-    // Path ke PTY wrapper kita
-    private const string PtyHelperExe = "pty-helper.exe";
+    // UBAH: Pakai Python script
+    private static readonly string PtyHelperScript = Path.Combine("..", "pty-helper-py", "pty_helper.py");
+    private static string PythonExecutable => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python" : "python3";
 
     public static async Task RunStream(string command, string args, string? workingDir = null)
     {
@@ -66,30 +68,27 @@ public static class ShellHelper
         }
     }
 
-    // === METHOD BARU: PTY INTERAKTIF (MANUAL) ===
-    // Menggantikan RunInteractive dan RunInteractiveWindows
     public static async Task RunInteractivePty(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(PtyHelperExe))
+        if (!File.Exists(PtyHelperScript))
         {
-            AnsiConsole.MarkupLine($"[red]FATAL: Wrapper PTY '{PtyHelperExe}' tidak ditemukan.[/]");
-            AnsiConsole.MarkupLine("[red]Pastikan lu sudah build pty-helper-node (npm run build).[/]");
+            AnsiConsole.MarkupLine($"[red]FATAL: PTY helper script tidak ditemukan: {PtyHelperScript}[/]");
+            AnsiConsole.MarkupLine("[yellow]Pastikan folder 'pty-helper-py' ada di root project.[/]");
             return;
         }
 
-        // pty-helper <command> <args...>
-        string ptyArgs = $"\"{command}\" {args}";
+        // python pty_helper.py <command> <args>
+        string pythonArgs = $"\"{PtyHelperScript}\" \"{command}\" {args}";
 
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = PtyHelperExe,
-                Arguments = ptyArgs,
+                FileName = PythonExecutable,
+                Arguments = pythonArgs,
                 UseShellExecute = false,
-                CreateNoWindow = false, // Harus False agar TTY bisa attach
+                CreateNoWindow = false,
                 WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory(),
-                // CRITICAL: Jangan redirect I/O agar PTY bisa mengambil alih
                 RedirectStandardInput = false,
                 RedirectStandardOutput = false,
                 RedirectStandardError = false
@@ -104,7 +103,6 @@ public static class ShellHelper
             if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
             {
                 AnsiConsole.MarkupLine($"[yellow]Process exited with code {process.ExitCode}[/]");
-                // Jangan throw exception agar alur TUI bisa lanjut
             }
         }
         catch (OperationCanceledException)
@@ -114,46 +112,42 @@ public static class ShellHelper
             {
                 if (!process.HasExited)
                 {
-                    // Kirim Ctrl+C ke PTY
-                    process.Kill(true); // Kirim SIGINT/Break
+                    process.Kill(true);
                 }
             }
             catch { }
-            throw; // Re-throw agar TUI utama tahu (Program.cs)
+            throw;
         }
         catch (Exception ex)
         {
              AnsiConsole.MarkupLine($"[red]Error saat menjalankan PTY wrapper: {ex.Message}[/]");
              try { if (!process.HasExited) process.Kill(true); } catch {}
-             throw; // Re-throw agar caller tahu ada error
+             throw;
         }
     }
 
-    // === METHOD BARU: PTY DENGAN SCRIPT (AUTO-ANSWER) ===
     public static async Task RunPtyWithScript(string inputFile, string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(PtyHelperExe))
+        if (!File.Exists(PtyHelperScript))
         {
-            AnsiConsole.MarkupLine($"[red]FATAL: Wrapper PTY '{PtyHelperExe}' tidak ditemukan.[/]");
+            AnsiConsole.MarkupLine($"[red]FATAL: PTY helper script tidak ditemukan: {PtyHelperScript}[/]");
             return;
         }
 
-        // pty-helper <input_file> <command> <args...>
-        // Pastikan path file input absolut dan dalam tanda kutip
         string absInputFile = Path.GetFullPath(inputFile);
-        string ptyArgs = $"\"{absInputFile}\" \"{command}\" {args}";
+        // python pty_helper.py <input_file> <command> <args>
+        string pythonArgs = $"\"{PtyHelperScript}\" \"{absInputFile}\" \"{command}\" {args}";
 
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = PtyHelperExe,
-                Arguments = ptyArgs,
+                FileName = PythonExecutable,
+                Arguments = pythonArgs,
                 UseShellExecute = false,
-                CreateNoWindow = true, // Bisa true karena tidak interaktif
+                CreateNoWindow = true,
                 WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory(),
-                // Kita redirect I/O di sini agar TUI bisa menampilkan log-nya
-                RedirectStandardInput = false, // PTY helper tidak baca stdin di mode script
+                RedirectStandardInput = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             }
@@ -198,17 +192,6 @@ public static class ShellHelper
         }
     }
 
-
-    // === Method lama untuk Linux/macOS (tetap pakai raw process) ===
-    // SAYA COMMENT KARENA KITA SEKARANG PAKAI PTY UNTUK SEMUA
-    /*
-    public static async Task RunInteractive(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
-    {
-        // ... (Implementasi lama) ...
-    }
-    */
-    
-    // Method ini punya fungsi BEDA (buka terminal baru), jadi biarkan saja.
     public static void RunInNewTerminal(string command, string args, string? workingDir = null)
     {
         var absPath = workingDir != null ? Path.GetFullPath(workingDir) : Directory.GetCurrentDirectory();
@@ -271,3 +254,35 @@ public static class ShellHelper
         }
     }
 }
+```
+
+---
+
+## 3. Update `.gitignore`
+```
+# Abaikan SEMUA yang di-clone saat runtime
+bots/*
+!bots/.gitkeep
+
+proxysync/
+
+# File cache dan rahasia lainnya
+__pycache__/
+.venv/
+*.log
+*.env
+
+# File state & input rahasia dari Orchestrator
+.token-state.json
+.bot-inputs/
+.token-cache.json
+
+# Abaikan file .NET build (bin/obj)
+**/bin/
+**/obj/
+
+# File log baru dari BotScanner
+.raw-bots.log
+
+# HAPUS: Node PTY (sudah diganti Python)
+pty-helper-node/
