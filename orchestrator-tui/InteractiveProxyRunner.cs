@@ -40,11 +40,15 @@ public static class InteractiveProxyRunner
             AnsiConsole.MarkupLine("[yellow]Capture run cancelled by user (Ctrl+C).[/]");
             var inputCapturePath = Path.Combine(botPath, ".input-capture.tmp");
             capturedInputs = ReadAndDeleteCaptureFile(inputCapturePath); // Ambil data parsial (jika ada)
+            
+            // === PERUBAHAN DI SINI ===
             if (capturedInputs.Any()) {
                 AnsiConsole.MarkupLine("[grey]Partial input data was captured before cancellation.[/]");
             } else {
-                 AnsiConsole.MarkupLine("[grey]No input data captured before cancellation.[/]");
+                 // Pesan lama: "[grey]No input data captured before cancellation.[/]"
+                 AnsiConsole.MarkupLine("[yellow]No line-based input was captured (bot may use raw 'y/n' input).[/]");
             }
+            // === AKHIR PERUBAHAN ===
             
             throw; // LEMPAR ULANG (Penting! Biar ditangkep Program.cs)
         }
@@ -66,7 +70,6 @@ public static class InteractiveProxyRunner
         await File.WriteAllTextAsync(inputsFile, inputsJson);
 
 
-        // === LOGIKA BARU DI SINI ===
         if (capturedInputs == null || !capturedInputs.Any())
         {
             // KASUS 1: Bot selesai tapi capture KOSONG (masalah lu)
@@ -74,7 +77,6 @@ public static class InteractiveProxyRunner
             AnsiConsole.MarkupLine("[yellow]No line-based input captured (run finished normally).[/]");
             AnsiConsole.MarkupLine("[yellow]Bot ini mungkin pakai raw-input (y/n) dan tidak kompatibel dengan capture.[/]");
 
-            // Tanya pertanyaan baru, default 'false' (N)
             if (await ConfirmAsync("Trigger remote execution TANPA input?", false, cancellationToken))
             {
                  AnsiConsole.MarkupLine("[cyan]Triggering remote job (no inputs)...[/]");
@@ -87,8 +89,6 @@ public static class InteractiveProxyRunner
             }
             return; // Selesai
         }
-        // === AKHIR LOGIKA BARU ===
-
 
         // KASUS 2: Bot selesai dan capture ADA ISINYA (Happy Path)
         AnsiConsole.MarkupLine($"[green]✓ Inputs saved to: {inputsFile}[/]");
@@ -102,7 +102,6 @@ public static class InteractiveProxyRunner
         AnsiConsole.Write(table);
 
         AnsiConsole.MarkupLine("\n[yellow]Step 2: Trigger remote execution on GitHub Actions?[/]");
-        // Tanya pertanyaan normal, default 'true' (Y)
         bool proceed = await ConfirmAsync("Proceed with remote execution (using captured inputs)?", true, cancellationToken); 
 
         if (!proceed)
@@ -363,12 +362,10 @@ try:
         except Exception as e: print(f'Capture wrapper FATAL ERROR: {{e}}', file=sys.stderr); traceback.print_exc(file=sys.stderr); exit_code = 1
     else: print(f'Capture wrapper warning: No script executed.', file=sys.stderr); exit_code = 1
 finally:
-    # Logic 'finally' (DIUBAH)
     if not _shutdown_initiated:
         print(f'Capture wrapper info: Saving captured data (normal exit)...', file=sys.stderr)
-        save_capture_data() # Cukup panggil helper
+        save_capture_data()
     
-    # Keluar dengan exit code yang benar
     sys.exit(exit_code)
 ";
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
