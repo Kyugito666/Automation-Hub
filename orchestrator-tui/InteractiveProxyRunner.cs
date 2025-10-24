@@ -12,7 +12,7 @@ namespace Orchestrator;
 public static class InteractiveProxyRunner
 {
     private const string InputsDir = "../.bot-inputs"; 
-    // private const string VenvDirName = ".venv"; // <-- DIHAPUS, tidak terpakai & bikin warning
+    // private const string VenvDirName = ".venv"; // <-- DIHAPUS, tidak terpakai di file ini
 
     public static async Task CaptureAndTriggerBot(BotEntry bot, CancellationToken cancellationToken = default)
     {
@@ -412,7 +412,7 @@ try {{
             if (actualCallback) {{ try {{ actualCallback(answer); }} catch (cbError) {{ console.error('JS Wrapper Error: CB Exception:', cbError); }} }}
         }});
     }};
-}} catch (e) {{ console.error('JS Wrapper Error: Readline init failed:', e); gracefulExit(1); }}
+}} catch (e) {{ console.error('JS Wrapper Error: Readline init failed:', e); gracefulExit(1S); }}
 
 // --- Target Script Execution Logic ---
 try {{
