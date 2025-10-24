@@ -181,15 +181,36 @@ def run_with_script(input_file, command, args, cwd):
         )
         
         input_sent = threading.Event()
+        stdin_closed = threading.Event()
         
         def send_input():
             try:
                 time.sleep(0.5)
+                
+                # Send all inputs
                 _current_process.stdin.write(inputs.encode('utf-8'))
                 _current_process.stdin.flush()
-                _current_process.stdin.close()
+                
+                # Keep stdin open but send empty data periodically
+                # This prevents "handle is invalid" on Windows
                 input_sent.set()
-                log_info("Input sent successfully")
+                log_info("Input sent successfully, keeping stdin alive...")
+                
+                # Monitor process and keep stdin alive
+                while _current_process.poll() is None:
+                    try:
+                        time.sleep(0.1)
+                    except:
+                        break
+                
+                # Process ended, now close stdin
+                try:
+                    _current_process.stdin.close()
+                except:
+                    pass
+                stdin_closed.set()
+                log_info("Process ended, stdin closed")
+                
             except BrokenPipeError:
                 log_error("BrokenPipeError: Process terminated before input finished")
             except Exception as e:
