@@ -1,4 +1,5 @@
 using Spectre.Console;
+using System.Linq; // <-- TAMBAHKAN using ini
 
 namespace Orchestrator;
 
@@ -19,6 +20,7 @@ internal static class Program
 
     private static async Task RunTask(string task)
     {
+        // ... (Tidak berubah) ...
         switch (task.ToLower())
         {
             case "--update-bots":
@@ -40,11 +42,12 @@ internal static class Program
     }
 
     // =================================================================
-    // NAVIGASI MENU UTAMA (WRAP AROUND)
+    // NAVIGASI MENU UTAMA
     // =================================================================
 
     private static async Task RunInteractive()
     {
+        // ... (Tidak berubah) ...
         while (true)
         {
             AnsiConsole.Clear();
@@ -53,9 +56,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold cyan]MAIN MENU[/]") // Hint '0' dihapus
+                    .Title("\n[bold cyan]MAIN MENU[/]")
                     .PageSize(10)
-                    .WrapAround() // <-- TAMBAHAN: Navigasi wrap around
+                    .WrapAround()
                     .AddChoices(new[]
                     {
                         "1. [[SETUP]] Configuration & Token Management",
@@ -63,10 +66,9 @@ internal static class Program
                         "3. [[HYBRID]] Interactive Remote Execution",
                         "4. [[REMOTE]] GitHub Actions Control",
                         "5. [[DEBUG]] Local Bot Testing",
-                        "0. Exit" // Opsi '0' tetap ada, tapi tidak lagi shortcut utama
+                        "0. Exit"
                     }));
 
-            // Handle '0' untuk Exit secara eksplisit jika dipilih
             if (choice.StartsWith("0"))
             {
                 AnsiConsole.MarkupLine("[green]Goodbye![/]");
@@ -80,17 +82,17 @@ internal static class Program
                 case "3": await ShowHybridMenu(); break;
                 case "4": await ShowRemoteMenu(); break;
                 case "5": await ShowDebugMenu(); break;
-                // case "0" dihandle di atas
             }
         }
     }
 
     // =================================================================
-    // SUB-MENU HANDLERS (WRAP AROUND)
+    // SUB-MENU HANDLERS
     // =================================================================
 
     private static async Task ShowSetupMenu()
     {
+        // ... (Tidak berubah) ...
         while (true)
         {
             AnsiConsole.Clear();
@@ -98,9 +100,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold yellow]SETUP & CONFIGURATION[/]") // Hint '0' dihapus
+                    .Title("\n[bold yellow]SETUP & CONFIGURATION[/]")
                     .PageSize(10)
-                    .WrapAround() // <-- TAMBAHAN
+                    .WrapAround()
                     .AddChoices(new[]
                     {
                         "1. Validate Tokens & Get Usernames",
@@ -112,7 +114,7 @@ internal static class Program
                     }));
 
             var selection = choice.Split('.')[0];
-            if (selection == "0") return; // Tetap pakai '0' untuk kembali
+            if (selection == "0") return;
 
             bool pause = true;
             switch (selection)
@@ -131,6 +133,7 @@ internal static class Program
 
     private static async Task ShowLocalMenu()
     {
+        // ... (Tidak berubah) ...
         while (true)
         {
             AnsiConsole.Clear();
@@ -138,9 +141,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold green]LOCAL BOT & PROXY MANAGEMENT[/]") // Hint '0' dihapus
+                    .Title("\n[bold green]LOCAL BOT & PROXY MANAGEMENT[/]")
                     .PageSize(10)
-                    .WrapAround() // <-- TAMBAHAN
+                    .WrapAround()
                     .AddChoices(new[]
                     {
                         "1. Update All Bots & Tools",
@@ -167,6 +170,7 @@ internal static class Program
 
     private static async Task ShowHybridMenu()
     {
+        // ... (Tidak berubah) ...
         while (true)
         {
             AnsiConsole.Clear();
@@ -174,9 +178,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold blue]HYBRID INTERACTIVE EXECUTION[/]") // Hint '0' dihapus
+                    .Title("\n[bold blue]HYBRID INTERACTIVE EXECUTION[/]")
                     .PageSize(10)
-                    .WrapAround() // <-- TAMBAHAN
+                    .WrapAround()
                     .AddChoices(new[]
                     {
                         "1. Run Interactive Bot -> Remote",
@@ -201,6 +205,7 @@ internal static class Program
 
     private static async Task ShowRemoteMenu()
     {
+        // ... (Tidak berubah) ...
         while (true)
         {
             AnsiConsole.Clear();
@@ -208,9 +213,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold red]GITHUB ACTIONS CONTROL[/]") // Hint '0' dihapus
+                    .Title("\n[bold red]GITHUB ACTIONS CONTROL[/]")
                     .PageSize(10)
-                    .WrapAround() // <-- TAMBAHAN
+                    .WrapAround()
                     .AddChoices(new[]
                     {
                         "1. Trigger ALL Bots (Workflow)",
@@ -235,6 +240,7 @@ internal static class Program
 
     private static async Task ShowDebugMenu()
     {
+        // ... (Tidak berubah) ...
         while (true)
         {
             AnsiConsole.Clear();
@@ -242,9 +248,9 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold grey]DEBUG & LOCAL TESTING[/]") // Hint '0' dihapus
+                    .Title("\n[bold grey]DEBUG & LOCAL TESTING[/]")
                     .PageSize(10)
-                    .WrapAround() // <-- TAMBAHAN
+                    .WrapAround()
                     .AddChoices(new[]
                     {
                         "1. Test Local Bot (No Remote)",
@@ -272,7 +278,7 @@ internal static class Program
     }
 
     // =================================================================
-    // METHOD HELPER (Tidak berubah)
+    // METHOD HELPER (UPDATED)
     // =================================================================
 
     private static async Task RunSingleInteractiveBot()
@@ -282,6 +288,7 @@ internal static class Program
 
         var bots = config.BotsAndTools
             .Where(b => b.Enabled && b.IsBot)
+            .OrderBy(b => b.Name) // <-- TAMBAHKAN SORTING
             .ToList();
 
         if (!bots.Any())
@@ -294,7 +301,7 @@ internal static class Program
             new SelectionPrompt<BotEntry>()
                 .Title("[cyan]Select bot for interactive run:[/]")
                 .PageSize(20)
-                .WrapAround() // <-- TAMBAHAN (Konsistensi)
+                .WrapAround()
                 .UseConverter(b => $"{b.Name} ({b.Type})")
                 .AddChoices(bots));
 
@@ -306,8 +313,10 @@ internal static class Program
         var config = BotConfig.Load();
         if (config == null) return;
 
+        // Sorting ditambahkan di sini juga agar urutan eksekusi konsisten
         var bots = config.BotsAndTools
             .Where(b => b.Enabled && b.IsBot)
+            .OrderBy(b => b.Name) // <-- TAMBAHKAN SORTING
             .ToList();
 
         if (!bots.Any())
@@ -316,7 +325,7 @@ internal static class Program
             return;
         }
 
-        AnsiConsole.MarkupLine($"[cyan]Found {bots.Count} active bots[/]");
+        AnsiConsole.MarkupLine($"[cyan]Found {bots.Count} active bots (Sorted Alphabetically)[/]"); // Info tambahan
         AnsiConsole.MarkupLine("[yellow]WARNING: This will run all bots locally for input capture.[/]");
 
         if (!AnsiConsole.Confirm("Continue?"))
@@ -359,6 +368,7 @@ internal static class Program
 
         var bots = config.BotsAndTools
             .Where(b => b.Enabled && b.IsBot)
+            .OrderBy(b => b.Name) // <-- TAMBAHKAN SORTING
             .ToList();
 
         if (!bots.Any())
@@ -371,7 +381,7 @@ internal static class Program
             new SelectionPrompt<BotEntry>()
                 .Title("[cyan]Select bot for local test:[/]")
                 .PageSize(20)
-                .WrapAround() // <-- TAMBAHAN (Konsistensi)
+                .WrapAround()
                 .UseConverter(b => $"{b.Name} ({b.Type})")
                 .AddChoices(bots));
 
