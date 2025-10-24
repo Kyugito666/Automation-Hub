@@ -10,7 +10,7 @@ public class TokenManager
     private static readonly string TokensPath = "../config/github_tokens.txt";
     private static readonly string StatePath = "../.token-state.json";
     private static readonly string ProxyListPath = "../proxysync/proxy.txt";
-    private static readonly string TokenCachePath = "../.token-cache.json"; // BARU
+    private static readonly string TokenCachePath = "../.token-cache.json"; 
 
     private static List<TokenEntry> _tokens = new();
     private static List<string> _proxyList = new();
@@ -18,18 +18,40 @@ public class TokenManager
     private static string _owner = "";
     private static string _repo = "";
     
-    private static Dictionary<string, string> _tokenCache = new(); // BARU
+    private static Dictionary<string, string> _tokenCache = new(); 
 
     public static void Initialize()
     {
         LoadTokens();
         LoadProxyList();
         LoadState();
-        LoadTokenCache(); // BARU
-        AssignProxiesAndUsernames(); // NAMA DIGANTI
+        LoadTokenCache(); 
+        AssignProxiesAndUsernames(); 
     }
 
-    private static void LoadTokenCache() // BARU
+    // ==========================================================
+    // METHOD BARU UNTUK REFRESH
+    // ==========================================================
+    public static void ReloadAllConfigs()
+    {
+        AnsiConsole.MarkupLine("[bold yellow]Reloading all configuration files...[/]");
+
+        // 1. Bersihkan semua data yang di-cache di memori
+        _tokens.Clear();
+        _proxyList.Clear();
+        _tokenCache.Clear();
+        _owner = "";
+        _repo = "";
+        _state = null; // Akan memaksa LoadState() membaca ulang
+
+        // 2. Panggil ulang semua method Inisialisasi
+        Initialize();
+
+        AnsiConsole.MarkupLine("[bold green]✓ Konfigurasi berhasil di-refresh.[/]");
+    }
+    // ==========================================================
+
+    private static void LoadTokenCache() 
     {
         if (File.Exists(TokenCachePath))
         {
@@ -48,7 +70,7 @@ public class TokenManager
         }
     }
 
-    public static void SaveTokenCache(Dictionary<string, string> cache) // BARU
+    public static void SaveTokenCache(Dictionary<string, string> cache) 
     {
         try
         {
@@ -107,7 +129,7 @@ public class TokenManager
         }
     }
 
-    private static void AssignProxiesAndUsernames() // NAMA DIGANTI
+    private static void AssignProxiesAndUsernames() 
     {
         if (!_tokens.Any()) return;
 
@@ -239,13 +261,11 @@ public class TokenManager
         return CreateHttpClient(token, proxy);
     }
     
-    // Overload BARU untuk CollaboratorManager
     public static HttpClient CreateHttpClient(TokenEntry entry)
     {
         return CreateHttpClient(entry.Token, entry.Proxy);
     }
 
-    // Fungsi inti BARU untuk membuat client
     private static HttpClient CreateHttpClient(string token, string? proxy)
     {
         var handler = new HttpClientHandler();
@@ -268,11 +288,11 @@ public class TokenManager
     {
         AnsiConsole.MarkupLine("[cyan]Reloading proxies from ProxySync...[/]");
         LoadProxyList();
-        AssignProxiesAndUsernames(); // Diganti
+        AssignProxiesAndUsernames(); 
         AnsiConsole.MarkupLine("[green]Proxies reloaded and assigned to tokens[/]");
     }
     
-    public static string MaskToken(string token) // BARU
+    public static string MaskToken(string token) 
     {
         return token.Length > 20 
             ? token[..10] + "..." + token[^7..] 
@@ -286,7 +306,7 @@ public class TokenManager
         var table = new Table().Title("GitHub Tokens Status");
         table.AddColumn("Index");
         table.AddColumn("Token");
-        table.AddColumn("Username"); // BARU
+        table.AddColumn("Username"); 
         table.AddColumn("Proxy");
         table.AddColumn("Active");
 
@@ -305,7 +325,7 @@ public class TokenManager
             table.AddRow(
                 (i + 1).ToString(),
                 tokenDisplay,
-                token.Username ?? "[grey]???[/]", // BARU
+                token.Username ?? "[grey]???[/]", 
                 proxyDisplay,
                 isActive
             );
@@ -346,7 +366,7 @@ public class TokenEntry
 {
     public string Token { get; set; } = string.Empty;
     public string? Proxy { get; set; }
-    public string? Username { get; set; } // BARU
+    public string? Username { get; set; } 
 }
 
 public class TokenState
@@ -373,7 +393,6 @@ public class BotExecutionState
     public int TokenIndex { get; set; }
 }
 
-// Definisi GitHubConfig dipindah ke sini dari GitHubDispatcher
 public class GitHubConfig
 {
     [JsonPropertyName("owner")]
