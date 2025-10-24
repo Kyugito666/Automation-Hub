@@ -6,7 +6,6 @@ internal static class Program
 {
     public static async Task Main(string[] args)
     {
-        // Tetap sinkron, cache di-load di sini
         TokenManager.Initialize();
 
         if (args.Length > 0)
@@ -41,7 +40,7 @@ internal static class Program
     }
 
     // =================================================================
-    // NAVIGASI MENU UTAMA 
+    // NAVIGASI MENU UTAMA
     // =================================================================
 
     private static async Task RunInteractive()
@@ -54,7 +53,8 @@ internal static class Program
 
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold cyan]MAIN MENU[/]")
+                    // === HINT DITAMBAHKAN ===
+                    .Title("\n[bold cyan]MAIN MENU[/] [grey](Press '0' to Exit)[/]")
                     .PageSize(10)
                     .AddChoices(new[]
                     {
@@ -66,6 +66,13 @@ internal static class Program
                         "0. Exit"
                     }));
 
+            // Langsung handle '0' di sini
+            if (choice.StartsWith("0"))
+            {
+                AnsiConsole.MarkupLine("[green]Goodbye![/]");
+                return;
+            }
+
             switch (choice.Split('.')[0])
             {
                 case "1": await ShowSetupMenu(); break;
@@ -73,15 +80,13 @@ internal static class Program
                 case "3": await ShowHybridMenu(); break;
                 case "4": await ShowRemoteMenu(); break;
                 case "5": await ShowDebugMenu(); break;
-                case "0":
-                    AnsiConsole.MarkupLine("[green]Goodbye![/]");
-                    return;
+                // case "0" sudah dihandle di atas
             }
         }
     }
-    
+
     // =================================================================
-    // SUB-MENU HANDLERS (DENGAN UPDATE)
+    // SUB-MENU HANDLERS
     // =================================================================
 
     private static async Task ShowSetupMenu()
@@ -90,10 +95,11 @@ internal static class Program
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
-            
+
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold yellow]SETUP & CONFIGURATION[/]")
+                    // === HINT DITAMBAHKAN ===
+                    .Title("\n[bold yellow]SETUP & CONFIGURATION[/] [grey](Press '0' to Go Back)[/]")
                     .PageSize(10)
                     .AddChoices(new[]
                     {
@@ -101,21 +107,23 @@ internal static class Program
                         "2. Invite Collaborators",
                         "3. Accept Invitations",
                         "4. Show Token/Proxy Status",
-                        "5. [[SYSTEM]] Refresh All Configs (Reload files)", // <-- TAMBAHAN
+                        "5. [[SYSTEM]] Refresh All Configs (Reload files)",
                         "0. [[Back]] Kembali ke Menu Utama"
                     }));
 
             var selection = choice.Split('.')[0];
-            bool pause = true;
+            // Langsung handle '0' di sini
+            if (selection == "0") return;
 
+            bool pause = true;
             switch (selection)
             {
                 case "1": await CollaboratorManager.ValidateAllTokens(); break;
                 case "2": await CollaboratorManager.InviteCollaborators(); break;
                 case "3": await CollaboratorManager.AcceptInvitations(); break;
                 case "4": TokenManager.ShowStatus(); break;
-                case "5": TokenManager.ReloadAllConfigs(); break; // <-- TAMBAHAN
-                case "0": return;
+                case "5": TokenManager.ReloadAllConfigs(); break;
+                // case "0" sudah dihandle di atas
                 default: pause = false; break;
             }
 
@@ -129,10 +137,11 @@ internal static class Program
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Local").Centered().Color(Color.Green));
-            
+
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold green]LOCAL BOT & PROXY MANAGEMENT[/]")
+                    // === HINT DITAMBAHKAN ===
+                    .Title("\n[bold green]LOCAL BOT & PROXY MANAGEMENT[/] [grey](Press '0' to Go Back)[/]")
                     .PageSize(10)
                     .AddChoices(new[]
                     {
@@ -143,14 +152,14 @@ internal static class Program
                     }));
 
             var selection = choice.Split('.')[0];
-            bool pause = true;
+            if (selection == "0") return;
 
+            bool pause = true;
             switch (selection)
             {
                 case "1": await BotUpdater.UpdateAllBots(); break;
                 case "2": await ProxyManager.DeployProxies(); break;
                 case "3": BotUpdater.ShowConfig(); break;
-                case "0": return;
                 default: pause = false; break;
             }
 
@@ -164,10 +173,11 @@ internal static class Program
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Hybrid").Centered().Color(Color.Blue));
-            
+
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold blue]HYBRID INTERACTIVE EXECUTION[/]")
+                     // === HINT DITAMBAHKAN ===
+                    .Title("\n[bold blue]HYBRID INTERACTIVE EXECUTION[/] [grey](Press '0' to Go Back)[/]")
                     .PageSize(10)
                     .AddChoices(new[]
                     {
@@ -177,13 +187,13 @@ internal static class Program
                     }));
 
             var selection = choice.Split('.')[0];
-            bool pause = true;
+            if (selection == "0") return;
 
+            bool pause = true;
             switch (selection)
             {
                 case "1": await RunSingleInteractiveBot(); break;
                 case "2": await RunAllInteractiveBots(); break;
-                case "0": return;
                 default: pause = false; break;
             }
 
@@ -197,10 +207,11 @@ internal static class Program
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Remote").Centered().Color(Color.Red));
-            
+
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold red]GITHUB ACTIONS CONTROL[/]")
+                     // === HINT DITAMBAHKAN ===
+                    .Title("\n[bold red]GITHUB ACTIONS CONTROL[/] [grey](Press '0' to Go Back)[/]")
                     .PageSize(10)
                     .AddChoices(new[]
                     {
@@ -210,13 +221,13 @@ internal static class Program
                     }));
 
             var selection = choice.Split('.')[0];
-            bool pause = true;
+            if (selection == "0") return;
 
+            bool pause = true;
             switch (selection)
             {
                 case "1": await GitHubDispatcher.TriggerAllBotsWorkflow(); break;
                 case "2": await GitHubDispatcher.GetWorkflowRuns(); break;
-                case "0": return;
                 default: pause = false; break;
             }
 
@@ -230,10 +241,11 @@ internal static class Program
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Debug").Centered().Color(Color.Grey));
-            
+
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("\n[bold grey]DEBUG & LOCAL TESTING[/]")
+                    // === HINT DITAMBAHKAN ===
+                    .Title("\n[bold grey]DEBUG & LOCAL TESTING[/] [grey](Press '0' to Go Back)[/]")
                     .PageSize(10)
                     .AddChoices(new[]
                     {
@@ -242,19 +254,19 @@ internal static class Program
                     }));
 
             var selection = choice.Split('.')[0];
-            bool pause = true;
+            if (selection == "0") return;
 
+            bool pause = true;
             switch (selection)
             {
                 case "1": await TestLocalBot(); break;
-                case "0": return;
                 default: pause = false; break;
             }
 
             if (pause) Pause();
         }
     }
-    
+
     private static void Pause()
     {
         AnsiConsole.MarkupLine("\n[grey]Press Enter to continue...[/]");
@@ -307,7 +319,7 @@ internal static class Program
 
         AnsiConsole.MarkupLine($"[cyan]Found {bots.Count} active bots[/]");
         AnsiConsole.MarkupLine("[yellow]WARNING: This will run all bots locally for input capture.[/]");
-        
+
         if (!AnsiConsole.Confirm("Continue?"))
             return;
 
@@ -317,7 +329,7 @@ internal static class Program
         foreach (var bot in bots)
         {
             AnsiConsole.Write(new Rule($"[cyan]{bot.Name}[/]").Centered());
-            
+
             try
             {
                 await InteractiveProxyRunner.CaptureAndTriggerBot(bot);
