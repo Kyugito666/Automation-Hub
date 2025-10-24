@@ -8,26 +8,22 @@ namespace Orchestrator;
 
 internal static class Program
 {
-    // Token utama untuk navigasi menu
     private static CancellationTokenSource _cts = new CancellationTokenSource();
-    // Token spesifik untuk membatalkan child process (bot interaktif)
     private static CancellationTokenSource? _childProcessCts = null;
 
     public static async Task Main(string[] args)
     {
         Console.CancelKeyPress += (sender, e) =>
         {
-            e.Cancel = true; // Selalu cegah TUI mati mendadak
+            e.Cancel = true;
 
             if (_childProcessCts != null && !_childProcessCts.IsCancellationRequested)
             {
-                // 1. Jika kita di dalam bot run, batalkan HANYA bot itu.
                 AnsiConsole.MarkupLine("\n[yellow]Ctrl+C detected. Cancelling current bot run...[/]");
                 _childProcessCts.Cancel();
             }
             else if (_cts != null && !_cts.IsCancellationRequested)
             {
-                // 2. Jika kita di menu, batalkan token utama (balik ke menu/exit)
                 AnsiConsole.MarkupLine("\n[yellow]Ctrl+C detected. Requesting main cancellation...[/]");
                 _cts.Cancel();
             }
@@ -47,20 +43,28 @@ internal static class Program
 
         await RunInteractive();
     }
-     private static async Task RunTask(string task)
-    {
-        // Tetap sama
-        switch (task.ToLower()) { /* ... */ }
-    }
 
+    private static async Task RunTask(string task)
+    {
+        switch (task.ToLower())
+        {
+            case "update": await BotUpdater.UpdateAllBots(); break;
+            case "deploy": await ProxyManager.DeployProxies(); break;
+            case "validate": await CollaboratorManager.ValidateAllTokens(); break;
+            case "invite": await CollaboratorManager.InviteCollaborators(); break;
+            case "accept": await CollaboratorManager.AcceptInvitations(); break;
+            case "trigger": await GitHubDispatcher.TriggerAllBotsWorkflow(); break;
+            case "status": await GitHubDispatcher.GetWorkflowRuns(); break;
+            default: AnsiConsole.MarkupLine("[red]Unknown task[/]"); break;
+        }
+    }
 
     private static async Task RunInteractive()
     {
         while (true)
         {
-            // Reset token utama jika sebelumnya dibatalkan
             if (_cts.IsCancellationRequested) { _cts.Dispose(); _cts = new CancellationTokenSource(); }
-            _childProcessCts = null; // Pastikan token bot mati
+            _childProcessCts = null;
 
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
@@ -84,7 +88,6 @@ internal static class Program
 
             try
             {
-                // Reset token utama jika perlu
                 if (_cts.IsCancellationRequested) { _cts.Dispose(); _cts = new CancellationTokenSource(); }
 
                 switch (choice.Split('.')[0])
@@ -108,7 +111,6 @@ internal static class Program
         }
     }
 
-    // === SUBMENU SETUP (TIDAK BERUBAH) ===
     private static async Task ShowSetupMenu(CancellationToken cancellationToken) {
         while (true)
         {
@@ -149,7 +151,6 @@ internal static class Program
         }
      }
     
-    // === (TIDAK BERUBAH) ===
     private static async Task ShowLocalMenu(CancellationToken cancellationToken) { 
         while (true)
         {
@@ -183,6 +184,7 @@ internal static class Program
             if (pause) Pause(cancellationToken);
         }
     }
+
     private static async Task ShowHybridMenu(CancellationToken cancellationToken) { 
          while (true)
         {
@@ -206,7 +208,7 @@ internal static class Program
 
             bool pause = true;
             switch (selection)
-            D:
+            {
                 case "1": await RunSingleInteractiveBot(cancellationToken); break;
                 case "2": await RunAllInteractiveBots(cancellationToken); break;
                 default: pause = false; break;
@@ -218,6 +220,7 @@ internal static class Program
              }
         }
     }
+
     private static async Task ShowRemoteMenu(CancellationToken cancellationToken) { 
          while (true)
         {
@@ -248,6 +251,7 @@ internal static class Program
             if (pause) Pause(cancellationToken);
         }
     }
+
     private static async Task ShowDebugMenu(CancellationToken cancellationToken) { 
          while (true)
         {
@@ -297,11 +301,11 @@ internal static class Program
              throw;
         }
     }
+
     private static void PauseWithoutCancel() { 
          AnsiConsole.MarkupLine("\n[grey]Press Enter to continue...[/]");
         Console.ReadLine();
      }
-
 
     private static readonly BotEntry BackOption = new() { Name = "[[Back]] Kembali", Type = "SYSTEM" };
 
@@ -409,7 +413,7 @@ internal static class Program
              {
                  Pause(cancellationToken);
              }
-        } // End foreach
+        }
 
         AnsiConsole.MarkupLine($"\n[bold]Summary:[/]");
         AnsiConsole.MarkupLine($"[green]✓ Bots processed: {successCount}[/]");
@@ -441,8 +445,6 @@ internal static class Program
         
         try
         {
-            // === PERUBAHAN DI SINI ===
-            // Gunakan PTY helper baru untuk mode interaktif manual
             await ShellHelper.RunInteractivePty(executor, args, botPath, linkedCts.Token);
         }
         catch (OperationCanceledException)
