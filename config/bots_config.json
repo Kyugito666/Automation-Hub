@@ -1,4 +1,4 @@
-e{
+{
   "schema_version": "1.0",
   "update_strategy": "clone_or_pull",
   "bots_and_tools": [
