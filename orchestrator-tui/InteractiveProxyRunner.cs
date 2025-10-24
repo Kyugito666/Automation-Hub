@@ -250,10 +250,14 @@ public static class InteractiveProxyRunner
      }
 
 
-    // === METHOD PYTHON WRAPPER (Escaping v3 - Seharusnya sudah benar) ===
+    // === METHOD PYTHON WRAPPER (FIXED) ===
      private static async Task CreatePythonCaptureWrapper(string wrapperFullPath, string outputPath)
     {
+        // Escaping untuk C# string literal: \ diubah jadi \\
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
+        // Escaping untuk C# string literal: { jadi {{, } jadi }}
+        // Escaping untuk Python f-string: { jadi {{, } jadi }}
+        // Jadi, untuk f-string di dalam C# string literal, C# {{}} -> Python {}, C# {{{{}}}} -> Python {{}}
         var wrapper = $@"#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
@@ -273,7 +277,7 @@ def handle_signal(sig, frame):
     global _shutdown_initiated
     if not _shutdown_initiated:
         _shutdown_initiated = True
-        print(f'\nCapture wrapper info: Received signal {{{{sig}}}}. Cleaning up and exiting...', file=sys.stderr)
+        print(f'\nCapture wrapper info: Received signal {{sig}}. Cleaning up and exiting...', file=sys.stderr)
         sys.exit(128 + sig)
 
 signal.signal(signal.SIGINT, handle_signal)
@@ -288,10 +292,10 @@ try:
          try: sys.stdin.reconfigure(encoding='utf-8', errors='replace')
          except: pass
 except Exception as enc_err:
-    print(f'Capture wrapper warning: Could not reconfigure stdio encoding: {{{{enc_err}}}}', file=sys.stderr)
+    print(f'Capture wrapper warning: Could not reconfigure stdio encoding: {{enc_err}}', file=sys.stderr)
 
 # --- Input Capture Logic ---
-captured = {{{{'}}}}
+captured = {{}}
 _original_input = builtins.input
 
 def capturing_input(prompt=''):
@@ -304,13 +308,13 @@ def capturing_input(prompt=''):
         response = response.rstrip('\n\r')
 
         key_base = str(prompt).strip().rstrip(':').strip()
-        key = key_base or f'input_{{{{{{len(captured)}}}}}}'
+        key = key_base or f'input_{{len(captured)}}'
 
         count = 1
         final_key = key
         while final_key in captured:
             count += 1
-            final_key = f'{{{{key}}}}_{{{{count}}}}'
+            final_key = f'{{key}}_{{count}}'
 
         captured[final_key] = response
         return response
@@ -319,7 +323,7 @@ def capturing_input(prompt=''):
     except KeyboardInterrupt:
         print('\nCapture wrapper info: KeyboardInterrupt during input.', file=sys.stderr); raise
     except Exception as input_err:
-        print(f'Capture wrapper error during input call: {{{{input_err}}}}', file=sys.stderr); return ''
+        print(f'Capture wrapper error during input call: {{input_err}}', file=sys.stderr); return ''
 
 builtins.input = capturing_input
 
@@ -329,12 +333,12 @@ original_argv = list(sys.argv)
 if len(original_argv) > 1:
     script_arg = original_argv[1]; script_path = os.path.abspath(script_arg)
     if os.path.exists(script_path): script_to_run = script_path
-    else: print(f'Capture wrapper error: Target script not found: {{{{script_path}}}}', file=sys.stderr)
+    else: print(f'Capture wrapper error: Target script not found: {{script_path}}', file=sys.stderr)
 else:
     for entry in ['run.py', 'main.py', 'bot.py']:
         entry_path = os.path.abspath(entry)
         if os.path.exists(entry_path):
-            print(f'Capture wrapper info: Found entry point: {{{{entry}}}}', file=sys.stderr); script_to_run = entry_path; break
+            print(f'Capture wrapper info: Found entry point: {{entry}}', file=sys.stderr); script_to_run = entry_path; break
     if script_to_run is None: print('Capture wrapper error: No script argument and no entry point found.', file=sys.stderr)
 
 # --- Script Execution and Cleanup ---
@@ -344,16 +348,16 @@ try:
     if script_to_run:
         try:
             sys.argv = [script_to_run] + original_argv[2:]
-            print(f'--- Starting Target Script: {{{{os.path.basename(script_to_run)}}}} ---', file=sys.stderr)
+            print(f'--- Starting Target Script: {{os.path.basename(script_to_run)}} ---', file=sys.stderr)
             with open(script_to_run, 'r', encoding='utf-8') as f: source = f.read()
             code = compile(source, script_to_run, 'exec')
-            script_globals = {{{{'__name__': '__main__', '__file__': script_to_run}}}}
+            script_globals = {{'__name__': '__main__', '__file__': script_to_run}}
             exec(code, script_globals)
             exit_code = 0; print(f'\n--- Target Script Finished ---', file=sys.stderr)
-        except SystemExit as sysexit: exit_code = sysexit.code if isinstance(sysexit.code, int) else 0; print(f'Capture wrapper info: Script exited via SystemExit({{{{exit_code}}}}).', file=sys.stderr)
+        except SystemExit as sysexit: exit_code = sysexit.code if isinstance(sysexit.code, int) else 0; print(f'Capture wrapper info: Script exited via SystemExit({{exit_code}}).', file=sys.stderr)
         except KeyboardInterrupt:
              if not _shutdown_initiated: _shutdown_initiated = True; print(f'\nCapture wrapper info: KeyboardInterrupt caught.', file=sys.stderr); exit_code = 130
-        except Exception as e: print(f'Capture wrapper FATAL ERROR: {{{{e}}}}', file=sys.stderr); traceback.print_exc(file=sys.stderr); exit_code = 1
+        except Exception as e: print(f'Capture wrapper FATAL ERROR: {{e}}', file=sys.stderr); traceback.print_exc(file=sys.stderr); exit_code = 1
     else: print(f'Capture wrapper warning: No script executed.', file=sys.stderr); exit_code = 1
 finally:
     if not _shutdown_initiated:
@@ -361,20 +365,22 @@ finally:
         try:
             output_dir = os.path.dirname(abs_output_path); os.makedirs(output_dir, exist_ok=True)
             with open(abs_output_path, 'w', encoding='utf-8') as f:
-                serializable_captured = {{{{'k: str(v) for k, v in captured.items()}}}}
+                serializable_captured = {{'k': str(v) for k, v in captured.items()}}
                 json.dump(serializable_captured, f, indent=2, ensure_ascii=False)
-            print(f'Capture wrapper info: Data saved to {{{{abs_output_path}}}}', file=sys.stderr)
-        except Exception as save_err: print(f'Capture wrapper FATAL: Save failed {{{{abs_output_path}}}}: {{{{save_err}}}}', file=sys.stderr); exit_code = 1
+            print(f'Capture wrapper info: Data saved to {{abs_output_path}}', file=sys.stderr)
+        except Exception as save_err: print(f'Capture wrapper FATAL: Save failed {{abs_output_path}}: {{save_err}}', file=sys.stderr); exit_code = 1
 ";
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
     }
 
 
-    // === METHOD JAVASCRIPT WRAPPER (FIXED ESCAPING v4) ===
+    // === METHOD JAVASCRIPT WRAPPER (FIXED) ===
     private static async Task CreateJavaScriptCaptureWrapper(string wrapperFullPath, string outputPath)
     {
+        // Escaping untuk C# string literal: \ diubah jadi \\
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
-        // GANDAKAN SEMUA {{ }} dan escape $ menjadi $$
+        // Escaping untuk C# string literal: { jadi {{, } jadi }}
+        // Escaping untuk JS string literal: $ jadi $$
         var wrapper = $@"// Force CommonJS mode by using .cjs extension
 const fs = require('fs');
 const path = require('path');
@@ -382,7 +388,7 @@ const readline = require('readline');
 const process = require('process');
 const {{ Writable }} = require('stream');
 
-const captured = {{}}; // === FIX: Hapus petik -> {{{{}}}} ===
+const captured = {{}};
 let rl = null;
 const absOutputPath = path.resolve('{escapedOutputPath}');
 let isExiting = false;
@@ -390,11 +396,11 @@ let isExiting = false;
 // --- Save Function ---
 function saveCaptureData() {{
     if (isExiting) return;
-    // console.log(`Debug JS: Saving to $$${{{{{{absOutputPath}}}}}}`);
+    // console.log(`Debug JS: Saving to $${{absOutputPath}}`);
     try {{
         const outputDir = path.dirname(absOutputPath);
         if (!fs.existsSync(outputDir)) {{
-            fs.mkdirSync(outputDir, {{ recursive: true }}); // -> {{{{{{}}}}}}
+            fs.mkdirSync(outputDir, {{ recursive: true }});
         }}
         fs.writeFileSync(absOutputPath, JSON.stringify(captured, null, 2));
     }} catch (e) {{ console.error('JS Wrapper FATAL: Save failed:', e); }}
@@ -403,45 +409,45 @@ function saveCaptureData() {{
 // --- Exit Handling ---
 function gracefulExit(signalOrCode = 0) {{
     if (isExiting) return; isExiting = true;
-    // console.log(`Debug JS: Exit requested: $$${{{{{{signalOrCode}}}}}}`);
+    // console.log(`Debug JS: Exit requested: $${{signalOrCode}}`);
     saveCaptureData();
     if (rl && !rl.closed) {{ rl.close(); }}
     process.exitCode = (typeof signalOrCode === 'number' ? signalOrCode : 1);
     // Let node exit after current event loop finishes or timeout
-    setTimeout(() => {{ process.exit(process.exitCode); }}, 250); // -> () => {{{{...}}}}
+    setTimeout(() => {{ process.exit(process.exitCode); }}, 250);
 }}
 
-process.on('exit', (code) => {{ if (!isExiting) saveCaptureData(); }}); // -> (...) => {{{{...}}}}
-process.on('SIGINT', () => {{ gracefulExit(130); }}); // -> () => {{{{...}}}}
-process.on('SIGTERM', () => {{ gracefulExit(143); }}); // -> () => {{{{...}}}}
+process.on('exit', (code) => {{ if (!isExiting) saveCaptureData(); }});
+process.on('SIGINT', () => {{ gracefulExit(130); }});
+process.on('SIGTERM', () => {{ gracefulExit(143); }});
 
 
 // --- Input Capture Setup ---
 try {{
-    const nullStream = new Writable({{{{ write(chunk, encoding, callback) {{ callback(); }} }}}}); // -> {{{{{{...}}}}}}
+    const nullStream = new Writable({{ write(chunk, encoding, callback) {{ callback(); }} }});
 
-    rl = readline.createInterface({{{{ // -> {{{{{{...}}}}}}
+    rl = readline.createInterface({{
         input: process.stdin, output: nullStream, prompt: ''
-    }}}});
+    }});
 
     const originalQuestion = rl.question;
 
-    rl.question = function(query, optionsOrCallback, callback) {{ // -> function(...) {{{{...}}}}
+    rl.question = function(query, optionsOrCallback, callback) {{
         if (isExiting) return;
         let actualCallback = callback; let actualOptions = optionsOrCallback;
-        if (typeof optionsOrCallback === 'function') {{ actualCallback = optionsOrCallback; actualOptions = {{{{'}}}}; }} // -> {{{{{{...}}}}}}
-        else if (typeof optionsOrCallback !== 'object' || optionsOrCallback === null) {{ actualOptions = {{{{'}}}}; }} // -> {{{{{{...}}}}}}
+        if (typeof optionsOrCallback === 'function') {{ actualCallback = optionsOrCallback; actualOptions = {{}}; }}
+        else if (typeof optionsOrCallback !== 'object' || optionsOrCallback === null) {{ actualOptions = {{}}; }}
 
         process.stdout.write(String(query));
 
-        originalQuestion.call(rl, '', actualOptions, (answer) => {{ // -> (...) => {{{{...}}}}
+        originalQuestion.call(rl, '', actualOptions, (answer) => {{
              if (isExiting) return;
             process.stdout.write(answer + '\n');
             const keyBase = String(query).trim().replace(/[:?]/g, '').trim();
-            let key = keyBase || `input_$$${{{{{{Object.keys(captured).length}}}}}}`; // -> `$${{{{{{...}}}}}}`
+            let key = keyBase || `input_$${{Object.keys(captured).length}}`;
 
             let count = 1; const originalKey = key;
-            while (captured.hasOwnProperty(key)) {{ count++; key = `$$${{{{{{originalKey}}}}}}_$$${{{{{{count}}}}}}`; }} // -> `$${{{{{{...}}}}}}` `$${{{{{{...}}}}}}`
+            while (captured.hasOwnProperty(key)) {{ count++; key = `$${{originalKey}}_$${{count}}`; }}
             captured[key] = answer;
 
             if (actualCallback) {{ try {{ actualCallback(answer); }} catch (cbError) {{ console.error('JS Wrapper Error: CB Exception:', cbError); }} }}
@@ -455,10 +461,10 @@ try {{
     const scriptRelativePath = process.argv[2];
     if (!scriptRelativePath) throw new Error('No target script.');
     const scriptAbsolutePath = path.resolve(process.cwd(), scriptRelativePath);
-    if (!fs.existsSync(scriptAbsolutePath)) throw new Error(`Script not found: $$${{{{{{scriptAbsolutePath}}}}}}`); // -> `$${{{{{{...}}}}}}`
+    if (!fs.existsSync(scriptAbsolutePath)) throw new Error(`Script not found: $${{scriptAbsolutePath}}`);
     process.argv = [process.argv[0], scriptAbsolutePath, ...process.argv.slice(3)];
-    // console.log(`Debug JS: Executing: $$${{{{{{scriptAbsolutePath}}}}}}`); // -> `$${{{{{{...}}}}}}`
-    // console.log(`Debug JS: Argv: $$${{{{{{JSON.stringify(process.argv)}}}}}}`); // -> `$${{{{{{...}}}}}}`
+    // console.log(`Debug JS: Executing: $${{scriptAbsolutePath}}`);
+    // console.log(`Debug JS: Argv: $${{JSON.stringify(process.argv)}}`);
     require(scriptAbsolutePath);
     // console.log(`Debug JS: Script finished sync exec.`);
 }} catch (e) {{ console.error('JS Wrapper FATAL: Script exec error:', e); gracefulExit(1); }}
