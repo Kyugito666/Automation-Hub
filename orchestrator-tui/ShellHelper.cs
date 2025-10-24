@@ -8,15 +8,37 @@ public static class ShellHelper
 {
     public static async Task RunStream(string command, string args, string? workingDir = null)
     {
+        string fileName;
+        string finalArgs;
+
+        // === PERUBAHAN DI SINI ===
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            // Jalankan via cmd /c untuk memastikan PATH dibaca
+            fileName = "cmd.exe";
+            // Kutip argumen asli untuk mencegah masalah spasi
+            finalArgs = $"/c \"{command} {args}\"";
+        }
+        else // Linux/macOS
+        {
+             // Jalankan via bash -c
+            fileName = "/bin/bash";
+             // Kutip argumen asli
+            finalArgs = $"-c \"{command} {args}\"";
+        }
+        // ========================
+
+
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = command,
-                Arguments = args,
+                // Gunakan fileName & finalArgs yang sudah disiapkan
+                FileName = fileName,
+                Arguments = finalArgs,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                UseShellExecute = false,
+                UseShellExecute = false, // Tetap false, karena kita panggil shell secara eksplisit
                 CreateNoWindow = true,
                 WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory()
             },
@@ -35,16 +57,21 @@ public static class ShellHelper
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-        
+
         await process.WaitForExitAsync();
 
         if (process.ExitCode != 0)
         {
             AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
+            // Tambahkan pesan error jika gagal, terutama untuk npm
+             if (command == "npm") {
+                 AnsiConsole.MarkupLine($"[red]Error running npm. Pastikan Node.js terinstall & ada di PATH.[/]");
+             }
         }
     }
 
-    public static async Task RunInteractive(string command, string args, string? workingDir = null)
+    // ... (RunInteractive, RunInNewTerminal, IsCommandAvailable tidak berubah) ...
+     public static async Task RunInteractive(string command, string args, string? workingDir = null)
     {
         var process = new Process
         {
@@ -87,7 +114,7 @@ public static class ShellHelper
             {
                 terminal = IsCommandAvailable("xterm") ? "xterm" : "x-terminal-emulator";
             }
-            
+
             Process.Start(new ProcessStartInfo
             {
                 FileName = terminal,
@@ -112,7 +139,7 @@ public static class ShellHelper
         {
             var process = Process.Start(new ProcessStartInfo
             {
-                FileName = "which",
+                FileName = "which", // 'where' on Windows, 'which' on Unix
                 Arguments = command,
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
@@ -123,6 +150,24 @@ public static class ShellHelper
         }
         catch
         {
+            // On Windows, 'which' might not exist, try 'where'
+             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+             {
+                 try
+                 {
+                     var process = Process.Start(new ProcessStartInfo
+                     {
+                         FileName = "where",
+                         Arguments = command,
+                         RedirectStandardOutput = true,
+                         UseShellExecute = false,
+                         CreateNoWindow = true
+                     });
+                     process?.WaitForExit();
+                     return process?.ExitCode == 0;
+                 }
+                 catch { return false; }
+             }
             return false;
         }
     }
