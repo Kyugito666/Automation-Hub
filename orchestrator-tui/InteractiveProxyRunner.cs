@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
+using System.IO; // Ditambahkan
 
 namespace Orchestrator;
 
@@ -69,7 +70,7 @@ public static class InteractiveProxyRunner
 
         await GitHubDispatcher.TriggerBotWithInputs(bot, capturedInputs);
 
-        AnsiConsole.MarkupLine("\n[bold green]✅ Bot triggered remotely![/]"); // Pesan disesuaikan
+        AnsiConsole.MarkupLine("\n[bold green]✅ Bot triggered remotely![/]");
     }
 
     private static async Task<Dictionary<string, string>?> RunBotInCaptureMode(string botPath, BotEntry bot)
@@ -77,14 +78,14 @@ public static class InteractiveProxyRunner
         var inputs = new Dictionary<string, string>();
         var inputCapturePath = Path.Combine(botPath, ".input-capture.tmp");
 
-        // === NAMA FILE WRAPPER UNTUK JS DIGANTI KE .cjs ===
         string jsWrapperFileName = "capture_wrapper.cjs";
         string jsWrapperFullPath = Path.Combine(botPath, jsWrapperFileName);
-        // ===============================================
+        string pyWrapperFileName = "capture_wrapper.py";
+        string pyWrapperFullPath = Path.Combine(botPath, pyWrapperFileName);
 
         if (bot.Type == "python")
         {
-            await CreatePythonCaptureWrapper(botPath, inputCapturePath);
+            await CreatePythonCaptureWrapper(pyWrapperFullPath, inputCapturePath); // Path lengkap
         }
         else if (bot.Type == "javascript")
         {
@@ -95,55 +96,52 @@ public static class InteractiveProxyRunner
         AnsiConsole.MarkupLine("[dim]Answer all prompts normally. Inputs will be captured.[/]");
         AnsiConsole.MarkupLine("[grey]─────────────────────────────────────[/]\n");
 
-        // Ambil command asli (bisa jadi npm start atau node index.js)
         var (originalExecutor, originalArgs) = BotRunner.GetRunCommand(botPath, bot.Type);
 
         string executor;
         string args;
 
-        // Inject capture flag/wrapper
+        if (string.IsNullOrEmpty(originalExecutor))
+        {
+             AnsiConsole.MarkupLine($"[red]✗ Tidak bisa menemukan command utama (npm start atau file .js/.py) untuk {bot.Name}.[/]");
+             return null;
+        }
+
         if (bot.Type == "python")
         {
-             // Python tetap pakai .py wrapper
             executor = "python";
-            args = $"-u capture_wrapper.py {originalArgs}"; // Asumsikan originalArgs adalah nama file .py
+             // Argumen wrapper diikuti argumen asli (nama file python)
+            args = $"-u {pyWrapperFileName} {originalArgs}";
         }
         else if (bot.Type == "javascript")
         {
-            // === GUNAKAN .cjs SAAT MENJALANKAN ===
-            executor = "node"; // Kita *harus* panggil node langsung untuk wrapper
-             // Argumen pertama adalah wrapper, sisanya adalah command asli
-             // Jika command asli adalah 'npm start', kita perlu cari tahu script sebenarnya
-             // Ini jadi kompleks. Simplifikasi: Asumsikan 'npm start' memanggil 'node nama_file.js'
-             // Jika 'npm start' melakukan hal lain, capture mungkin gagal.
-             // Kita akan coba teruskan saja argumen asli setelah wrapper.
-             // Jika GetRunCommand mengembalikan ("npm", "start"), maka args jadi "capture_wrapper.cjs start"
-             // Ini tidak akan jalan. Kita perlu argumen sebenarnya yg dipanggil npm start.
-             // SOLUSI SEMENTARA: Jika npm start, kita coba tebak file utama (index.js/main.js)
+            executor = "node"; // Wrapper *harus* dijalankan dengan node
+            string targetScriptArg;
+
+            // Jika command asli 'npm start', kita perlu tebak file target
             if (originalExecutor == "npm" && originalArgs == "start")
             {
-                // Coba tebak file utama yang mungkin dipanggil 'npm start'
                 string mainJs = File.Exists(Path.Combine(botPath, "index.js")) ? "index.js"
                               : File.Exists(Path.Combine(botPath, "main.js")) ? "main.js"
                               : File.Exists(Path.Combine(botPath, "bot.js")) ? "bot.js"
-                              : ""; // Gagal menebak
+                              : "";
                 if (!string.IsNullOrEmpty(mainJs))
                 {
-                    args = $"{jsWrapperFileName} {mainJs}"; // Jalankan wrapper dengan file tebakan
+                    targetScriptArg = mainJs;
                 }
                 else
                 {
                     AnsiConsole.MarkupLine($"[red]✗ Tidak bisa otomatis mendeteksi file JS utama untuk 'npm start' di {bot.Name}. Capture mungkin gagal.[/]");
-                    args = $"{jsWrapperFileName} {originalArgs}"; // Coba teruskan saja, mungkin gagal
+                    targetScriptArg = "index.js"; // Coba tebak index.js
                 }
             }
             else // Jika command asli adalah "node file.js"
             {
-                 args = $"{jsWrapperFileName} {originalArgs}"; // Jalankan wrapper dengan file asli
+                 targetScriptArg = originalArgs; // Argumen asli adalah nama file target
             }
-            // ====================================
+            args = $"{jsWrapperFileName} {targetScriptArg}"; // Wrapper + file target
         }
-        else // Tipe bot tidak dikenal
+        else
         {
              AnsiConsole.MarkupLine($"[red]✗ Tipe bot tidak dikenal: {bot.Type}[/]");
              return null;
@@ -179,140 +177,182 @@ public static class InteractiveProxyRunner
         // Cleanup wrapper
         try
         {
-            if (bot.Type == "python" && File.Exists(Path.Combine(botPath, "capture_wrapper.py")))
-                File.Delete(Path.Combine(botPath, "capture_wrapper.py"));
+            if (bot.Type == "python" && File.Exists(pyWrapperFullPath))
+                File.Delete(pyWrapperFullPath);
 
-            // === HAPUS FILE .cjs ===
             if (bot.Type == "javascript" && File.Exists(jsWrapperFullPath))
                 File.Delete(jsWrapperFullPath);
-            // ========================
         }
         catch { /* Abaikan error cleanup */ }
 
         return inputs;
     }
 
-    private static async Task CreatePythonCaptureWrapper(string botPath, string outputPath)
+    // === METHOD PYTHON WRAPPER (DIUPDATE) ===
+    private static async Task CreatePythonCaptureWrapper(string wrapperFullPath, string outputPath)
     {
-        var wrapperFileName = "capture_wrapper.py";
-        var wrapperFullPath = Path.Combine(botPath, wrapperFileName);
-        // Escape outputPath for the generated Python string
+        // Escape outputPath untuk string literal Python di C#
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
-        var wrapper = @$"#!/usr/bin/env python3
+        // String Python wrapper (hati-hati dengan escaping '{', '}', '"')
+        var wrapper = $@"#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
 import json
 import builtins
 import os
 import io # Required for reconfigure
+import traceback # Added for better error reporting
 
 # Set encoding explicitly (safer for Windows)
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-if sys.stdin.encoding != 'utf-8':
-    sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
+try:
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    if sys.stdin.encoding != 'utf-8':
+        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8', errors='replace')
+except Exception as enc_err:
+    print(f'Capture wrapper warning: Could not reconfigure stdio encoding: {{enc_err}}', file=sys.stderr)
 
 
 captured = {{}}
 _original_input = builtins.input
 
 def capturing_input(prompt=''):
-    # Ensure prompt is decoded correctly if needed, though usually str
-    response = _original_input(prompt)
-    key = prompt.strip().rstrip(':').strip() or f'input_{{len(captured)}}'
-    captured[key] = response
-    return response
+    try:
+        response = _original_input(prompt)
+        # More robust key generation: handle potential non-string prompts? Use repr?
+        key_base = str(prompt).strip().rstrip(':').strip()
+        key = key_base or f'input_{{len(captured)}}'
+        # Handle duplicate keys (e.g., empty prompt multiple times)
+        count = 1
+        final_key = key
+        while final_key in captured:
+            count += 1
+            final_key = f'{{key}}_{{count}}'
+
+        captured[final_key] = response
+        return response
+    except EOFError:
+        print('Capture wrapper warning: EOFError detected during input, script might expect piped input.', file=sys.stderr)
+        raise # Re-raise EOFError as the script might handle it
+    except Exception as input_err:
+        print(f'Capture wrapper error during input call: {{input_err}}', file=sys.stderr)
+        return '' # Return empty string on error? Or re-raise?
 
 builtins.input = capturing_input
 
 script_executed = False
-try:
-    if len(sys.argv) > 1:
-        script_arg = sys.argv[1]
-        # Make sure path is absolute relative to current working directory (botPath)
-        script_path = os.path.abspath(os.path.join(os.getcwd(), script_arg))
+original_argv = list(sys.argv) # Make a copy
+script_to_run = None
 
-        if os.path.exists(script_path):
-             # Execute in the context of the script's directory? No, CWD is already botPath.
-            script_dir = os.path.dirname(script_path)
-            # Add script dir to path *if* it's different from CWD? Might not be needed.
-            # sys.path.insert(0, script_dir)
-
-            # Change sys.argv for the target script
-            original_argv = sys.argv
-            sys.argv = [script_path] + original_argv[2:] # Target script sees its own name + remaining args
-
-            with open(script_path, 'r', encoding='utf-8') as f:
-                source = f.read()
-                code = compile(source, script_path, 'exec')
-                script_globals = {{'__name__': '__main__', '__file__': script_path}}
-                exec(code, script_globals)
-                script_executed = True
-        else:
-             print(f'Capture wrapper error: Script not found at {{script_path}}')
+if len(original_argv) > 1:
+    script_arg = original_argv[1] # Argumen setelah wrapper.py adalah target script
+    # Assume script_arg is relative to the CWD (botPath set by C#)
+    script_path = os.path.abspath(script_arg)
+    if os.path.exists(script_path):
+        script_to_run = script_path
     else:
-        # Try importing common entry points if no script specified
-        entry_points = ['run', 'main', 'bot']
-        for entry in entry_points:
-             try:
-                 print(f"Attempting to import {{entry}} module...")
-                 __import__(entry)
-                 script_executed = True
-                 break # Stop after first successful import
-             except ImportError:
-                  print(f"Module {{entry}} not found.")
-             except Exception as import_err:
-                  print(f"Error importing module {{entry}}: {{import_err}}")
-                  # Continue trying other entry points
+        print(f'Capture wrapper error: Target script specified but not found: {{script_path}}', file=sys.stderr)
+else:
+    # Try importing common entry points if no script specified
+    entry_points = ['run.py', 'main.py', 'bot.py']
+    for entry in entry_points:
+        entry_path = os.path.abspath(entry)
+        if os.path.exists(entry_path):
+            print(f'Capture wrapper info: No script argument, found {{entry}}. Running it.', file=sys.stderr)
+            script_to_run = entry_path
+            break
+    if script_to_run is None:
+         print('Capture wrapper error: No script argument and run.py/main.py/bot.py not found in CWD.', file=sys.stderr)
 
-        if not script_executed:
-             print('Capture wrapper error: No script argument and run.py/main.py/bot.py not found or failed to import.')
+# Ensure output path is absolute
+abs_output_path = os.path.abspath('{escapedOutputPath}')
 
-
-except SystemExit:
-    print("Capture wrapper: Script exited cleanly.")
-    pass # Allow clean exits
-except Exception as e:
-    import traceback
-    print(f'Capture wrapper error during script execution: {{e}}')
-    traceback.print_exc() # Print full traceback
-finally:
-    # Use absolute path for output, ensure encoding
-    abs_output_path = os.path.abspath('{escapedOutputPath}')
+if script_to_run:
     try:
-        with open(abs_output_path, 'w', encoding='utf-8') as f:
-            json.dump(captured, f, indent=2, ensure_ascii=False)
-        # print(f'Debug: Captured data written to {{abs_output_path}}') # Optional debug print
+        # Set sys.argv for the target script: [target_script_path, ...original args after target...]
+        sys.argv = [script_to_run] + original_argv[2:]
+
+        # Prepare execution environment
+        script_dir = os.path.dirname(script_to_run)
+        # Add script's directory to the beginning of sys.path to handle local imports
+        if script_dir not in sys.path:
+             sys.path.insert(0, script_dir)
+
+        print(f'Capture wrapper info: Executing {{script_to_run}}', file=sys.stderr)
+        print(f'Capture wrapper info: Target argv: {{sys.argv}}', file=sys.stderr)
+        print(f'Capture wrapper info: CWD: {{os.getcwd()}}', file=sys.stderr)
+
+        with open(script_to_run, 'r', encoding='utf-8') as f:
+            source = f.read()
+            code = compile(source, script_to_run, 'exec')
+            # Provide globals including __file__ so the script knows its location
+            script_globals = {{'__name__': '__main__', '__file__': script_to_run}}
+            exec(code, script_globals)
+            script_executed = True
+            print(f'Capture wrapper info: Script {{script_to_run}} finished execution.', file=sys.stderr)
+
+    except SystemExit as sysexit:
+        print(f'Capture wrapper info: Script exited with code {{sysexit.code}}.', file=sys.stderr)
+        # We still want to save captured data even if script exits
     except Exception as e:
-        print(f'Capture wrapper error: Failed to write capture file: {{e}}')
+        print(f'Capture wrapper FATAL ERROR during script execution: {{e}}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr) # Print full traceback to stderr
+    finally:
+        # Save captured data regardless of script success/failure/exit
+        try:
+            # Ensure the directory exists
+            output_dir = os.path.dirname(abs_output_path)
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+
+            with open(abs_output_path, 'w', encoding='utf-8') as f:
+                json.dump(captured, f, indent=2, ensure_ascii=False)
+            print(f'Capture wrapper info: Captured data saved to {{abs_output_path}}', file=sys.stderr)
+        except Exception as save_err:
+            print(f'Capture wrapper FATAL ERROR: Failed to write capture file {{abs_output_path}}: {{save_err}}', file=sys.stderr)
+else:
+     # No script found to execute, save empty capture file? Or just log?
+     print(f'Capture wrapper warning: No script was executed. Saving potentially empty capture file.', file=sys.stderr)
+     try:
+         output_dir = os.path.dirname(abs_output_path)
+         if not os.path.exists(output_dir):
+             os.makedirs(output_dir, exist_ok=True)
+         with open(abs_output_path, 'w', encoding='utf-8') as f:
+             json.dump(captured, f, indent=2, ensure_ascii=False) # Save empty if nothing captured
+     except Exception as save_err:
+            print(f'Capture wrapper FATAL ERROR: Failed to write empty capture file {{abs_output_path}}: {{save_err}}', file=sys.stderr)
 
 ";
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
     }
 
-
-    // === PARAMETER wrapperFullPath SEKARANG LENGKAP ===
+    // === METHOD JAVASCRIPT WRAPPER (DIUPDATE) ===
     private static async Task CreateJavaScriptCaptureWrapper(string wrapperFullPath, string outputPath)
     {
-        // Escape outputPath for the generated JS string
+        // Escape outputPath untuk string literal JavaScript di C#
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
-        // ============================================
-        var wrapper = @$"// Force CommonJS mode by using .cjs extension
+        // String JavaScript wrapper (hati-hati escaping '{', '}', '"', '`')
+        var wrapper = $@"// Force CommonJS mode by using .cjs extension
 const fs = require('fs');
-const path = require('path'); // Added for path joining
+const path = require('path');
 const readline = require('readline');
 
 const captured = {{}};
-let rl; // Declare rl here
+let rl = null; // Declare rl, initialize later
 
+// Ensure output path is absolute from the start
+const absOutputPath = path.resolve('{escapedOutputPath}');
+
+// --- Input Capture Setup ---
 try {{
   rl = readline.createInterface({{
       input: process.stdin,
       output: process.stdout
   }});
 
-  const originalQuestion = rl.question.bind(rl);
+  const originalQuestion = rl.question; // Keep reference to original
 
+  // Overwrite rl.question to capture input
   rl.question = function(query, optionsOrCallback, callback) {{
       let actualCallback = callback;
       let actualOptions = optionsOrCallback;
@@ -323,29 +363,42 @@ try {{
           actualOptions = {{}}; // No options provided
       }}
 
-      originalQuestion(query, actualOptions, (answer) => {{
+      // Call original question method with potentially adjusted args
+      originalQuestion.call(rl, query, actualOptions, (answer) => {{
           // More robust key generation
-          const key = query.toString().trim().replace(/[:\?]/g, '').trim() || `input_${{Object.keys(captured).length}}`;
+          const keyBase = query.toString().trim().replace(/[:?]/g, '').trim();
+          let key = keyBase || `input_${{Object.keys(captured).length}}`;
+          // Handle duplicate keys
+          let count = 1;
+          const originalKey = key;
+          while (captured.hasOwnProperty(key)) {{
+              count++;
+              key = `${{originalKey}}_${{count}}`;
+          }}
+
           captured[key] = answer;
-          if(actualCallback) {{ // Check if callback exists
-            actualCallback(answer);
-          }} else {{
-            // If no callback, maybe it was meant for async usage?
-            // This part is tricky without knowing the target bot's input method.
-            // For basic readline, a callback is usually expected.
+
+          if(actualCallback) {{ // If a callback was provided, call it
+            try {{
+                actualCallback(answer);
+            }} catch (cbError) {{
+                console.error('Capture wrapper error: Exception in readline callback:', cbError);
+            }}
           }}
       }});
   }};
 
 }} catch (e) {{
-    console.error("Capture wrapper error initializing readline:", e);
+    console.error('Capture wrapper error initializing readline:', e);
+    // Attempt to save any captured data before exiting
+    saveCaptureData();
     process.exit(1);
 }}
 
 
-process.on('exit', (code) => {{
-    // Use path.resolve to ensure absolute path
-    const absOutputPath = path.resolve('{escapedOutputPath}');
+// --- Save Captured Data Function ---
+function saveCaptureData() {{
+     // console.log(`Debug: Attempting to save capture data to ${{absOutputPath}}`); // Optional debug
     try {{
       // Ensure the directory exists before writing
       const outputDir = path.dirname(absOutputPath);
@@ -353,36 +406,53 @@ process.on('exit', (code) => {{
         fs.mkdirSync(outputDir, {{ recursive: true }});
       }}
       fs.writeFileSync(absOutputPath, JSON.stringify(captured, null, 2));
-       // console.log(`Debug: Captured data written to ${{absOutputPath}} with code ${{code}}`); // Optional debug
+       // console.log(`Debug: Captured data successfully written.`); // Optional debug
     }} catch (e) {{
-      console.error('Capture wrapper error: Failed to write capture file:', e);
-    }} finally {{
-       if (rl) rl.close(); // Close readline interface on exit
+      console.error('Capture wrapper FATAL ERROR: Failed to write capture file:', e);
+    }}
+}}
+
+// --- Exit Handling ---
+process.on('exit', (code) => {{
+    // console.log(`Capture wrapper: Process exiting with code ${{code}}. Saving data.`); // Optional debug
+    saveCaptureData(); // Save data on normal exit
+    if (rl && !rl.closed) {{
+         // console.log("Debug: Closing readline interface on exit."); // Optional debug
+         rl.close();
     }}
 }});
 
 // Gracefully handle termination signals
-const handleExit = (signal) => {{
-    // console.log(`Received ${{signal}}. Exiting capture wrapper.`); // Optional debug
-    if (rl) rl.close(); // Ensure readline is closed before exit
-    process.exit(0); // Trigger the 'exit' event handler
+const handleSignalExit = (signal) => {{
+    // console.log(`Capture wrapper: Received signal ${{signal}}. Exiting and saving data.`); // Optional debug
+    // saveCaptureData(); // saveCaptureData is called by 'exit' event anyway
+    if (rl && !rl.closed) {{
+         // console.log("Debug: Closing readline interface on signal."); // Optional debug
+         rl.close();
+    }}
+    // Let the 'exit' event handle saving. Exit with conventional signal code offset.
+    // process.exit(128 + (signal === 'SIGINT' ? 2 : 15)); // SIGINT=2, SIGTERM=15
+    process.exit(0); // Simpler: just trigger normal exit flow
 }};
-process.on('SIGINT', handleExit);
-process.on('SIGTERM', handleExit);
+process.on('SIGINT', () => handleSignalExit('SIGINT'));
+process.on('SIGTERM', () => handleSignalExit('SIGTERM'));
 
 // --- Target Script Execution Logic ---
+let scriptExecuted = false;
 try {{
     // process.argv[0] is node, [1] is this script (.cjs), [2] is the target script argument from C#
     const scriptRelativePath = process.argv[2];
     if (!scriptRelativePath) {{
         console.error('Capture wrapper error: No target script provided.');
+        // saveCaptureData(); // Save before exiting
         process.exit(1);
     }}
-     // Resolve the absolute path of the target script relative to the current working directory (botPath set by C#)
+     // Resolve the absolute path of the target script relative to CWD (botPath set by C#)
     const scriptAbsolutePath = path.resolve(process.cwd(), scriptRelativePath);
 
     if (!fs.existsSync(scriptAbsolutePath)) {{
          console.error(`Capture wrapper error: Target script not found at ${{scriptAbsolutePath}}`);
+         // saveCaptureData(); // Save before exiting
          process.exit(1);
     }}
 
@@ -393,24 +463,26 @@ try {{
     // console.log(`Debug: Executing target script: ${{scriptAbsolutePath}}`); // Optional debug
     // console.log(`Debug: Target script argv: ${{JSON.stringify(process.argv)}}`); // Optional debug
 
-    // Dynamically import if it's an ES module, require if it's CommonJS
-    // Check package.json type field or file extension (though we forced .cjs wrapper)
-    // For simplicity, let's stick to require, as the wrapper is CommonJS.
-    // If the *target* script is ES module, 'require' might fail.
-    // A more robust solution involves detecting module type.
-    // Let's assume for now target scripts are compatible with being 'required' from CommonJS
+    // Check if the target script is likely an ES module (needs dynamic import)
+    // Basic check: file extension and potentially package.json type (though less reliable here)
+    // For simplicity, stick with require as the wrapper is CommonJS.
+    // If the target *is* ESM and top-level await is used, this might fail.
     require(scriptAbsolutePath); // Execute the target script
+    scriptExecuted = true;
+    // console.log(`Debug: Target script ${{scriptAbsolutePath}} finished execution (or initiated async ops).`); // Optional debug
 
 }} catch (e) {{
-    console.error('Capture wrapper error during script execution:', e);
-    if (rl) rl.close(); // Close readline on error too
-    // process.exit(1); // Exit with error code if script fails
+    console.error('Capture wrapper FATAL ERROR during script execution:', e);
+    // saveCaptureData(); // Save before exiting
+    // Exit with error code if script fails catastrophically during load/sync execution
+    // process.exit(1);
 }}
 
-// Keep the process running if the required script initiates async operations
-// This might be needed if the script doesn't explicitly keep the event loop alive.
-// However, adding a long timeout can be problematic. Rely on the script's own lifecycle.
-// setTimeout(() => {{}}, 1000 * 60 * 60); // Example: Keep alive for an hour (REMOVE THIS in production)
+// If the script didn't execute synchronously or threw an error early,
+// we might reach here. We rely on the 'exit' handler to save data.
+// console.log("Debug: Capture wrapper script finished synchronous execution."); // Optional debug
+
+// DO NOT add artificial keep-alive like setTimeout. Let the target script manage its lifecycle.
 
 ";
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
