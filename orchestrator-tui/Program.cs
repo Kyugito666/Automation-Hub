@@ -160,7 +160,11 @@ internal static class Program
 
         foreach (var bot in bots)
         {
-            AnsiConsole.Rule($"[cyan]{bot.Name}[/]");
+            // === FIX DI SINI ===
+            // Salah: AnsiConsole.Rule($"[cyan]{bot.Name}[/]");
+            // Benar:
+            AnsiConsole.Write(new Rule($"[cyan]{bot.Name}[/]").Centered());
+            // ===================
             
             try
             {
