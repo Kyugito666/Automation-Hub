@@ -254,35 +254,3 @@ public static class ShellHelper
         }
     }
 }
-```
-
----
-
-## 3. Update `.gitignore`
-```
-# Abaikan SEMUA yang di-clone saat runtime
-bots/*
-!bots/.gitkeep
-
-proxysync/
-
-# File cache dan rahasia lainnya
-__pycache__/
-.venv/
-*.log
-*.env
-
-# File state & input rahasia dari Orchestrator
-.token-state.json
-.bot-inputs/
-.token-cache.json
-
-# Abaikan file .NET build (bin/obj)
-**/bin/
-**/obj/
-
-# File log baru dari BotScanner
-.raw-bots.log
-
-# HAPUS: Node PTY (sudah diganti Python)
-pty-helper-node/
