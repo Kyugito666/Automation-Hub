@@ -1,0 +1,21 @@
+{
+  "name": "pty-helper-node",
+  "version": "1.0.0",
+  "description": "Node.js PTY helper for C# orchestrator",
+  "main": "pty-helper.js",
+  "scripts": {
+    "build": "pkg . --targets node18-win-x64 --output pty-helper.exe"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0" 
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "assets": [
+       "node_modules/node-pty/build/Release/*"
+    ]
+  },
+  "bin": "pty-helper.js"
+}
