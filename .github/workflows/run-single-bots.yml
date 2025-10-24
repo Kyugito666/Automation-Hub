@@ -24,6 +24,12 @@ on:
         required: false
         default: '340'
         type: string
+      # === INPUT BARU ===
+      bot_inputs:
+        description: 'JSON string input untuk bot'
+        required: false
+        default: '{}'
+        type: string
 
 jobs:
   run-bot:
@@ -50,6 +56,15 @@ jobs:
           cd bot
           ls -la
 
+      # === STEP BARU ===
+      - name: Create Bot Input File
+        working-directory: bot
+        run: |
+          echo "Membuat bot_input.json..."
+          echo "${{ github.event.inputs.bot_inputs }}" > bot_input.json
+          echo "File bot_input.json dibuat:"
+          cat bot_input.json
+      
       - name: Install Python Dependencies
         if: github.event.inputs.bot_type == 'python'
         working-directory: bot
