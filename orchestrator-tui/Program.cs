@@ -108,7 +108,7 @@ internal static class Program
         }
     }
 
-    // === SUBMENU SETUP (DIUPDATE - SCANNER DIHAPUS) ===
+    // === SUBMENU SETUP (TIDAK BERUBAH) ===
     private static async Task ShowSetupMenu(CancellationToken cancellationToken) {
         while (true)
         {
@@ -116,7 +116,6 @@ internal static class Program
              AnsiConsole.Clear();
              AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
              
-             // === PILIHAN MENU DIUPDATE ===
              var choice = AnsiConsole.Prompt(
                   new SelectionPrompt<string>()
                     .Title("\n[bold yellow]SETUP & CONFIGURATION[/]")
@@ -129,10 +128,8 @@ internal static class Program
                         "3. Accept Invitations",
                         "4. Show Token/Proxy Status",
                         "5. [[SYSTEM]] Refresh All Configs (Reload files)",
-                        // "6. [[SCAN]] Cek Kompatibilitas Input Bot (Raw/Line)", // <-- DIHAPUS
                         "0. [[Back]] Kembali ke Menu Utama"
                     }));
-             // === AKHIR UPDATE MENU ===
 
             var selection = choice.Split('.')[0];
             if (selection == "0") return;
@@ -145,7 +142,6 @@ internal static class Program
                 case "3": await CollaboratorManager.AcceptInvitations(); break;
                 case "4": TokenManager.ShowStatus(); break;
                 case "5": TokenManager.ReloadAllConfigs(); break;
-                // case "6": await BotScanner.ScanAllBots(cancellationToken); break; // <-- DIHAPUS
                 default: pause = false; break;
             }
 
@@ -153,7 +149,7 @@ internal static class Program
         }
      }
     
-    // === SISANYA TIDAK BERUBAH ===
+    // === (TIDAK BERUBAH) ===
     private static async Task ShowLocalMenu(CancellationToken cancellationToken) { 
         while (true)
         {
@@ -210,7 +206,7 @@ internal static class Program
 
             bool pause = true;
             switch (selection)
-            {
+            D:
                 case "1": await RunSingleInteractiveBot(cancellationToken); break;
                 case "2": await RunAllInteractiveBots(cancellationToken); break;
                 default: pause = false; break;
@@ -433,19 +429,21 @@ internal static class Program
                 .UseConverter(b => b == BackOption ? b.Name : $"{b.Name} ({b.Type})")
                 .AddChoices(choices));
         if (selectedBot == BackOption) return;
-        var botPath = Path.Combine("..", selectedBot.Path); if (!Directory.Exists(botPath)) { AnsiConsole.MarkupLine($"[red]Path bot tidak ditemukan: {botPath}[/]"); return; }
+        var botPath = Path.GetFullPath(Path.Combine("..", selectedBot.Path)); if (!Directory.Exists(botPath)) { AnsiConsole.MarkupLine($"[red]Path bot tidak ditemukan: {botPath}[/]"); return; }
         await BotRunner.InstallDependencies(botPath, selectedBot.Type);
         var (executor, args) = BotRunner.GetRunCommand(botPath, selectedBot.Type); if (string.IsNullOrEmpty(executor)) { AnsiConsole.MarkupLine("[red]Gagal menemukan perintah eksekusi bot (run.py/main.py/index.js/etc.)[/]"); return; }
 
         AnsiConsole.MarkupLine($"[green]Running {selectedBot.Name} locally... (Press Ctrl+C to stop)[/]");
-        AnsiConsole.MarkupLine("[dim]This is a test run. No remote execution.[/]\n");
+        AnsiConsole.MarkupLine("[dim]This is a test run (using PTY). No remote execution.[/]\n");
 
         _childProcessCts = new CancellationTokenSource();
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _childProcessCts.Token);
         
         try
         {
-            await ShellHelper.RunInteractive(executor, args, botPath, linkedCts.Token);
+            // === PERUBAHAN DI SINI ===
+            // Gunakan PTY helper baru untuk mode interaktif manual
+            await ShellHelper.RunInteractivePty(executor, args, botPath, linkedCts.Token);
         }
         catch (OperationCanceledException)
         {
