@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Spectre.Console;
 
 namespace Orchestrator;
@@ -24,11 +25,11 @@ public static class ShellHelper
 
         process.OutputDataReceived += (sender, e) => {
             if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[grey]   {e.Data}[/]");
+                AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
         };
         process.ErrorDataReceived += (sender, e) => {
              if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[yellow]   {e.Data}[/]");
+                AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
         };
 
         process.Start();
@@ -39,7 +40,7 @@ public static class ShellHelper
 
         if (process.ExitCode != 0)
         {
-            AnsiConsole.MarkupLine($"[red]Perintah selesai dengan error (Exit Code: {process.ExitCode})[/]");
+            AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
         }
     }
 
@@ -51,60 +52,14 @@ public static class ShellHelper
             {
                 FileName = command,
                 Arguments = args,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                RedirectStandardInput = true,
                 UseShellExecute = false,
-                CreateNoWindow = true,
+                CreateNoWindow = false,
                 WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory()
-            },
-            EnableRaisingEvents = true
-        };
-
-        process.OutputDataReceived += (sender, e) => {
-            if (!string.IsNullOrEmpty(e.Data))
-                Console.WriteLine(e.Data);
-        };
-        
-        process.ErrorDataReceived += (sender, e) => {
-            if (!string.IsNullOrEmpty(e.Data))
-                Console.Error.WriteLine(e.Data);
+            }
         };
 
         process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        var inputTask = Task.Run(async () =>
-        {
-            try
-            {
-                while (!process.HasExited)
-                {
-                    var input = Console.ReadLine();
-                    if (input != null && !process.HasExited)
-                    {
-                        await process.StandardInput.WriteLineAsync(input);
-                        await process.StandardInput.FlushAsync();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Input error: {ex.Message}");
-            }
-        });
-
         await process.WaitForExitAsync();
-
-        try
-        {
-            await inputTask.WaitAsync(TimeSpan.FromSeconds(1));
-        }
-        catch (TimeoutException)
-        {
-            // Input task masih jalan, ignore
-        }
 
         if (process.ExitCode != 0)
         {
@@ -116,7 +71,7 @@ public static class ShellHelper
     {
         var absPath = workingDir != null ? Path.GetFullPath(workingDir) : Directory.GetCurrentDirectory();
 
-        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             Process.Start(new ProcessStartInfo
             {
@@ -125,7 +80,7 @@ public static class ShellHelper
                 UseShellExecute = true
             });
         }
-        else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
             var terminal = "gnome-terminal";
             if (!IsCommandAvailable("gnome-terminal"))
@@ -140,7 +95,7 @@ public static class ShellHelper
                 UseShellExecute = true
             });
         }
-        else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             Process.Start(new ProcessStartInfo
             {
