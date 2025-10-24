@@ -1,19 +1,34 @@
 {
+  "schema_version": "1.0",
+  "update_strategy": "clone_or_pull",
   "bots_and_tools": [
     {
       "name": "ProxySync-Tool",
       "path": "proxysync",
-      "repo_url": "https://github.com/Kyugito666/ProxySync.git"
+      "repo_url": "https://github.com/Kyugito666/ProxySync.git",
+      "enabled": true,
+      "dependencies": ["requests", "aiohttp"]
     },
     {
       "name": "TurnAutoBot-NTE",
       "path": "bots/privatekey/TurnAutoBot-NTE",
-      "repo_url": "https://github.com/REPO_ORANG_LAIN/TurnAutoBot-NTE.git"
+      "repo_url": "https://github.com/REPO_ORANG_LAIN/TurnAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
     },
     {
       "name": "AsterAutoBot-NTE",
       "path": "bots/token/AsterAutoBot-NTE",
-      "repo_url": "https://github.com/REPO_ORANG_LAIN/Aster-Bot.git"
+      "repo_url": "https://github.com/REPO_ORANG_LAIN/Aster-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "UomiAutoBot-NTE",
+      "path": "bots/privatekey/UomiAutoBot-NTE",
+      "repo_url": "https://github.com/REPO_ORANG_LAIN/UomiAutoBot-NTE.git",
+      "enabled": false,
+      "note": "Disabled for testing"
     }
   ]
 }
