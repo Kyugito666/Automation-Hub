@@ -4,8 +4,8 @@ import sys
 from typing import Optional
 
 from rich.console import Console
-from rich.panel import Panel
-from pyfiglet import Figlet
+from rich.panel import Panel # Hapus Figlet, pakai Panel
+# from pyfiglet import Figlet # Hapus import Figlet
 import questionary
 
 from botconfig import BotConfig
@@ -28,8 +28,6 @@ child_process_cancel_event = asyncio.Event()
 def handle_signal(sig, frame):
     """Handler untuk Ctrl+C."""
     if not child_process_cancel_event.is_set() and child_process_cancel_event.is_set_called_within_main_task():
-        # Cek jika child_process_cancel_event di-set *dalam* main task
-        # Ini berarti kita sedang menjalankan child process
         console.print("\n[yellow]Ctrl+C terdeteksi. Membatalkan bot run...[/]")
         child_process_cancel_event.set()
     elif not main_cancel_event.is_set():
@@ -43,8 +41,10 @@ def is_set_called_within_main_task(self):
     if not hasattr(self, '_loop'):
         return False
     try:
-        return asyncio.current_task(self._loop) is not None
-    except:
+        # Check if the event loop is running and if there's a current task
+        loop = asyncio.get_running_loop()
+        return asyncio.current_task(loop) is not None
+    except RuntimeError: # Raised if no loop is running or no task is current
         return False
 asyncio.Event.is_set_called_within_main_task = is_set_called_within_main_task
 
@@ -69,9 +69,9 @@ async def pause_without_cancel():
 async def show_setup_menu(cancel_event: asyncio.Event):
     while not cancel_event.is_set():
         console.clear()
-        f = Figlet(font="slant")
-        console.print(f.renderText("Setup"), style="yellow", justify="center")
-
+        # --- GANTI FIGLET JADI PANEL ---
+        console.print(Panel("[bold yellow]Setup & Konfigurasi[/]", expand=False, border_style="yellow"), justify="center")
+        # -------------------------------
         try:
             choice = await questionary.select(
                 "[bold yellow]SETUP & KONFIGURASI[/]",
@@ -109,16 +109,16 @@ async def show_setup_menu(cancel_event: asyncio.Event):
                 await pause(cancel_event)
 
         except (asyncio.CancelledError, KeyboardInterrupt):
-            main_cancel_event.set()  # Propagate cancellation up
+            main_cancel_event.set()
             return
 
 
 async def show_local_menu(cancel_event: asyncio.Event):
     while not cancel_event.is_set():
         console.clear()
-        f = Figlet(font="slant")
-        console.print(f.renderText("Local"), style="green", justify="center")
-
+        # --- GANTI FIGLET JADI PANEL ---
+        console.print(Panel("[bold green]Local Management[/]", expand=False, border_style="green"), justify="center")
+        # -------------------------------
         try:
             choice = await questionary.select(
                 "[bold green]LOCAL BOT & PROXY MANAGEMENT[/]",
@@ -157,9 +157,9 @@ async def show_local_menu(cancel_event: asyncio.Event):
 async def show_hybrid_menu(cancel_event: asyncio.Event):
     while not cancel_event.is_set():
         console.clear()
-        f = Figlet(font="slant")
-        console.print(f.renderText("Hybrid"), style="blue", justify="center")
-
+        # --- GANTI FIGLET JADI PANEL ---
+        console.print(Panel("[bold blue]Hybrid: Local Run & Remote Trigger[/]", expand=False, border_style="blue"), justify="center")
+        # -------------------------------
         try:
             choice = await questionary.select(
                 "[bold blue]HYBRID: LOCAL RUN & REMOTE TRIGGER[/]",
@@ -176,7 +176,7 @@ async def show_hybrid_menu(cancel_event: asyncio.Event):
 
             selection = choice.split(".")[0]
             pause_needed = True
-            
+
             # Reset child cancel event sebelum menjalankan
             child_process_cancel_event.clear()
             # Tandai bahwa event ini aktif
@@ -205,9 +205,9 @@ async def show_hybrid_menu(cancel_event: asyncio.Event):
 async def show_remote_menu(cancel_event: asyncio.Event):
     while not cancel_event.is_set():
         console.clear()
-        f = Figlet(font="slant")
-        console.print(f.renderText("Remote"), style="red", justify="center")
-
+        # --- GANTI FIGLET JADI PANEL ---
+        console.print(Panel("[bold red]GitHub Actions Control[/]", expand=False, border_style="red"), justify="center")
+        # -------------------------------
         try:
             choice = await questionary.select(
                 "[bold red]GITHUB ACTIONS CONTROL[/]",
@@ -243,9 +243,9 @@ async def show_remote_menu(cancel_event: asyncio.Event):
 async def show_debug_menu(cancel_event: asyncio.Event):
     while not cancel_event.is_set():
         console.clear()
-        f = Figlet(font="slant")
-        console.print(f.renderText("Debug"), style="grey", justify="center")
-
+        # --- GANTI FIGLET JADI PANEL ---
+        console.print(Panel("[bold grey]Debug & Local Testing[/]", expand=False, border_style="grey"), justify="center")
+        # -------------------------------
         try:
             choice = await questionary.select(
                 "[bold grey]DEBUG & LOCAL TESTING[/]",
@@ -261,7 +261,7 @@ async def show_debug_menu(cancel_event: asyncio.Event):
 
             selection = choice.split(".")[0]
             pause_needed = True
-            
+
             # Reset child cancel event
             child_process_cancel_event.clear()
             child_process_cancel_event._loop = asyncio.get_running_loop()
@@ -272,7 +272,7 @@ async def show_debug_menu(cancel_event: asyncio.Event):
                 )
             else:
                 pause_needed = False
-            
+
             child_process_cancel_event._loop = None # Selesai
             if pause_needed and not cancel_event.is_set():
                 await pause(cancel_event)
@@ -285,7 +285,7 @@ async def show_debug_menu(cancel_event: asyncio.Event):
 async def main_loop():
     # Setup Ctrl+C handler
     signal.signal(signal.SIGINT, handle_signal)
-    
+
     # Inisialisasi
     try:
         TokenManager.initialize()
@@ -299,8 +299,9 @@ async def main_loop():
         child_process_cancel_event.clear()
 
         console.clear()
-        f = Figlet(font="standard")
-        console.print(f.renderText("Automation Hub"), style="cyan", justify="center")
+        # --- GANTI FIGLET JADI PANEL UTAMA ---
+        console.print(Panel("[bold cyan]Automation Hub[/]", title="🚀", subtitle="v2.0 Python", expand=False, border_style="cyan"), justify="center")
+        # ------------------------------------
         console.print(
             "[grey]Interactive Proxy Orchestrator - Local Control, Remote Execution[/]",
             justify="center",
@@ -354,6 +355,12 @@ async def main_loop():
 
 if __name__ == "__main__":
     try:
+        # Menjalankan event loop
         asyncio.run(main_loop())
     except (KeyboardInterrupt):
+        # Handle jika Ctrl+C ditekan saat asyncio.run() sedang setup
         print("\n[red]Exit paksa.[/]")
+    finally:
+        # Pastikan terminal dikembalikan ke state normal (penting di Linux/macOS)
+        # os.system("stty sane") # Mungkin perlu jika terminal jadi aneh
+        pass
