@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PTY Helper for C# Orchestrator - ENHANCED VERSION
+PTY Helper for C# Orchestrator - Windows PATH Fix
 Cross-platform subprocess automation with robust error handling
 """
 
@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import signal
+import shutil
 from pathlib import Path
 
 # Global process untuk cleanup
@@ -34,6 +35,34 @@ def log_info(msg):
     """Info logging"""
     print(f"[PTY-HELPER] {msg}", file=sys.stderr, flush=True)
 
+def resolve_command(command):
+    """
+    Resolve command menggunakan shutil.which() untuk handle Windows PATH
+    CRITICAL FIX: npm/node/python tidak ditemukan tanpa ini
+    """
+    # Jika sudah absolute path, langsung return
+    if os.path.isabs(command) and os.path.isfile(command):
+        return command
+    
+    # Cek apakah command ada di PATH
+    resolved = shutil.which(command)
+    
+    if resolved:
+        log_info(f"Resolved '{command}' -> '{resolved}'")
+        return resolved
+    
+    # Fallback: coba dengan .exe/.cmd/.bat untuk Windows
+    if sys.platform == 'win32':
+        for ext in ['.exe', '.cmd', '.bat']:
+            resolved = shutil.which(command + ext)
+            if resolved:
+                log_info(f"Resolved '{command}' -> '{resolved}'")
+                return resolved
+    
+    # Tidak ditemukan, return original (akan error nanti)
+    log_error(f"Command '{command}' not found in PATH")
+    return command
+
 def run_interactive(command, args, cwd):
     """
     Mode interaktif manual (real-time I/O passthrough)
@@ -41,18 +70,26 @@ def run_interactive(command, args, cwd):
     """
     global _current_process
     
-    log_info(f"Starting interactive: {command} {' '.join(args)}")
+    # CRITICAL FIX: Resolve command path
+    resolved_cmd = resolve_command(command)
+    
+    log_info(f"Starting interactive: {resolved_cmd} {' '.join(args)}")
     log_info(f"Working directory: {cwd}")
     
     try:
-        cmd_list = [command] + args
+        cmd_list = [resolved_cmd] + args
+        
+        # CRITICAL FIX: Use shell=True di Windows untuk npm/node
+        use_shell = sys.platform == 'win32' and command in ['npm', 'node', 'python', 'py']
+        
         _current_process = subprocess.Popen(
             cmd_list,
             cwd=cwd,
             stdin=sys.stdin,
             stdout=sys.stdout,
             stderr=sys.stderr,
-            text=True
+            text=True,
+            shell=use_shell
         )
         
         returncode = _current_process.wait()
@@ -69,7 +106,8 @@ def run_interactive(command, args, cwd):
         
     except FileNotFoundError:
         log_error(f"Command not found: {command}")
-        log_error("Make sure the executable is in PATH or use absolute path")
+        log_error("Make sure the executable is in PATH")
+        log_error(f"Current PATH: {os.environ.get('PATH', 'NOT SET')[:200]}...")
         return 127
         
     except Exception as e:
@@ -91,6 +129,9 @@ def run_with_script(input_file, command, args, cwd):
     log_info(f"Working directory: {cwd}")
     
     try:
+        # CRITICAL FIX: Resolve command path
+        resolved_cmd = resolve_command(command)
+        
         # Validasi & baca input file
         input_path = Path(input_file)
         if not input_path.exists():
@@ -127,7 +168,12 @@ def run_with_script(input_file, command, args, cwd):
             log_info(f"Loaded {len(inputs.splitlines())} lines from text file")
         
         # Setup subprocess dengan pipes
-        cmd_list = [command] + args
+        cmd_list = [resolved_cmd] + args
+        
+        # CRITICAL FIX: Use shell=True di Windows untuk npm/node
+        use_shell = sys.platform == 'win32' and command in ['npm', 'node', 'python', 'py']
+        
+        log_info(f"Shell mode: {use_shell}")
         
         _current_process = subprocess.Popen(
             cmd_list,
@@ -137,7 +183,8 @@ def run_with_script(input_file, command, args, cwd):
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            universal_newlines=True
+            universal_newlines=True,
+            shell=use_shell
         )
         
         # Thread untuk kirim input secara bertahap
@@ -146,7 +193,7 @@ def run_with_script(input_file, command, args, cwd):
         def send_input():
             try:
                 # Small delay agar child process siap menerima input
-                time.sleep(0.3)
+                time.sleep(0.5)
                 
                 # Kirim semua input sekaligus
                 _current_process.stdin.write(inputs)
@@ -193,6 +240,10 @@ def run_with_script(input_file, command, args, cwd):
         
     except FileNotFoundError:
         log_error(f"Command not found: {command}")
+        log_error("Common causes:")
+        log_error("  - npm/node not in PATH")
+        log_error("  - Executable name typo")
+        log_error(f"Current PATH: {os.environ.get('PATH', 'NOT SET')[:200]}...")
         return 127
         
     except Exception as e:
@@ -208,6 +259,15 @@ def validate_environment():
     # Check Python version
     if sys.version_info < (3, 6):
         issues.append(f"Python 3.6+ required, got {sys.version_info.major}.{sys.version_info.minor}")
+    
+    # Check common commands availability (non-blocking)
+    log_info("Checking common commands in PATH:")
+    for cmd in ['python', 'node', 'npm', 'git']:
+        result = shutil.which(cmd)
+        if result:
+            log_info(f"  ✓ {cmd}: {result}")
+        else:
+            log_info(f"  ✗ {cmd}: not found")
     
     return issues
 
@@ -232,7 +292,7 @@ def main():
         print("", file=sys.stderr)
         print("Examples:", file=sys.stderr)
         print("  pty_helper.py python bot.py", file=sys.stderr)
-        print("  pty_helper.py bot_answers.json python bot.py", file=sys.stderr)
+        print("  pty_helper.py bot_answers.json npm start", file=sys.stderr)
         return 1
     
     # Deteksi mode berdasarkan arguments
