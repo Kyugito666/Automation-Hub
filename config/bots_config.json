@@ -7,35 +7,35 @@
       "path": "bots/privatekey/TurnAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/TurnAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "UomiAutoBot-NTE",
       "path": "bots/privatekey/UomiAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/UomiAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "Empeiria-Testnet-Bot",
       "path": "bots/privatekey/Empeiria-Testnet-Bot",
       "repo_url": "https://github.com/kazmight/Empeiria-Testnet-Bot.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "EqualAutoBot-NTE",
       "path": "bots/privatekey/EqualAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/EqualAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "FaroSwapAutoBot-NTE",
       "path": "bots/privatekey/FaroSwapAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/FaroSwapAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "Galkite-AutoInteraction",
@@ -49,7 +49,7 @@
       "path": "bots/privatekey/GopherAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/GopherAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "GopherFaucetBot-NTE",
@@ -84,7 +84,7 @@
       "path": "bots/privatekey/KiteBridgeBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/KiteBridgeBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "Pharos-Grandline-Bot",
@@ -140,7 +140,7 @@
       "path": "bots/privatekey/Pharos-S2-Bot",
       "repo_url": "https://github.com/kazmight/Pharos-S2-Bot.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "PharosV2AutoBot-NTE",
@@ -154,21 +154,21 @@
       "path": "bots/privatekey/RedactAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/RedactAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "IdosAutoBot-NTE",
       "path": "bots/privatekey/IdosAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/IdosAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "NitroAutoBot-NTE",
       "path": "bots/privatekey/NitroAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/NitroAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "NeuraAutoBot-NTE",
@@ -182,7 +182,7 @@
       "path": "bots/token/AsterAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/AsterAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "Billion-Bot",
@@ -196,28 +196,28 @@
       "path": "bots/token/CryptalAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/CryptalAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "FishingFrenzy-NTE",
       "path": "bots/token/FishingFrenzy-NTE",
       "repo_url": "https://github.com/VinzSenzoo/FishingFrenzy-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "MNAutoBot-NTE",
       "path": "bots/token/MNAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/MNAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "UnichAutoBot-NTE",
       "path": "bots/token/UnichAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/UnichAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "Interlink-BOT",
@@ -231,42 +231,42 @@
       "path": "bots/token/TeneoAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/TeneoAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "Teneo-Auto-Bot",
       "path": "bots/token/Teneo-Auto-Bot",
       "repo_url": "https://github.com/LinuxDil/Teneo-Auto-Bot.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "EmofiAutoBot-NTE",
       "path": "bots/token/EmofiAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/EmofiAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "SolticeAutoBot-NTE",
       "path": "bots/token/SolticeAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/SolticeAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "PsyAutoBot-NTE",
       "path": "bots/token/PsyAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/PsyAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "MytierAutoBot-NTE",
       "path": "bots/token/MytierAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/MytierAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     }
   ]
 }
