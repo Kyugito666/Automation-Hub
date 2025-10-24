@@ -1,10 +1,11 @@
 using Spectre.Console;
-using System.Linq; // <-- TAMBAHKAN using ini
+using System.Linq; // <-- Pastikan using ini ada
 
 namespace Orchestrator;
 
 internal static class Program
 {
+    // ... (Main, RunTask, Menu Navigasi tidak berubah) ...
     public static async Task Main(string[] args)
     {
         TokenManager.Initialize();
@@ -20,7 +21,6 @@ internal static class Program
 
     private static async Task RunTask(string task)
     {
-        // ... (Tidak berubah) ...
         switch (task.ToLower())
         {
             case "--update-bots":
@@ -41,13 +41,8 @@ internal static class Program
         }
     }
 
-    // =================================================================
-    // NAVIGASI MENU UTAMA
-    // =================================================================
-
     private static async Task RunInteractive()
     {
-        // ... (Tidak berubah) ...
         while (true)
         {
             AnsiConsole.Clear();
@@ -85,14 +80,8 @@ internal static class Program
             }
         }
     }
-
-    // =================================================================
-    // SUB-MENU HANDLERS
-    // =================================================================
-
-    private static async Task ShowSetupMenu()
+     private static async Task ShowSetupMenu()
     {
-        // ... (Tidak berubah) ...
         while (true)
         {
             AnsiConsole.Clear();
@@ -133,8 +122,7 @@ internal static class Program
 
     private static async Task ShowLocalMenu()
     {
-        // ... (Tidak berubah) ...
-        while (true)
+       while (true)
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Local").Centered().Color(Color.Green));
@@ -170,8 +158,7 @@ internal static class Program
 
     private static async Task ShowHybridMenu()
     {
-        // ... (Tidak berubah) ...
-        while (true)
+       while (true)
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Hybrid").Centered().Color(Color.Blue));
@@ -194,7 +181,7 @@ internal static class Program
             bool pause = true;
             switch (selection)
             {
-                case "1": await RunSingleInteractiveBot(); break;
+                case "1": await RunSingleInteractiveBot(); break; // Panggil method yang diupdate
                 case "2": await RunAllInteractiveBots(); break;
                 default: pause = false; break;
             }
@@ -205,7 +192,6 @@ internal static class Program
 
     private static async Task ShowRemoteMenu()
     {
-        // ... (Tidak berubah) ...
         while (true)
         {
             AnsiConsole.Clear();
@@ -240,8 +226,7 @@ internal static class Program
 
     private static async Task ShowDebugMenu()
     {
-        // ... (Tidak berubah) ...
-        while (true)
+       while (true)
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Debug").Centered().Color(Color.Grey));
@@ -263,7 +248,7 @@ internal static class Program
             bool pause = true;
             switch (selection)
             {
-                case "1": await TestLocalBot(); break;
+                case "1": await TestLocalBot(); break; // Panggil method yang diupdate
                 default: pause = false; break;
             }
 
@@ -277,9 +262,13 @@ internal static class Program
         Console.ReadLine();
     }
 
+
     // =================================================================
     // METHOD HELPER (UPDATED)
     // =================================================================
+
+    // Objek dummy untuk representasi "Back"
+    private static readonly BotEntry BackOption = new() { Name = "[[Back]] Kembali", Type = "SYSTEM" };
 
     private static async Task RunSingleInteractiveBot()
     {
@@ -288,7 +277,7 @@ internal static class Program
 
         var bots = config.BotsAndTools
             .Where(b => b.Enabled && b.IsBot)
-            .OrderBy(b => b.Name) // <-- TAMBAHKAN SORTING
+            .OrderBy(b => b.Name)
             .ToList();
 
         if (!bots.Any())
@@ -296,27 +285,39 @@ internal static class Program
             AnsiConsole.MarkupLine("[yellow]No active bots found.[/]");
             return;
         }
+
+        // --- TAMBAHKAN OPSI BACK ---
+        var choices = bots.ToList(); // Buat salinan
+        choices.Add(BackOption);     // Tambahkan opsi Back di akhir
 
         var selectedBot = AnsiConsole.Prompt(
             new SelectionPrompt<BotEntry>()
                 .Title("[cyan]Select bot for interactive run:[/]")
                 .PageSize(20)
                 .WrapAround()
-                .UseConverter(b => $"{b.Name} ({b.Type})")
-                .AddChoices(bots));
+                 // Converter untuk menampilkan nama bot atau teks "Back"
+                .UseConverter(b => b == BackOption ? b.Name : $"{b.Name} ({b.Type})")
+                .AddChoices(choices)); // Gunakan list yang sudah ada opsi Back
 
+        // --- CEK JIKA USER MEMILIH BACK ---
+        if (selectedBot == BackOption)
+        {
+            return; // Kembali ke menu sebelumnya (Hybrid Menu)
+        }
+
+        // Lanjutkan jika bukan Back
         await InteractiveProxyRunner.CaptureAndTriggerBot(selectedBot);
     }
 
     private static async Task RunAllInteractiveBots()
     {
-        var config = BotConfig.Load();
+        // ... (Method ini tidak menampilkan pilihan bot, jadi tidak perlu diubah) ...
+         var config = BotConfig.Load();
         if (config == null) return;
 
-        // Sorting ditambahkan di sini juga agar urutan eksekusi konsisten
         var bots = config.BotsAndTools
             .Where(b => b.Enabled && b.IsBot)
-            .OrderBy(b => b.Name) // <-- TAMBAHKAN SORTING
+            .OrderBy(b => b.Name)
             .ToList();
 
         if (!bots.Any())
@@ -325,7 +326,7 @@ internal static class Program
             return;
         }
 
-        AnsiConsole.MarkupLine($"[cyan]Found {bots.Count} active bots (Sorted Alphabetically)[/]"); // Info tambahan
+        AnsiConsole.MarkupLine($"[cyan]Found {bots.Count} active bots (Sorted Alphabetically)[/]");
         AnsiConsole.MarkupLine("[yellow]WARNING: This will run all bots locally for input capture.[/]");
 
         if (!AnsiConsole.Confirm("Continue?"))
@@ -368,7 +369,7 @@ internal static class Program
 
         var bots = config.BotsAndTools
             .Where(b => b.Enabled && b.IsBot)
-            .OrderBy(b => b.Name) // <-- TAMBAHKAN SORTING
+            .OrderBy(b => b.Name)
             .ToList();
 
         if (!bots.Any())
@@ -377,14 +378,25 @@ internal static class Program
             return;
         }
 
+        // --- TAMBAHKAN OPSI BACK ---
+        var choices = bots.ToList();
+        choices.Add(BackOption);
+
         var selectedBot = AnsiConsole.Prompt(
             new SelectionPrompt<BotEntry>()
                 .Title("[cyan]Select bot for local test:[/]")
                 .PageSize(20)
                 .WrapAround()
-                .UseConverter(b => $"{b.Name} ({b.Type})")
-                .AddChoices(bots));
+                .UseConverter(b => b == BackOption ? b.Name : $"{b.Name} ({b.Type})")
+                .AddChoices(choices));
 
+        // --- CEK JIKA USER MEMILIH BACK ---
+        if (selectedBot == BackOption)
+        {
+            return; // Kembali ke menu sebelumnya (Debug Menu)
+        }
+
+        // Lanjutkan jika bukan Back
         var botPath = Path.Combine("..", selectedBot.Path);
         if (!Directory.Exists(botPath))
         {
