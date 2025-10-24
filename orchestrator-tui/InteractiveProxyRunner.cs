@@ -2,14 +2,14 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
 using System.IO;
-using System.Runtime.InteropServices; // Ditambahkan
+using System.Runtime.InteropServices;
 
 namespace Orchestrator;
 
 public static class InteractiveProxyRunner
 {
     private const string InputsDir = "../.bot-inputs";
-    private const string VenvDirName = ".venv"; // Sama seperti di BotRunner
+    private const string VenvDirName = ".venv";
 
     // ... (CaptureAndTriggerBot method unchanged) ...
     public static async Task CaptureAndTriggerBot(BotEntry bot)
@@ -19,17 +19,15 @@ public static class InteractiveProxyRunner
 
         Directory.CreateDirectory(InputsDir);
 
-        var botPath = Path.GetFullPath(Path.Combine("..", bot.Path)); // Use full path
+        var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
         if (!Directory.Exists(botPath))
         {
             AnsiConsole.MarkupLine($"[red]Bot path not found: {botPath}[/]");
             return;
         }
 
-        // Install dependencies (will handle venv creation/update)
         await BotRunner.InstallDependencies(botPath, bot.Type);
 
-        // Run capture mode (will use venv python if applicable)
         var capturedInputs = await RunBotInCaptureMode(botPath, bot);
 
         if (Program.InteractiveBotCancelled)
@@ -40,7 +38,7 @@ public static class InteractiveProxyRunner
 
         if (capturedInputs == null || capturedInputs.Count == 0)
         {
-            AnsiConsole.MarkupLine("[yellow]No inputs captured. Bot may not be interactive, or capture failed.[/]"); // Update message
+            AnsiConsole.MarkupLine("[yellow]No inputs captured. Bot may not be interactive, or capture failed.[/]");
             var runDirect = AnsiConsole.Confirm("Run directly on GitHub Actions without inputs?");
             if (!runDirect) return;
             capturedInputs = new Dictionary<string, string>();
@@ -77,8 +75,9 @@ public static class InteractiveProxyRunner
 
     private static async Task<Dictionary<string, string>?> RunBotInCaptureMode(string botPath, BotEntry bot)
     {
+        // ... (Bagian awal method ini tidak berubah) ...
         var inputs = new Dictionary<string, string>();
-        var absoluteBotPath = Path.GetFullPath(botPath); // Ensure absolute path
+        var absoluteBotPath = Path.GetFullPath(botPath);
         var inputCapturePath = Path.Combine(absoluteBotPath, ".input-capture.tmp");
 
         string jsWrapperFileName = "capture_wrapper.cjs";
@@ -103,9 +102,7 @@ public static class InteractiveProxyRunner
         AnsiConsole.MarkupLine("[dim]Answer all prompts normally. Inputs will be captured.[/]");
         AnsiConsole.MarkupLine("[grey]─────────────────────────────────────[/]\n");
 
-        // === GUNAKAN GetRunCommand YANG SUDAH VENV-AWARE ===
         var (originalExecutor, originalArgs) = BotRunner.GetRunCommand(absoluteBotPath, bot.Type);
-        // ===================================================
 
         string executor;
         string args;
@@ -118,14 +115,12 @@ public static class InteractiveProxyRunner
 
         if (bot.Type == "python")
         {
-            // Executor *sudah* path ke python venv dari GetRunCommand
-            executor = originalExecutor;
-            // Args: -u wrapper.py original_script.py
+            executor = originalExecutor; // Sudah path ke python venv
             args = $"-u \"{pyWrapperFileName}\" {originalArgs}";
         }
         else if (bot.Type == "javascript")
         {
-            executor = "node"; // Wrapper tetap pakai node global
+            executor = "node"; // Wrapper pakai node global
             string targetScriptArg;
 
             if (originalExecutor == "npm" && originalArgs == "start")
@@ -145,7 +140,7 @@ public static class InteractiveProxyRunner
                     targetScriptArg = "index.js";
                 }
             }
-            else // Asumsi originalExecutor="node", originalArgs="file.js"
+            else
             {
                  targetScriptArg = originalArgs;
             }
@@ -157,11 +152,9 @@ public static class InteractiveProxyRunner
              return null;
         }
 
-
         try
         {
             Program.InteractiveBotCancelled = false;
-            // Jalankan dari path bot, gunakan executor yang sudah ditentukan (bisa python venv)
             await ShellHelper.RunInteractive(executor, args, absoluteBotPath);
         }
         catch (Exception ex)
@@ -211,12 +204,10 @@ public static class InteractiveProxyRunner
         return inputs;
     }
 
-    // ... (CreatePythonCaptureWrapper dan CreateJavaScriptCaptureWrapper tidak berubah dari versi fix escaping terakhir) ...
-     private static async Task CreatePythonCaptureWrapper(string wrapperFullPath, string outputPath)
+    // ... (CreatePythonCaptureWrapper tidak berubah) ...
+    private static async Task CreatePythonCaptureWrapper(string wrapperFullPath, string outputPath)
     {
-        // Escape outputPath for the generated Python string literal in C#
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
-        // Use @"" for verbatim string literal and double braces {{ }} for Python's f-string braces
         var wrapper = $@"#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
@@ -224,40 +215,28 @@ import json
 import builtins
 import os
 import io
-import traceback # Added for better error reporting
-import signal # Added for signal handling
+import traceback
+import signal
 
 # --- Configuration ---
-CAPTURE_OUTPUT_PATH = r""{escapedOutputPath}"" # Use raw string for path
+CAPTURE_OUTPUT_PATH = r""{escapedOutputPath}""
 
 # --- Signal Handling ---
 def handle_signal(sig, frame):
     print(f'\nCapture wrapper info: Received signal {{sig}}. Cleaning up...', file=sys.stderr) # Python f-string -> {{{{}}}}
-    # The 'finally' block will handle saving the captured data.
-    # Exit with a code indicating interruption, if possible.
-    sys.exit(128 + sig) # Standard exit code for signals
+    sys.exit(128 + sig)
 
-signal.signal(signal.SIGINT, handle_signal) # Ctrl+C
-signal.signal(signal.SIGTERM, handle_signal) # Termination signal
-
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
 
 # --- Encoding Setup ---
 try:
-    # Use 'o' mode for binary write, then wrap with TextIOWrapper for encoding control
-    # sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    # sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8', errors='replace')
-    # More robust check and reconfiguration:
     if hasattr(sys.stdout, 'reconfigure'):
-        try:
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        except: # Handle cases where reconfigure might fail (e.g., already closed)
-             pass
+        try: sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        except: pass
     if hasattr(sys.stdin, 'reconfigure'):
-         try:
-            sys.stdin.reconfigure(encoding='utf-8', errors='replace')
-         except:
-             pass
-
+         try: sys.stdin.reconfigure(encoding='utf-8', errors='replace')
+         except: pass
 except Exception as enc_err:
     print(f'Capture wrapper warning: Could not reconfigure stdio encoding: {{enc_err}}', file=sys.stderr) # Python f-string -> {{{{}}}}
 
@@ -268,139 +247,111 @@ _original_input = builtins.input
 def capturing_input(prompt=''):
     global captured
     try:
-        # Display the prompt using the original stdout encoding behavior if possible
-        # Write directly to buffer to bypass potential wrapper encoding issues? No, use print.
         print(prompt, end='', flush=True)
-        #response = _original_input() # Read input without prompt arg
-        # Use readline directly to avoid potential issues with wrapped input() under some terminals/libs
         response = sys.stdin.readline()
-        if response is None: # Check for EOF
+        if response is None:
              raise EOFError(""Stdin closed during input"")
-        response = response.rstrip('\n\r') # Strip newline
+        response = response.rstrip('\n\r')
 
         key_base = str(prompt).strip().rstrip(':').strip()
-         # Python f-string -> {{{{}}}}
-        key = key_base or f'input_{{len(captured)}}'
+        key = key_base or f'input_{{{{len(captured)}}}}' # Python f-string -> {{{{}}}} {{{{len(...)}}}}
 
         count = 1
         final_key = key
         while final_key in captured:
             count += 1
-             # Python f-string -> {{{{}}}}
-            final_key = f'{{key}}_{{count}}'
+            final_key = f'{{{{key}}}}_{{{{count}}}}' # Python f-string -> {{{{}}}} {{{{...}}}}
 
         captured[final_key] = response
         return response
     except EOFError:
         print('Capture wrapper warning: EOFError detected during input.', file=sys.stderr)
-        raise # Re-raise for the target script
-    except KeyboardInterrupt: # Handle Ctrl+C during input specifically
+        raise
+    except KeyboardInterrupt:
         print('\nCapture wrapper info: KeyboardInterrupt during input.', file=sys.stderr)
-        raise # Re-raise for signal handler or outer try/except
+        raise
     except Exception as input_err:
-         # Python f-string -> {{{{}}}}
-        print(f'Capture wrapper error during input call: {{input_err}}', file=sys.stderr)
-        # Depending on the error, maybe raise it? For now, return empty.
+        print(f'Capture wrapper error during input call: {{input_err}}', file=sys.stderr) # Python f-string -> {{{{}}}}
         return ''
 
 builtins.input = capturing_input
 
 # --- Target Script Determination ---
 script_to_run = None
-original_argv = list(sys.argv) # sys.argv[0] is wrapper.py, sys.argv[1] is target script arg from C#
+original_argv = list(sys.argv)
 
 if len(original_argv) > 1:
     script_arg = original_argv[1]
-    # Assume script_arg is relative to the CWD (botPath set by C#)
     script_path = os.path.abspath(script_arg)
     if os.path.exists(script_path):
         script_to_run = script_path
     else:
-         # Python f-string -> {{{{}}}}
-        print(f'Capture wrapper error: Target script specified but not found: {{script_path}}', file=sys.stderr)
+        print(f'Capture wrapper error: Target script specified but not found: {{script_path}}', file=sys.stderr) # Python f-string -> {{{{}}}}
 else:
-    # Try common entry points if no script argument given
     entry_points = ['run.py', 'main.py', 'bot.py']
     for entry in entry_points:
         entry_path = os.path.abspath(entry)
         if os.path.exists(entry_path):
-             # Python f-string -> {{{{}}}}
-            print(f'Capture wrapper info: No script argument, found {{entry}}. Running it.', file=sys.stderr)
+            print(f'Capture wrapper info: No script argument, found {{entry}}. Running it.', file=sys.stderr) # Python f-string -> {{{{}}}}
             script_to_run = entry_path
             break
     if script_to_run is None:
-         print('Capture wrapper error: No script argument and no common entry point (run.py/main.py/bot.py) found.', file=sys.stderr)
+         print('Capture wrapper error: No script argument and no common entry point found.', file=sys.stderr)
 
 # --- Script Execution and Cleanup ---
 script_executed_successfully = False
-exit_code = 1 # Default to error
-abs_output_path = os.path.abspath(CAPTURE_OUTPUT_PATH) # Define here for finally block
+exit_code = 1
+abs_output_path = os.path.abspath(CAPTURE_OUTPUT_PATH)
 
-try: # Outer try for execution and saving
+try: # Outer try
     if script_to_run:
-        try: # Inner try specifically for script execution
-            # Prepare environment for the target script
-            sys.argv = [script_to_run] + original_argv[2:] # Target script sees its name + remaining args
+        try: # Inner try
+            sys.argv = [script_to_run] + original_argv[2:]
             script_dir = os.path.dirname(script_to_run)
-            # Change CWD to script's directory? Might break relative paths expected from botPath.
-            # Let's keep CWD as botPath set by C# runner.
-
-             # Python f-string -> {{{{}}}}
-            print(f'--- Starting Target Script: {{os.path.basename(script_to_run)}} ---', file=sys.stderr)
+            print(f'--- Starting Target Script: {{os.path.basename(script_to_run)}} ---', file=sys.stderr) # Python f-string -> {{{{}}}}
 
             with open(script_to_run, 'r', encoding='utf-8') as f:
                 source = f.read()
                 code = compile(source, script_to_run, 'exec')
-                 # Python dict init -> {{{{}}}}
-                script_globals = {{'__name__': '__main__', '__file__': script_to_run}}
+                script_globals = {{'__name__': '__main__', '__file__': script_to_run}} # Python dict -> {{{{}}}}
                 exec(code, script_globals)
                 script_executed_successfully = True
-                exit_code = 0 # Assume success if no exception/SystemExit
+                exit_code = 0
                 print(f'\n--- Target Script Finished ---', file=sys.stderr)
 
         except SystemExit as sysexit:
             exit_code = sysexit.code if isinstance(sysexit.code, int) else (0 if sysexit.code is None else 1)
-             # Python f-string -> {{{{}}}}
-            print(f'Capture wrapper info: Script exited via SystemExit with code {{exit_code}}.', file=sys.stderr)
+            print(f'Capture wrapper info: Script exited via SystemExit with code {{exit_code}}.', file=sys.stderr) # Python f-string -> {{{{}}}}
             script_executed_successfully = (exit_code == 0)
         except KeyboardInterrupt:
              print(f'\nCapture wrapper info: KeyboardInterrupt caught during script execution.', file=sys.stderr)
-             exit_code = 130 # Standard exit code for SIGINT
+             exit_code = 130
         except Exception as e:
-             # Python f-string -> {{{{}}}}
-            print(f'Capture wrapper FATAL ERROR during script execution: {{e}}', file=sys.stderr)
+            print(f'Capture wrapper FATAL ERROR during script execution: {{e}}', file=sys.stderr) # Python f-string -> {{{{}}}}
             traceback.print_exc(file=sys.stderr)
             exit_code = 1
     else:
          print(f'Capture wrapper warning: No script was executed.', file=sys.stderr)
-         exit_code = 1 # No script found is an error
+         exit_code = 1
 
 finally:
-    # --- SAVE CAPTURED DATA ---
-    # This block executes even if SystemExit, KeyboardInterrupt, or other exceptions occur
     print(f'Capture wrapper info: Entering finally block. Saving captured data...', file=sys.stderr)
     try:
         output_dir = os.path.dirname(abs_output_path)
         os.makedirs(output_dir, exist_ok=True)
         with open(abs_output_path, 'w', encoding='utf-8') as f:
-             # Python dict comprehension -> {{{{}}}}
-            serializable_captured = {{k: str(v) for k, v in captured.items()}}
+            serializable_captured = {{k: str(v) for k, v in captured.items()}} # Python dict comp -> {{{{}}}}
             json.dump(serializable_captured, f, indent=2, ensure_ascii=False)
-         # Python f-string -> {{{{}}}}
-        print(f'Capture wrapper info: Captured data saved to {{abs_output_path}}', file=sys.stderr)
+        print(f'Capture wrapper info: Captured data saved to {{abs_output_path}}', file=sys.stderr) # Python f-string -> {{{{}}}}
     except Exception as save_err:
-         # Python f-string -> {{{{}}}}
-        print(f'Capture wrapper FATAL ERROR: Failed to write capture file {{abs_output_path}}: {{save_err}}', file=sys.stderr)
-        # If saving fails, we might want to ensure the exit code reflects an error
+        print(f'Capture wrapper FATAL ERROR: Failed to write capture file {{abs_output_path}}: {{save_err}}', file=sys.stderr) # Python f-string -> {{{{}}}}
         if exit_code == 0: exit_code = 1
-
-# Exit attempt removed, C# will detect process end
-
 ";
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
     }
 
 
+    // === METHOD JAVASCRIPT WRAPPER (FIXED ESCAPING) ===
     private static async Task CreateJavaScriptCaptureWrapper(string wrapperFullPath, string outputPath)
     {
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
@@ -421,12 +372,12 @@ let isExiting = false;
 // --- Save Function ---
 function saveCaptureData() {{
     if (isExiting) return;
-    // JS template literal -> `${{{{...}}}}`, escape C# var with double $$
+    // JS template literal -> `${{{{...}}}}`, escape $ with $$
     // console.log(`Debug JS: Attempting save to $${{{{absOutputPath}}}}`);
     try {{
         const outputDir = path.dirname(absOutputPath);
-        // JS object literal -> {{{{}}}}
         if (!fs.existsSync(outputDir)) {{
+             // JS object literal -> {{{{}}}}
             fs.mkdirSync(outputDir, {{ recursive: true }});
         }}
         fs.writeFileSync(absOutputPath, JSON.stringify(captured, null, 2));
@@ -451,9 +402,10 @@ function gracefulExit(signalOrCode = 0) {{
          process.exitCode = signalOrCode;
     }}
     // Force exit after delay
-    setTimeout(() => {{ process.exit(process.exitCode || 0); }}, 200);
+    setTimeout(() => {{ process.exit(process.exitCode || 0); }}, 200); // JS Arrow function -> () => {{ ... }}
 }}
 
+// JS Arrow function -> (...) => {{ ... }}
 process.on('exit', (code) => {{
     // JS template literal -> `${{{{...}}}}`
     // console.log(`Debug JS: 'exit' event triggered with code $${{{{code}}}}.`);
@@ -468,9 +420,11 @@ process.on('SIGTERM', () => {{ /* console.log('Debug JS: SIGTERM received.');*/ 
 
 // --- Input Capture Setup ---
 try {{
-    const nullStream = new Writable({{ write(chunk, encoding, callback) {{ callback(); }} }}); // JS object literal -> {{{{}}}}
+    // JS object literal -> {{{{}}}}
+    const nullStream = new Writable({{ write(chunk, encoding, callback) {{ callback(); }} }});
 
-    rl = readline.createInterface({{ // JS object literal -> {{{{}}}}
+    // JS object literal -> {{{{}}}}
+    rl = readline.createInterface({{
         input: process.stdin,
         output: nullStream,
         prompt: ''
@@ -497,8 +451,10 @@ try {{
             process.stdout.write(answer + '\n');
 
             const keyBase = String(query).trim().replace(/[:?]/g, '').trim();
-            // JS template literal -> `${{{{...}}}}`
+            // === FIX ESCAPING DI SINI ===
+            // JS template literal -> `${{{{...}}}}`, escape $ with $$
             let key = keyBase || `input_$${{{{Object.keys(captured).length}}}}`;
+            // ============================
 
             let count = 1;
             const originalKey = key;
@@ -554,6 +510,5 @@ try {{
 ";
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
     }
-
 
 } // End of class InteractiveProxyRunner
