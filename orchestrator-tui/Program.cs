@@ -41,7 +41,7 @@ internal static class Program
     }
 
     // =================================================================
-    // NAVIGASI MENU UTAMA (FIXED)
+    // NAVIGASI MENU UTAMA 
     // =================================================================
 
     private static async Task RunInteractive()
@@ -56,7 +56,6 @@ internal static class Program
                 new SelectionPrompt<string>()
                     .Title("\n[bold cyan]MAIN MENU[/]")
                     .PageSize(10)
-                    // === FIX DI SINI: Kurung siku di-escape menjadi [[ ]] ===
                     .AddChoices(new[]
                     {
                         "1. [[SETUP]] Configuration & Token Management",
@@ -82,7 +81,7 @@ internal static class Program
     }
     
     // =================================================================
-    // SUB-MENU HANDLERS (Tidak berubah, tapi disertakan)
+    // SUB-MENU HANDLERS (DENGAN UPDATE)
     // =================================================================
 
     private static async Task ShowSetupMenu()
@@ -102,7 +101,8 @@ internal static class Program
                         "2. Invite Collaborators",
                         "3. Accept Invitations",
                         "4. Show Token/Proxy Status",
-                        "0. [[Back]] Kembali ke Menu Utama" // Escape juga di sini
+                        "5. [[SYSTEM]] Refresh All Configs (Reload files)", // <-- TAMBAHAN
+                        "0. [[Back]] Kembali ke Menu Utama"
                     }));
 
             var selection = choice.Split('.')[0];
@@ -114,6 +114,7 @@ internal static class Program
                 case "2": await CollaboratorManager.InviteCollaborators(); break;
                 case "3": await CollaboratorManager.AcceptInvitations(); break;
                 case "4": TokenManager.ShowStatus(); break;
+                case "5": TokenManager.ReloadAllConfigs(); break; // <-- TAMBAHAN
                 case "0": return;
                 default: pause = false; break;
             }
