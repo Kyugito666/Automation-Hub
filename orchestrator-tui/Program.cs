@@ -6,7 +6,7 @@ internal static class Program
 {
     public static async Task Main(string[] args)
     {
-        // Menggunakan TokenManager v2, bukan GitHubDispatcher v1
+        // Tetap sinkron, cache di-load di sini
         TokenManager.Initialize();
 
         if (args.Length > 0)
@@ -51,25 +51,44 @@ internal static class Program
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("\n[bold cyan]MAIN MENU[/]")
-                    .PageSize(15)
+                    .PageSize(20) // Ditambah
                     .AddChoices(new[]
                     {
+                        // --- MENU SETUP BARU ---
+                        "A. (SETUP) Validate Tokens & Get Usernames",
+                        "B. (SETUP) Invite Collaborators",
+                        "C. (SETUP) Accept Invitations",
+                        "---",
+                        // --- Menu Lama ---
                         "1. (LOCAL) Update All Bots & Tools",
                         "2. (LOCAL) Deploy Proxies",
                         "3. (LOCAL) Show Bot Config",
+                        "4. (LOCAL) Show Token/Proxy Status", // Tambahan
                         "---",
-                        "4. (HYBRID) Run Interactive Bot → Remote Execution",
-                        "5. (HYBRID) Run All Interactive Bots → Remote Execution",
+                        "5. (HYBRID) Run Interactive Bot → Remote Execution",
+                        "6. (HYBRID) Run All Interactive Bots → Remote Execution",
                         "---",
-                        "6. (REMOTE) Trigger ALL Bots (No Interaction)",
-                        "7. (REMOTE) View Workflow Status",
+                        "7. (REMOTE) Trigger ALL Bots (No Interaction)",
+                        "8. (REMOTE) View Workflow Status",
                         "---",
-                        "8. (DEBUG) Test Local Bot (No Remote)",
-                        "9. Exit"
+                        "9. (DEBUG) Test Local Bot (No Remote)",
+                        "0. Exit"
                     }));
 
-            switch (choice.Split('.')[0])
+            switch (choice.Split('.')[0].ToUpper())
             {
+                // --- HANDLER BARU ---
+                case "A":
+                    await CollaboratorManager.ValidateAllTokens();
+                    break;
+                case "B":
+                    await CollaboratorManager.InviteCollaborators();
+                    break;
+                case "C":
+                    await CollaboratorManager.AcceptInvitations();
+                    break;
+                
+                // --- HANDLER LAMA ---
                 case "1":
                     await BotUpdater.UpdateAllBots();
                     break;
@@ -80,21 +99,24 @@ internal static class Program
                     BotUpdater.ShowConfig();
                     break;
                 case "4":
-                    await RunSingleInteractiveBot();
+                    TokenManager.ShowStatus(); // Tambahan
                     break;
                 case "5":
-                    await RunAllInteractiveBots();
+                    await RunSingleInteractiveBot();
                     break;
                 case "6":
-                    await GitHubDispatcher.TriggerAllBotsWorkflow();
+                    await RunAllInteractiveBots();
                     break;
                 case "7":
-                    await GitHubDispatcher.GetWorkflowRuns();
+                    await GitHubDispatcher.TriggerAllBotsWorkflow();
                     break;
                 case "8":
-                    await TestLocalBot();
+                    await GitHubDispatcher.GetWorkflowRuns();
                     break;
                 case "9":
+                    await TestLocalBot();
+                    break;
+                case "0":
                     AnsiConsole.MarkupLine("[green]Goodbye![/]");
                     return;
                 case "---":
@@ -160,11 +182,7 @@ internal static class Program
 
         foreach (var bot in bots)
         {
-            // === FIX DI SINI ===
-            // Salah: AnsiConsole.Rule($"[cyan]{bot.Name}[/]");
-            // Benar:
             AnsiConsole.Write(new Rule($"[cyan]{bot.Name}[/]").Centered());
-            // ===================
             
             try
             {
