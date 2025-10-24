@@ -1,0 +1,6 @@
+rich
+questionary
+httpx[http2]
+pexpect
+pyfiglet
+pydantic
