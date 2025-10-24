@@ -101,8 +101,7 @@ public static class InteractiveProxyRunner
 
         try
         {
-            // Gunakan ShellHelper.RunInteractive langsung tanpa PTY wrapper
-            await ShellHelper.RunInteractive(executor, args, botPath, cancellationToken);
+            await ShellHelper.RunInteractiveWindows(executor, args, botPath, cancellationToken);
             AnsiConsole.MarkupLine("\n[grey]─────────────────────────────────────[/]");
             AnsiConsole.MarkupLine("[green]Local run selesai.[/]");
         }
