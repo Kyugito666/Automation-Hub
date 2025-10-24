@@ -1,218 +1,219 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Spectre.Console;
 
 namespace Orchestrator;
 
 public static class GitHubDispatcher
 {
-    private static readonly HttpClient Client = new();
-    
-    // Config dari environment atau file
-    private static string? _token;
-    private static string? _owner;
-    private static string? _repo;
-
-    public static void Initialize()
-    {
-        // Baca dari environment variable atau file config
-        _token = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
-        _owner = Environment.GetEnvironmentVariable("GITHUB_OWNER");
-        _repo = Environment.GetEnvironmentVariable("GITHUB_REPO");
-
-        // Fallback: baca dari file
-        var configPath = "../config/github_config.json";
-        if (string.IsNullOrEmpty(_token) && File.Exists(configPath))
-        {
-            var json = File.ReadAllText(configPath);
-            var config = JsonSerializer.Deserialize<GitHubConfig>(json);
-            _token = config?.Token;
-            _owner = config?.Owner;
-            _repo = config?.Repo;
-        }
-
-        if (string.IsNullOrEmpty(_token))
-        {
-            AnsiConsole.MarkupLine("[red]ERROR: GITHUB_TOKEN tidak ditemukan![/]");
-            AnsiConsole.MarkupLine("[yellow]Set environment variable atau buat config/github_config.json:[/]");
-            AnsiConsole.MarkupLine("[dim]{[/]");
-            AnsiConsole.MarkupLine("[dim]  \"token\": \"ghp_xxxxx\",[/]");
-            AnsiConsole.MarkupLine("[dim]  \"owner\": \"username\",[/]");
-            AnsiConsole.MarkupLine("[dim]  \"repo\": \"automation-hub\"[/]");
-            AnsiConsole.MarkupLine("[dim]}[/]");
-            return;
-        }
-
-        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-        Client.DefaultRequestHeaders.UserAgent.ParseAdd("Automation-Hub-Orchestrator/1.0");
-        Client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-    }
+    // Dihapus: Client, _token, _owner, _repo, Initialize()
+    // Semua state sekarang di-manage oleh TokenManager
 
     public static async Task TriggerAllBotsWorkflow()
     {
-        if (string.IsNullOrEmpty(_token))
-        {
-            AnsiConsole.MarkupLine("[red]GitHub tidak dikonfigurasi. Jalankan Initialize() dulu.[/]");
-            return;
-        }
-
         AnsiConsole.MarkupLine("[cyan]Triggering workflow 'run-all-bots.yml' di GitHub Actions...[/]");
 
-        var url = $"https://api.github.com/repos/{_owner}/{_repo}/actions/workflows/run-all-bots.yml/dispatches";
-        
-        var payload = new
+        bool success = false;
+        for (int i = 0; i < 5; i++) // Coba retry 5x (jika ada rate limit)
         {
-            @ref = "main",  // atau branch lain
-            inputs = new { }
-        };
-
-        var content = new StringContent(
-            JsonSerializer.Serialize(payload),
-            Encoding.UTF8,
-            "application/json"
-        );
-
-        try
-        {
-            var response = await Client.PostAsync(url, content);
-            
-            if (response.IsSuccessStatusCode)
+            try
             {
-                AnsiConsole.MarkupLine("[green]✓ Workflow triggered successfully![/]");
-                AnsiConsole.MarkupLine($"[dim]Cek status: https://github.com/{_owner}/{_repo}/actions[/]");
-            }
-            else
-            {
+                var (_, _, owner, repo) = TokenManager.GetCurrentToken();
+                if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo))
+                {
+                    AnsiConsole.MarkupLine("[red]Owner/Repo GitHub tidak dikonfigurasi di tokens.txt[/]");
+                    return;
+                }
+
+                using var client = TokenManager.CreateHttpClient();
+                var url = $"https://api.github.com/repos/{owner}/{repo}/actions/workflows/run-all-bots.yml/dispatches";
+                
+                var payload = new { @ref = "main" }; // branch default
+                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+                var response = await client.PostAsync(url, content);
+                
+                if (response.IsSuccessStatusCode)
+                {
+                    AnsiConsole.MarkupLine("[green]✓ Workflow triggered successfully![/]");
+                    AnsiConsole.MarkupLine($"[dim]Cek status: https://github.com/{owner}/{repo}/actions[/]");
+                    success = true;
+                    break;
+                }
+                
                 var error = await response.Content.ReadAsStringAsync();
                 AnsiConsole.MarkupLine($"[red]✗ Failed: {response.StatusCode}[/]");
                 AnsiConsole.MarkupLine($"[dim]{error}[/]");
+
+                if (response.StatusCode == System.Net.HttpStatusCode.Forbidden || response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    if (TokenManager.HandleRateLimitError(new Exception("Rate limit"))) continue;
+                }
+                
+                break; // Error non-rate-limit
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗ Exception: {ex.Message}[/]");
+                if (TokenManager.HandleRateLimitError(ex)) continue;
+                break;
             }
         }
-        catch (Exception ex)
+
+        if (!success)
         {
-            AnsiConsole.MarkupLine($"[red]✗ Exception: {ex.Message}[/]");
+            AnsiConsole.MarkupLine("[red]Gagal trigger workflow setelah beberapa kali percobaan.[/]");
         }
     }
 
-    public static async Task TriggerSingleBot(string botName, string botPath, string botRepo, string botType, int durationMinutes = 340)
+    public static async Task TriggerSingleBot(BotEntry bot, int durationMinutes = 340)
     {
-        if (string.IsNullOrEmpty(_token))
+        AnsiConsole.MarkupLine($"[cyan]Triggering single bot: {bot.Name}...[/]");
+
+        bool success = false;
+        for (int i = 0; i < 5; i++)
         {
-            AnsiConsole.MarkupLine("[red]GitHub tidak dikonfigurasi.[/]");
-            return;
-        }
-
-        AnsiConsole.MarkupLine($"[cyan]Triggering single bot: {botName}...[/]");
-
-        var url = $"https://api.github.com/repos/{_owner}/{_repo}/actions/workflows/run-single-bot.yml/dispatches";
-        
-        var payload = new
-        {
-            @ref = "main",
-            inputs = new
+            try
             {
-                bot_name = botName,
-                bot_path = botPath,
-                bot_repo = botRepo,
-                bot_type = botType,
-                duration_minutes = durationMinutes.ToString()
-            }
-        };
+                var (_, _, owner, repo) = TokenManager.GetCurrentToken();
+                if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo))
+                {
+                    AnsiConsole.MarkupLine("[red]Owner/Repo GitHub tidak dikonfigurasi di tokens.txt[/]");
+                    return;
+                }
 
-        var content = new StringContent(
-            JsonSerializer.Serialize(payload),
-            Encoding.UTF8,
-            "application/json"
-        );
+                using var client = TokenManager.CreateHttpClient();
+                var url = $"https://api.github.com/repos/{owner}/{repo}/actions/workflows/run-single-bots.yml/dispatches";
+                
+                var payload = new
+                {
+                    @ref = "main",
+                    inputs = new
+                    {
+                        bot_name = bot.Name,
+                        bot_path = bot.Path,
+                        bot_repo = bot.RepoUrl,
+                        bot_type = bot.Type,
+                        duration_minutes = durationMinutes.ToString()
+                    }
+                };
 
-        try
-        {
-            var response = await Client.PostAsync(url, content);
-            
-            if (response.IsSuccessStatusCode)
-            {
-                AnsiConsole.MarkupLine($"[green]✓ {botName} triggered![/]");
-            }
-            else
-            {
+                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                var response = await client.PostAsync(url, content);
+                
+                if (response.IsSuccessStatusCode)
+                {
+                    AnsiConsole.MarkupLine($"[green]✓ {bot.Name} triggered![/]");
+                    success = true;
+                    break;
+                }
+
                 var error = await response.Content.ReadAsStringAsync();
                 AnsiConsole.MarkupLine($"[red]✗ Failed: {response.StatusCode}[/]");
                 AnsiConsole.MarkupLine($"[dim]{error}[/]");
+
+                if (response.StatusCode == System.Net.HttpStatusCode.Forbidden || response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    if (TokenManager.HandleRateLimitError(new Exception("Rate limit"))) continue;
+                }
+
+                break;
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗ Exception: {ex.Message}[/]");
+                if (TokenManager.HandleRateLimitError(ex)) continue;
+                break;
             }
         }
-        catch (Exception ex)
+        
+        if (!success)
         {
-            AnsiConsole.MarkupLine($"[red]✗ Exception: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]Gagal trigger bot {bot.Name}.[/]");
         }
     }
 
     public static async Task GetWorkflowRuns()
     {
-        if (string.IsNullOrEmpty(_token))
+        for (int i = 0; i < 5; i++)
         {
-            AnsiConsole.MarkupLine("[red]GitHub tidak dikonfigurasi.[/]");
-            return;
-        }
-
-        var url = $"https://api.github.com/repos/{_owner}/{_repo}/actions/runs?per_page=10";
-
-        try
-        {
-            var response = await Client.GetAsync(url);
-            var json = await response.Content.ReadAsStringAsync();
-            var data = JsonSerializer.Deserialize<WorkflowRunsResponse>(json);
-
-            if (data?.WorkflowRuns == null || !data.WorkflowRuns.Any())
+            try
             {
-                AnsiConsole.MarkupLine("[yellow]Tidak ada workflow runs.[/]");
-                return;
+                var (_, _, owner, repo) = TokenManager.GetCurrentToken();
+                if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo))
+                {
+                    AnsiConsole.MarkupLine("[red]Owner/Repo GitHub tidak dikonfigurasi di tokens.txt[/]");
+                    return;
+                }
+
+                using var client = TokenManager.CreateHttpClient();
+                var url = $"https://api.github.com/repos/{owner}/{repo}/actions/runs?per_page=10";
+                
+                var response = await client.GetAsync(url);
+                response.EnsureSuccessStatusCode(); // Akan throw jika error
+
+                var json = await response.Content.ReadAsStringAsync();
+                var data = JsonSerializer.Deserialize<WorkflowRunsResponse>(json);
+
+                if (data?.WorkflowRuns == null || !data.WorkflowRuns.Any())
+                {
+                    AnsiConsole.MarkupLine("[yellow]Tidak ada workflow runs.[/]");
+                    return;
+                }
+
+                var table = new Table().Title("Recent Workflow Runs").Border(TableBorder.Rounded);
+                table.AddColumn("Status");
+                table.AddColumn("Workflow");
+                table.AddColumn("Started");
+                table.AddColumn("Duration");
+
+                foreach (var run in data.WorkflowRuns.Take(10))
+                {
+                    var status = run.Status == "completed" 
+                        ? (run.Conclusion == "success" ? "[green]✓[/]" : "[red]✗[/]")
+                        : "[yellow]...[/]";
+
+                    var duration = run.UpdatedAt.HasValue && run.CreatedAt.HasValue
+                        ? (run.UpdatedAt.Value - run.CreatedAt.Value).ToString(@"hh\:mm\:ss")
+                        : "-";
+
+                    table.AddRow(
+                        status,
+                        run.Name ?? "Unknown",
+                        run.CreatedAt?.ToString("yyyy-MM-dd HH:mm") ?? "-",
+                        duration
+                    );
+                }
+
+                AnsiConsole.Write(table);
+                return; // Sukses
             }
-
-            var table = new Table().Title("Recent Workflow Runs").Border(TableBorder.Rounded);
-            table.AddColumn("Status");
-            table.AddColumn("Workflow");
-            table.AddColumn("Started");
-            table.AddColumn("Duration");
-
-            foreach (var run in data.WorkflowRuns.Take(10))
+            catch (Exception ex)
             {
-                var status = run.Status == "completed" 
-                    ? (run.Conclusion == "success" ? "[green]✓[/]" : "[red]✗[/]")
-                    : "[yellow]...[/]";
-
-                var duration = run.UpdatedAt.HasValue && run.CreatedAt.HasValue
-                    ? (run.UpdatedAt.Value - run.CreatedAt.Value).ToString(@"hh\:mm\:ss")
-                    : "-";
-
-                table.AddRow(
-                    status,
-                    run.Name ?? "Unknown",
-                    run.CreatedAt?.ToString("yyyy-MM-dd HH:mm") ?? "-",
-                    duration
-                );
+                AnsiConsole.MarkupLine($"[red]✗ Exception: {ex.Message}[/]");
+                if (TokenManager.HandleRateLimitError(ex)) continue;
+                return; // Gagal
             }
+        }
+    }
 
-            AnsiConsole.Write(table);
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]✗ Exception: {ex.Message}[/]");
-        }
+    // Method yang hilang, dibutuhkan oleh InteractiveProxyRunner
+    public static async Task TriggerBotWithInputs(BotEntry bot, Dictionary<string, string> capturedInputs)
+    {
+        AnsiConsole.MarkupLine("[yellow]Mode 'WithInputs' belum diimplementasikan di CI.[/]");
+        AnsiConsole.MarkupLine("[dim]Input yang di-capture (jika ada) disimpan di '.bot-inputs/'.[/]");
+        AnsiConsole.MarkupLine("[dim]Menjalankan bot di remote TANPA input...[/]");
+        
+        // Cukup panggil TriggerSingleBot, karena CI tidak di-setup untuk menerima input JSON
+        await TriggerSingleBot(bot);
     }
 }
 
-public class GitHubConfig
-{
-    [JsonPropertyName("token")]
-    public string? Token { get; set; }
-
-    [JsonPropertyName("owner")]
-    public string? Owner { get; set; }
-
-    [JsonPropertyName("repo")]
-    public string? Repo { get; set; }
-}
+// Definisi GitHubConfig dipindah ke TokenManager.cs
+// Hapus definisi duplikat dari sini.
+// public class GitHubConfig { ... } 
 
 public class WorkflowRunsResponse
 {
