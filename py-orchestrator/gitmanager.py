@@ -41,8 +41,11 @@ async def validate_all_tokens():
             #     continue
 
             try:
-                async with TokenManager.create_http_client(entry) as client:
-                    response = await client.get("https://api.github.com/user")
+                # Perbaikan: Gunakan httpx.AsyncClient tanpa proxies (karena error proxies)
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    headers = {"Authorization": f"token {entry.token}"}
+                    response = await client.get("https://api.github.com/user", headers=headers)
 
                     if response.status_code == 200:
                         user = response.json()
@@ -100,14 +103,17 @@ async def invite_collaborators():
     ) as prog:
         task = prog.add_task("[green]Mengirim undangan...[/]", total=len(users_to_invite))
 
-        async with TokenManager.create_http_client(main_token_entry) as client:
+        # Perbaikan: Gunakan httpx.AsyncClient tanpa proxies
+        import httpx
+        async with httpx.AsyncClient() as client:
+            headers = {"Authorization": f"token {main_token_entry.token}"}
             for user in users_to_invite:
                 prog.update(task, description=f"[green]Mengundang:[/] [yellow]@{user.username}[/]")
                 url = f"https://api.github.com/repos/{owner}/{repo}/collaborators/{user.username}"
                 payload = {"permission": "push"}
 
                 try:
-                    response = await client.put(url, json=payload)
+                    response = await client.put(url, json=payload, headers=headers)
 
                     if 200 <= response.status_code < 300:
                         console.print(f"[green]✓[/] Undangan terkirim ke [yellow]@{user.username}[/]")
@@ -152,8 +158,11 @@ async def accept_invitations():
             prog.update(task, description=f"[green]Mengecek:[/] {entry.username or token_display}")
 
             try:
-                async with TokenManager.create_http_client(entry) as client:
-                    response = await client.get("https://api.github.com/user/repository_invitations")
+                # Perbaikan: Gunakan httpx.AsyncClient tanpa proxies
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    headers = {"Authorization": f"token {entry.token}"}
+                    response = await client.get("https://api.github.com/user/repository_invitations", headers=headers)
 
                     if response.status_code != 200:
                         console.print(f"[red]✗[/] Gagal cek undangan untuk {token_display}")
@@ -168,7 +177,7 @@ async def accept_invitations():
                     if target_invite:
                         console.print(f"[yellow]![/] Menemukan undangan {target_repo} untuk {entry.username or 'user'}. Menerima...")
                         accept_url = f"https://api.github.com/user/repository_invitations/{target_invite['id']}"
-                        patch_response = await client.patch(accept_url)
+                        patch_response = await client.patch(accept_url, headers=headers)
 
                         if 200 <= patch_response.status_code < 300:
                             console.print(f"[green]✓[/] [yellow]@{entry.username}[/] berhasil menerima undangan.")
