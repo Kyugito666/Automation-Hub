@@ -12,8 +12,7 @@ namespace Orchestrator;
 public static class InteractiveProxyRunner
 {
     private const string InputsDir = "../.bot-inputs"; 
-    // private const string VenvDirName = ".venv"; // <-- Dihapus, tidak terpakai di file ini
-
+    
     public static async Task CaptureAndTriggerBot(BotEntry bot, CancellationToken cancellationToken = default)
     {
         AnsiConsole.MarkupLine($"[bold cyan]=== Interactive Proxy Mode: {bot.Name} ===[/]");
@@ -29,8 +28,7 @@ public static class InteractiveProxyRunner
         cancellationToken.ThrowIfCancellationRequested();
 
         Dictionary<string, string>? capturedInputs = null;
-        // bool cancelledDuringRun = false; // <-- Dihapus, variabel ini tidak terpakai dan bikin warning CS0219
-
+        
         try
         {
             capturedInputs = await RunBotInCaptureMode(botPath, bot, cancellationToken);
@@ -38,16 +36,17 @@ public static class InteractiveProxyRunner
         }
         catch (OperationCanceledException)
         {
+            // Tangkap Ctrl+C
             AnsiConsole.MarkupLine("[yellow]Capture run cancelled by user (Ctrl+C).[/]");
             var inputCapturePath = Path.Combine(botPath, ".input-capture.tmp");
-            capturedInputs = ReadAndDeleteCaptureFile(inputCapturePath); 
+            capturedInputs = ReadAndDeleteCaptureFile(inputCapturePath); // Ambil data parsial (jika ada)
             if (capturedInputs.Any()) {
                 AnsiConsole.MarkupLine("[grey]Partial input data was captured before cancellation.[/]");
             } else {
                  AnsiConsole.MarkupLine("[grey]No input data captured before cancellation.[/]");
             }
             
-            throw; // LEMPAR ULANG
+            throw; // LEMPAR ULANG (Penting! Biar ditangkep Program.cs)
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -59,29 +58,52 @@ public static class InteractiveProxyRunner
         }
 
         // --- Lanjutkan ke Step 2 (Trigger) ---
+        // (Kode di bawah ini HANYA jalan jika bot selesai NORMAL, tidak di-cancel)
 
-        if (capturedInputs != null && capturedInputs.Any())
-        {
-            var table = new Table().Title("Captured Inputs");
-            table.AddColumn("Key");
-            table.AddColumn("Value");
-            foreach (var (key, value) in capturedInputs)
-            {
-                table.AddRow(key, value.Length > 50 ? value[..47] + "..." : value);
-            }
-            AnsiConsole.Write(table);
-        } else {
-             AnsiConsole.MarkupLine("[yellow]No inputs captured (run finished normally). Bot might not be interactive.[/]");
-        }
-
+        // Simpan file (bisa kosong, bisa isi)
         var inputsFile = Path.Combine(InputsDir, $"{bot.Name}.json");
         var inputsJson = JsonSerializer.Serialize(capturedInputs ?? new Dictionary<string,string>(), new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(inputsFile, inputsJson);
-        AnsiConsole.MarkupLine($"[green]✓ Inputs saved to: {inputsFile}[/]");
 
+
+        // === LOGIKA BARU DI SINI ===
+        if (capturedInputs == null || !capturedInputs.Any())
+        {
+            // KASUS 1: Bot selesai tapi capture KOSONG (masalah lu)
+            AnsiConsole.MarkupLine($"[green]✓ Empty input file saved to: {inputsFile}[/]");
+            AnsiConsole.MarkupLine("[yellow]No line-based input captured (run finished normally).[/]");
+            AnsiConsole.MarkupLine("[yellow]Bot ini mungkin pakai raw-input (y/n) dan tidak kompatibel dengan capture.[/]");
+
+            // Tanya pertanyaan baru, default 'false' (N)
+            if (await ConfirmAsync("Trigger remote execution TANPA input?", false, cancellationToken))
+            {
+                 AnsiConsole.MarkupLine("[cyan]Triggering remote job (no inputs)...[/]");
+                 await GitHubDispatcher.TriggerBotWithInputs(bot, capturedInputs ?? new Dictionary<string, string>());
+                 AnsiConsole.MarkupLine("\n[bold green]✅ Bot triggered remotely![/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]Remote trigger skipped.[/]");
+            }
+            return; // Selesai
+        }
+        // === AKHIR LOGIKA BARU ===
+
+
+        // KASUS 2: Bot selesai dan capture ADA ISINYA (Happy Path)
+        AnsiConsole.MarkupLine($"[green]✓ Inputs saved to: {inputsFile}[/]");
+        var table = new Table().Title("Captured Inputs");
+        table.AddColumn("Key");
+        table.AddColumn("Value");
+        foreach (var (key, value) in capturedInputs)
+        {
+            table.AddRow(key, value.Length > 50 ? value[..47] + "..." : value);
+        }
+        AnsiConsole.Write(table);
 
         AnsiConsole.MarkupLine("\n[yellow]Step 2: Trigger remote execution on GitHub Actions?[/]");
-        bool proceed = await ConfirmAsync("Proceed with remote execution (using captured inputs if any)?", true, cancellationToken);
+        // Tanya pertanyaan normal, default 'true' (Y)
+        bool proceed = await ConfirmAsync("Proceed with remote execution (using captured inputs)?", true, cancellationToken); 
 
         if (!proceed)
         {
@@ -236,14 +258,30 @@ import signal
 
 # --- Configuration ---
 CAPTURE_OUTPUT_PATH = r""{escapedOutputPath}""
+abs_output_path = os.path.abspath(CAPTURE_OUTPUT_PATH) # Pindahkan ke global
 
-# --- Signal Handling ---
+# --- Data ---
+captured = {{}}
 _shutdown_initiated = False
+
+# --- Save Function (Helper Baru) ---
+def save_capture_data():
+    try:
+        output_dir = os.path.dirname(abs_output_path); os.makedirs(output_dir, exist_ok=True)
+        with open(abs_output_path, 'w', encoding='utf-8') as f:
+            serializable_captured = {{'k': str(v) for k, v in captured.items()}}
+            json.dump(serializable_captured, f, indent=2, ensure_ascii=False)
+        print(f'Capture wrapper info: Data saved to {{abs_output_path}}', file=sys.stderr)
+    except Exception as save_err: 
+        print(f'Capture wrapper FATAL: Save failed {{abs_output_path}}: {{save_err}}', file=sys.stderr)
+
+# --- Signal Handling (DIUBAH) ---
 def handle_signal(sig, frame):
     global _shutdown_initiated
     if not _shutdown_initiated:
         _shutdown_initiated = True
-        print(f'\nCapture wrapper info: Received signal {{sig}}. Cleaning up and exiting...', file=sys.stderr)
+        print(f'\nCapture wrapper info: Received signal {{sig}}. Saving data and exiting...', file=sys.stderr)
+        save_capture_data() # <-- TAMBAHAN KRUSIAL
         sys.exit(128 + sig)
 
 signal.signal(signal.SIGINT, handle_signal)
@@ -261,7 +299,6 @@ except Exception as enc_err:
     print(f'Capture wrapper warning: Could not reconfigure stdio encoding: {{enc_err}}', file=sys.stderr)
 
 # --- Input Capture Logic ---
-captured = {{}}
 _original_input = builtins.input
 
 def capturing_input(prompt=''):
@@ -308,7 +345,7 @@ else:
     if script_to_run is None: print('Capture wrapper error: No script argument and no entry point found.', file=sys.stderr)
 
 # --- Script Execution and Cleanup ---
-exit_code = 1; abs_output_path = os.path.abspath(CAPTURE_OUTPUT_PATH)
+exit_code = 1
 try:
     if _shutdown_initiated: sys.exit(1)
     if script_to_run:
@@ -326,21 +363,20 @@ try:
         except Exception as e: print(f'Capture wrapper FATAL ERROR: {{e}}', file=sys.stderr); traceback.print_exc(file=sys.stderr); exit_code = 1
     else: print(f'Capture wrapper warning: No script executed.', file=sys.stderr); exit_code = 1
 finally:
+    # Logic 'finally' (DIUBAH)
     if not _shutdown_initiated:
-        print(f'Capture wrapper info: Saving captured data...', file=sys.stderr)
-        try:
-            output_dir = os.path.dirname(abs_output_path); os.makedirs(output_dir, exist_ok=True)
-            with open(abs_output_path, 'w', encoding='utf-8') as f:
-                serializable_captured = {{'k': str(v) for k, v in captured.items()}}
-                json.dump(serializable_captured, f, indent=2, ensure_ascii=False)
-            print(f'Capture wrapper info: Data saved to {{abs_output_path}}', file=sys.stderr)
-        except Exception as save_err: print(f'Capture wrapper FATAL: Save failed {{abs_output_path}}: {{save_err}}', file=sys.stderr); exit_code = 1
+        print(f'Capture wrapper info: Saving captured data (normal exit)...', file=sys.stderr)
+        save_capture_data() # Cukup panggil helper
+    
+    # Keluar dengan exit code yang benar
+    sys.exit(exit_code)
 ";
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
     }
-
+    
     private static async Task CreateJavaScriptCaptureWrapper(string wrapperFullPath, string outputPath)
     {
+        // (Wrapper JS tidak diubah)
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
         var wrapper = $@"// Force CommonJS mode by using .cjs extension
 const fs = require('fs');
