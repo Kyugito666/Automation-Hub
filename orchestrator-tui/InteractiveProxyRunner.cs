@@ -5,23 +5,23 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Collections.Generic; // Ditambahkan jika belum ada
+using System.Collections.Generic;
 
 namespace Orchestrator;
 
 public static class InteractiveProxyRunner
 {
-    private const string InputsDir = "../.bot-inputs"; // Kita pakai lagi
-    private const string VenvDirName = ".venv";
+    private const string InputsDir = "../.bot-inputs"; 
+    // private const string VenvDirName = ".venv"; // <-- DIHAPUS, tidak terpakai & bikin warning
 
     public static async Task CaptureAndTriggerBot(BotEntry bot, CancellationToken cancellationToken = default)
     {
         AnsiConsole.MarkupLine($"[bold cyan]=== Interactive Proxy Mode: {bot.Name} ===[/]");
         AnsiConsole.MarkupLine("[yellow]Step 1: Capturing inputs locally...[/]");
 
-        cancellationToken.ThrowIfCancellationRequested(); // Cek cancel awal
+        cancellationToken.ThrowIfCancellationRequested(); 
 
-        Directory.CreateDirectory(InputsDir); // Buat lagi jika perlu
+        Directory.CreateDirectory(InputsDir); 
         var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
         if (!Directory.Exists(botPath)) { AnsiConsole.MarkupLine($"[red]Bot path not found: {botPath}[/]"); return; }
 
@@ -29,49 +29,38 @@ public static class InteractiveProxyRunner
         cancellationToken.ThrowIfCancellationRequested();
 
         Dictionary<string, string>? capturedInputs = null;
-        bool cancelledDuringRun = false;
+        // bool cancelledDuringRun = false; // <-- DIHAPUS, variabel ini tidak terpakai dan bikin warning CS0219
 
         try
         {
-            // Panggil lagi RunBotInCaptureMode
             capturedInputs = await RunBotInCaptureMode(botPath, bot, cancellationToken);
-            // Jika selesai normal, lanjut
              AnsiConsole.MarkupLine("[green]Capture run finished normally.[/]");
         }
         catch (OperationCanceledException)
         {
-            // === PERUBAHAN DI SINI ===
-            // Tangkap pembatalan (Ctrl+C)
-            cancelledDuringRun = true;
+            // bool cancelledDuringRun = true; // <-- Dihapus dari sini
             AnsiConsole.MarkupLine("[yellow]Capture run cancelled by user (Ctrl+C).[/]");
-            // Coba baca input parsial
             var inputCapturePath = Path.Combine(botPath, ".input-capture.tmp");
-            capturedInputs = ReadAndDeleteCaptureFile(inputCapturePath); // Baca file jika ada
+            capturedInputs = ReadAndDeleteCaptureFile(inputCapturePath); 
             if (capturedInputs.Any()) {
                 AnsiConsole.MarkupLine("[grey]Partial input data was captured before cancellation.[/]");
             } else {
                  AnsiConsole.MarkupLine("[grey]No input data captured before cancellation.[/]");
             }
             
-            // LEMPAR ULANG exception-nya biar RunAllInteractiveBots bisa nangkep
-            throw; 
+            throw; // LEMPAR ULANG
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // === PERUBAHAN DI SINI === (when...)
-            // Tangkap error non-cancel
              AnsiConsole.MarkupLine($"[red]Error during capture run: {ex.Message}[/]");
              AnsiConsole.MarkupLine("[yellow]Skipping remote trigger due to error.[/]");
-             // Hapus file .tmp jika error terjadi setelah file dibuat
              var inputCapturePath = Path.Combine(botPath, ".input-capture.tmp");
              if(File.Exists(inputCapturePath)) try {File.Delete(inputCapturePath);} catch{}
-             return; // Jangan lanjut jika error
+             return; 
         }
 
         // --- Lanjutkan ke Step 2 (Trigger) ---
-        // Kode ini HANYA akan jalan jika bot selesai NORMAL (tidak di-cancel, tidak error)
 
-        // Tampilkan input (jika ada)
         if (capturedInputs != null && capturedInputs.Any())
         {
             var table = new Table().Title("Captured Inputs");
@@ -86,8 +75,6 @@ public static class InteractiveProxyRunner
              AnsiConsole.MarkupLine("[yellow]No inputs captured (run finished normally). Bot might not be interactive.[/]");
         }
 
-
-        // Simpan file input
         var inputsFile = Path.Combine(InputsDir, $"{bot.Name}.json");
         var inputsJson = JsonSerializer.Serialize(capturedInputs ?? new Dictionary<string,string>(), new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(inputsFile, inputsJson);
@@ -108,7 +95,6 @@ public static class InteractiveProxyRunner
         AnsiConsole.MarkupLine("\n[bold green]✅ Bot triggered remotely![/]");
     }
 
-    // === METHOD CAPTURE DENGAN WRAPPER (Tidak Berubah) ===
     private static async Task<Dictionary<string, string>?> RunBotInCaptureMode(string botPath, BotEntry bot, CancellationToken cancellationToken)
     {
         var inputs = new Dictionary<string, string>();
@@ -120,7 +106,6 @@ public static class InteractiveProxyRunner
         string pyWrapperFileName = "capture_wrapper.py";
         string pyWrapperFullPath = Path.Combine(absoluteBotPath, pyWrapperFileName);
 
-        // Hapus file lama
         if (File.Exists(pyWrapperFullPath)) try { File.Delete(pyWrapperFullPath); } catch {}
         if (File.Exists(jsWrapperFullPath)) try { File.Delete(jsWrapperFullPath); } catch {}
         if (File.Exists(inputCapturePath)) try { File.Delete(inputCapturePath); } catch {}
@@ -143,17 +128,17 @@ public static class InteractiveProxyRunner
         string executor;
         string args;
 
-        if (string.IsNullOrEmpty(originalExecutor)) { /* handle error */ return null; }
+        if (string.IsNullOrEmpty(originalExecutor)) { return null; }
 
         if (bot.Type == "python")
         {
-            executor = originalExecutor; // Path ke python venv
-             if (string.IsNullOrEmpty(originalArgs)) { /* handle error */ return null; }
-            args = $"-u \"{pyWrapperFileName}\" {originalArgs}"; // Wrapper + script asli
+            executor = originalExecutor; 
+             if (string.IsNullOrEmpty(originalArgs)) { return null; }
+            args = $"-u \"{pyWrapperFileName}\" {originalArgs}"; 
         }
         else if (bot.Type == "javascript")
         {
-            executor = "node"; // Wrapper pakai node global
+            executor = "node"; 
             string targetScriptArg;
             if (originalExecutor == "npm" && originalArgs == "start") {
                 string mainJs = File.Exists(Path.Combine(absoluteBotPath, "index.js")) ? "index.js"
@@ -174,22 +159,18 @@ public static class InteractiveProxyRunner
                       return null;
                  }
             }
-            args = $"\"{jsWrapperFileName}\" \"{targetScriptArg}\""; // Wrapper + script target
+            args = $"\"{jsWrapperFileName}\" \"{targetScriptArg}\""; 
         }
-        else { /* handle error tipe tidak dikenal */ return null; }
+        else { return null; }
 
         cancellationToken.ThrowIfCancellationRequested();
-
-        // Jalankan wrapper script secara interaktif
-        // Ini akan melempar OperationCanceledException jika token dibatalkan (baik _cts atau _childProcessCts)
+        
         await ShellHelper.RunInteractive(executor, args, absoluteBotPath, cancellationToken);
-
+        
         AnsiConsole.MarkupLine("\n[grey]─────────────────────────────────────[/]");
 
-        // Baca file .tmp
         inputs = ReadAndDeleteCaptureFile(inputCapturePath);
 
-        // Cleanup wrapper
         try {
             if (File.Exists(pyWrapperFullPath)) File.Delete(pyWrapperFullPath);
             if (File.Exists(jsWrapperFullPath)) File.Delete(jsWrapperFullPath);
@@ -198,9 +179,6 @@ public static class InteractiveProxyRunner
         return inputs;
     }
 
-    // === Sisanya (ReadAndDelete, Confirm, CreateWrappers) tidak berubah ===
-    // ... (copy-paste sisa method dari file asli lu) ...
-    // Helper baca file capture (tetap dipakai)
     private static Dictionary<string, string> ReadAndDeleteCaptureFile(string filePath) {
         Dictionary<string, string> data = new Dictionary<string, string>();
         if (File.Exists(filePath))
@@ -221,13 +199,10 @@ public static class InteractiveProxyRunner
             {
                 AnsiConsole.MarkupLine($"[yellow]Warning: Could not process/delete capture file: {ioEx.Message}[/]");
             }
-        } else {
-            // AnsiConsole.MarkupLine($"[grey]Input capture file not found at {filePath}.[/]");
         }
         return data;
     }
 
-     // Helper Confirm cancellable (tetap dipakai)
      private static async Task<bool> ConfirmAsync(string prompt, bool defaultValue, CancellationToken cancellationToken)
      {
          AnsiConsole.Markup($"{prompt} [[y/n]] ({ (defaultValue ? "Y" : "y") }/{(defaultValue ? "n" : "N")}): ");
@@ -243,19 +218,13 @@ public static class InteractiveProxyRunner
                  if (key.Key == ConsoleKey.Enter) return defaultValue;
                  AnsiConsole.Markup($"{prompt} [[y/n]] ({ (defaultValue ? "Y" : "y") }/{(defaultValue ? "n" : "N")}): ");
              }
-             try { await Task.Delay(50, cancellationToken); } catch (TaskCanceledException) { throw new OperationCanceledException(); } // Convert TaskCanceled to OperationCanceled
+             try { await Task.Delay(50, cancellationToken); } catch (TaskCanceledException) { throw new OperationCanceledException(); } 
          }
      }
 
-
-    // === METHOD PYTHON WRAPPER (FIXED) ===
      private static async Task CreatePythonCaptureWrapper(string wrapperFullPath, string outputPath)
     {
-        // Escaping untuk C# string literal: \ diubah jadi \\
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
-        // Escaping untuk C# string literal: { jadi {{, } jadi }}
-        // Escaping untuk Python f-string: { jadi {{, } jadi }}
-        // Jadi, untuk f-string di dalam C# string literal, C# {{}} -> Python {}, C# {{{{}}}} -> Python {{}}
         var wrapper = $@"#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import sys
@@ -371,14 +340,9 @@ finally:
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
     }
 
-
-    // === METHOD JAVASCRIPT WRAPPER (FIXED) ===
     private static async Task CreateJavaScriptCaptureWrapper(string wrapperFullPath, string outputPath)
     {
-        // Escaping untuk C# string literal: \ diubah jadi \\
         string escapedOutputPath = outputPath.Replace("\\", "\\\\");
-        // Escaping untuk C# string literal: { jadi {{, } jadi }}
-        // Escaping untuk JS string literal: $ jadi $$
         var wrapper = $@"// Force CommonJS mode by using .cjs extension
 const fs = require('fs');
 const path = require('path');
@@ -394,7 +358,6 @@ let isExiting = false;
 // --- Save Function ---
 function saveCaptureData() {{
     if (isExiting) return;
-    // console.log(`Debug JS: Saving to $${{absOutputPath}}`);
     try {{
         const outputDir = path.dirname(absOutputPath);
         if (!fs.existsSync(outputDir)) {{
@@ -407,11 +370,9 @@ function saveCaptureData() {{
 // --- Exit Handling ---
 function gracefulExit(signalOrCode = 0) {{
     if (isExiting) return; isExiting = true;
-    // console.log(`Debug JS: Exit requested: $${{signalOrCode}}`);
     saveCaptureData();
     if (rl && !rl.closed) {{ rl.close(); }}
     process.exitCode = (typeof signalOrCode === 'number' ? signalOrCode : 1);
-    // Let node exit after current event loop finishes or timeout
     setTimeout(() => {{ process.exit(process.exitCode); }}, 250);
 }}
 
@@ -461,12 +422,8 @@ try {{
     const scriptAbsolutePath = path.resolve(process.cwd(), scriptRelativePath);
     if (!fs.existsSync(scriptAbsolutePath)) throw new Error(`Script not found: $${{scriptAbsolutePath}}`);
     process.argv = [process.argv[0], scriptAbsolutePath, ...process.argv.slice(3)];
-    // console.log(`Debug JS: Executing: $${{scriptAbsolutePath}}`);
-    // console.log(`Debug JS: Argv: $${{JSON.stringify(process.argv)}}`);
     require(scriptAbsolutePath);
-    // console.log(`Debug JS: Script finished sync exec.`);
 }} catch (e) {{ console.error('JS Wrapper FATAL: Script exec error:', e); gracefulExit(1); }}
-// console.log(""Debug JS: Wrapper finished sync."");
 ";
         await File.WriteAllTextAsync(wrapperFullPath, wrapper);
     }
