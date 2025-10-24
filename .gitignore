@@ -10,8 +10,6 @@ __pycache__/
 *.log
 *.env
 
-# === UPDATE ===
-
 # File state & input rahasia dari Orchestrator
 .token-state.json
 .bot-inputs/
