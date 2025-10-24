@@ -1,0 +1,101 @@
+name: Run Single Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      bot_name:
+        description: 'Nama bot dari config'
+        required: true
+        type: string
+      bot_path:
+        description: 'Path bot (relatif dari root)'
+        required: true
+        type: string
+      bot_repo:
+        description: 'Repository URL'
+        required: true
+        type: string
+      bot_type:
+        description: 'Type: python or javascript'
+        required: true
+        type: string
+      duration_minutes:
+        description: 'Durasi run (menit, max 350)'
+        required: false
+        default: '340'
+        type: string
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(github.event.inputs.duration_minutes) }}
+
+    steps:
+      - name: Setup Python
+        if: github.event.inputs.bot_type == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Setup Node.js
+        if: github.event.inputs.bot_type == 'javascript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Clone Bot Repository
+        run: |
+          echo "Cloning ${{ github.event.inputs.bot_name }}..."
+          git clone --depth 1 "${{ github.event.inputs.bot_repo }}" bot
+          cd bot
+          ls -la
+
+      - name: Install Python Dependencies
+        if: github.event.inputs.bot_type == 'python'
+        working-directory: bot
+        run: |
+          if [ -f "requirements.txt" ]; then
+            pip install --no-cache-dir -r requirements.txt
+          fi
+
+      - name: Install Node Dependencies
+        if: github.event.inputs.bot_type == 'javascript'
+        working-directory: bot
+        run: |
+          if [ -f "package.json" ]; then
+            npm install --silent
+          fi
+
+      - name: Run Bot (Python)
+        if: github.event.inputs.bot_type == 'python'
+        working-directory: bot
+        run: |
+          if [ -f "run.py" ]; then
+            timeout ${{ github.event.inputs.duration_minutes }}m python run.py || echo "Bot finished/timeout"
+          elif [ -f "main.py" ]; then
+            timeout ${{ github.event.inputs.duration_minutes }}m python main.py || echo "Bot finished/timeout"
+          else
+            echo "ERROR: No run.py or main.py found"
+            exit 1
+          fi
+
+      - name: Run Bot (JavaScript)
+        if: github.event.inputs.bot_type == 'javascript'
+        working-directory: bot
+        run: |
+          if [ -f "index.js" ]; then
+            timeout ${{ github.event.inputs.duration_minutes }}m node index.js || echo "Bot finished/timeout"
+          elif [ -f "main.js" ]; then
+            timeout ${{ github.event.inputs.duration_minutes }}m node main.js || echo "Bot finished/timeout"
+          else
+            echo "ERROR: No index.js or main.js found"
+            exit 1
+          fi
+
+      - name: Upload Logs (On Failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.bot_name }}-logs
+          path: bot/**/*.log
+          retention-days: 3
