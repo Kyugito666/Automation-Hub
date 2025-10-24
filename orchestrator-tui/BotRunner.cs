@@ -196,7 +196,7 @@ public static class BotRunner
         AnsiConsole.MarkupLine("[green]✓ Semua bot dihentikan.[/]");
     }
 
-    private static async Task InstallDependencies(string botPath, string type)
+    public static async Task InstallDependencies(string botPath, string type)
     {
         if (type == "python" && File.Exists(Path.Combine(botPath, "requirements.txt")))
         {
@@ -211,7 +211,7 @@ public static class BotRunner
         }
     }
 
-    private static (string executor, string args) GetRunCommand(string botPath, string type)
+    public static (string executor, string args) GetRunCommand(string botPath, string type)
     {
         if (type == "python")
         {
@@ -245,6 +245,9 @@ public static class BotRunner
         }
 
         var json = File.ReadAllText(ConfigFile);
-        return JsonSerializer.Deserialize<BotConfig>(json);
+        return JsonSerializer.Deserialize<BotConfig>(json, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
     }
 }
