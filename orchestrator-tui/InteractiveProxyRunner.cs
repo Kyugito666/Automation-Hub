@@ -18,9 +18,15 @@ public static class InteractiveProxyRunner
     {
         AnsiConsole.MarkupLine($"[bold cyan]=== Proxy Mode: {bot.Name} ===[/]");
 
-        // Deteksi mode: Auto-Answer atau Manual
         var answerFile = Path.Combine(BOT_ANSWERS_DIR, $"{SanitizeBotName(bot.Name)}.json");
         bool hasAnswerFile = File.Exists(answerFile);
+
+        if (!hasAnswerFile)
+        {
+            // First time: Create default answer untuk bot ini
+            CreateDefaultAnswerFile(bot, answerFile);
+            hasAnswerFile = File.Exists(answerFile);
+        }
 
         if (hasAnswerFile)
         {
@@ -29,11 +35,40 @@ public static class InteractiveProxyRunner
         }
         else
         {
-            AnsiConsole.MarkupLine("[yellow]Mode: MANUAL CAPTURE (First-time setup)[/]");
-            await RunManualCapture(bot, answerFile, cancellationToken);
+            AnsiConsole.MarkupLine("[yellow]Mode: MANUAL (No answer file)[/]");
+            await RunManualCapture(bot, cancellationToken);
         }
 
         await PromptAndTriggerRemote(bot, cancellationToken);
+    }
+
+    private static void CreateDefaultAnswerFile(BotEntry bot, string answerFile)
+    {
+        // Auto-generate default answers based on bot name
+        var answers = new Dictionary<string, string>();
+
+        if (bot.Name.Contains("Aster", StringComparison.OrdinalIgnoreCase))
+        {
+            answers["proxy_question"] = "y"; // Default: gunakan proxy
+        }
+        else
+        {
+            // Generic default
+            answers["proxy_question"] = "y";
+            answers["continue_question"] = "y";
+        }
+
+        try
+        {
+            Directory.CreateDirectory(BOT_ANSWERS_DIR);
+            var json = JsonSerializer.Serialize(answers, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(answerFile, json);
+            AnsiConsole.MarkupLine($"[green]✓ Created default answer file: {Path.GetFileName(answerFile)}[/]");
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Failed to create answer file: {ex.Message}[/]");
+        }
     }
 
     private static async Task RunWithAutoAnswers(BotEntry bot, string answerFile, CancellationToken cancellationToken)
@@ -45,6 +80,15 @@ public static class InteractiveProxyRunner
         {
             var json = File.ReadAllText(answerFile);
             answers = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            
+            if (answers != null && answers.Any())
+            {
+                AnsiConsole.MarkupLine("[green]Answers loaded:[/]");
+                foreach (var kv in answers)
+                {
+                    AnsiConsole.MarkupLine($"  [dim]{kv.Key}:[/] [yellow]{kv.Value}[/]");
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -54,8 +98,7 @@ public static class InteractiveProxyRunner
 
         if (answers == null || !answers.Any())
         {
-            AnsiConsole.MarkupLine("[yellow]Answer file kosong, switching to manual mode...[/]");
-            await RunManualCapture(bot, answerFile, cancellationToken);
+            AnsiConsole.MarkupLine("[yellow]Answer file kosong[/]");
             return;
         }
 
@@ -76,100 +119,99 @@ public static class InteractiveProxyRunner
             return;
         }
 
-        // Buat answer script
-        var answerScriptPath = Path.Combine(botPath, ".auto-answer.tmp");
-        CreateAnswerScript(answers, answerScriptPath);
+        // CRITICAL: Buat input script dengan newline setelah setiap answer
+        var inputScript = string.Join("\n", answers.Values) + "\n\n\n"; // Triple newline for safety
 
         try
         {
             AnsiConsole.MarkupLine("[dim]Running bot with auto-answers...[/]");
             AnsiConsole.MarkupLine("[grey]─────────────────────────────────────[/]\n");
 
-            // Jalankan dengan input redirection
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                await RunWithInputFile(executor, args, botPath, answerScriptPath, cancellationToken);
+                await RunWithPipedInput(executor, args, botPath, inputScript, cancellationToken);
             }
             else
             {
-                await RunWithInputFileLinux(executor, args, botPath, answerScriptPath, cancellationToken);
+                await RunWithPipedInputLinux(executor, args, botPath, inputScript, cancellationToken);
             }
 
             AnsiConsole.MarkupLine("\n[grey]─────────────────────────────────────[/]");
             AnsiConsole.MarkupLine("[green]Auto-answer run completed.[/]");
         }
-        finally
+        catch (OperationCanceledException)
         {
-            // Cleanup temp file
-            try { if (File.Exists(answerScriptPath)) File.Delete(answerScriptPath); } catch { }
+            AnsiConsole.MarkupLine("[yellow]Run cancelled.[/]");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error: {ex.Message}[/]");
         }
     }
 
-    private static void CreateAnswerScript(Dictionary<string, string> answers, string outputPath)
+    private static async Task RunWithPipedInput(string executor, string args, string workingDir, string input, CancellationToken cancellationToken)
     {
-        // Buat script yang jawab semua prompt secara otomatis
-        var lines = new List<string>();
-        
-        foreach (var answer in answers.Values)
-        {
-            // Untuk prompt y/n, langsung kasih jawaban + newline
-            lines.Add(answer);
-        }
-
-        // Tambah newline ekstra untuk safety
-        lines.Add("");
-        lines.Add("");
-
-        File.WriteAllLines(outputPath, lines);
-    }
-
-    private static async Task RunWithInputFile(string executor, string args, string workingDir, string inputFile, CancellationToken cancellationToken)
-    {
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = $"/c \"type \"{inputFile}\" | {executor} {args}\"",
-                UseShellExecute = false,
-                CreateNoWindow = false,
-                WorkingDirectory = workingDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            }
-        };
-
-        process.OutputDataReceived += (s, e) => {
-            if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
-        };
-        process.ErrorDataReceived += (s, e) => {
-            if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
-        };
-
+        // Windows: echo input | cmd
+        var tempFile = Path.GetTempFileName();
         try
         {
+            File.WriteAllText(tempFile, input);
+
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c \"type \"{tempFile}\" | {executor} {args}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = false,
+                    WorkingDirectory = workingDir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                }
+            };
+
+            process.OutputDataReceived += (s, e) => {
+                if (!string.IsNullOrEmpty(e.Data))
+                    AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
+            };
+            process.ErrorDataReceived += (s, e) => {
+                if (!string.IsNullOrEmpty(e.Data))
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
+            };
+
             process.Start();
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             await process.WaitForExitAsync(cancellationToken);
+
+            if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
+            {
+                AnsiConsole.MarkupLine($"[yellow]Warning: Process exit code {process.ExitCode}[/]");
+            }
         }
         catch (OperationCanceledException)
         {
-            try { if (!process.HasExited) process.Kill(true); } catch { }
             throw;
+        }
+        finally
+        {
+            try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { }
         }
     }
 
-    private static async Task RunWithInputFileLinux(string executor, string args, string workingDir, string inputFile, CancellationToken cancellationToken)
+    private static async Task RunWithPipedInputLinux(string executor, string args, string workingDir, string input, CancellationToken cancellationToken)
     {
+        // Linux: echo -e "input" | command
+        var escapedInput = input.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n");
+
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName = "/bin/bash",
-                Arguments = $"-c \"cat '{inputFile}' | {executor} {args}\"",
+                Arguments = $"-c \"echo -e '{escapedInput}' | {executor} {args}\"",
                 UseShellExecute = false,
                 CreateNoWindow = false,
                 WorkingDirectory = workingDir,
@@ -193,18 +235,21 @@ public static class InteractiveProxyRunner
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             await process.WaitForExitAsync(cancellationToken);
+
+            if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
+            {
+                AnsiConsole.MarkupLine($"[yellow]Warning: Process exit code {process.ExitCode}[/]");
+            }
         }
         catch (OperationCanceledException)
         {
-            try { if (!process.HasExited) process.Kill(true); } catch { }
             throw;
         }
     }
 
-    private static async Task RunManualCapture(BotEntry bot, string answerFile, CancellationToken cancellationToken)
+    private static async Task RunManualCapture(BotEntry bot, CancellationToken cancellationToken)
     {
-        AnsiConsole.MarkupLine("[yellow]Step 1: Menjalankan bot secara lokal (MANUAL MODE)...[/]");
-        AnsiConsole.MarkupLine("[dim]Jawab semua prompt. Jawaban akan disimpan untuk run berikutnya.[/]");
+        AnsiConsole.MarkupLine("[yellow]Running in manual interactive mode...[/]");
         
         var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
         if (!Directory.Exists(botPath)) 
@@ -227,7 +272,6 @@ public static class InteractiveProxyRunner
 
         try
         {
-            // Run interaktif biasa
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 await ShellHelper.RunInteractiveWindows(executor, args, botPath, cancellationToken);
@@ -238,55 +282,13 @@ public static class InteractiveProxyRunner
             }
 
             AnsiConsole.MarkupLine("\n[grey]─────────────────────────────────────[/]");
-            AnsiConsole.MarkupLine("[green]Local run selesai.[/]");
-
-            // Prompt untuk save answers
-            if (AnsiConsole.Confirm("\n[yellow]Save your answers for future auto-runs?[/]", true))
-            {
-                await CaptureAnswersInteractive(bot, answerFile);
-            }
+            AnsiConsole.MarkupLine("[green]Manual run completed.[/]");
         }
         catch (OperationCanceledException)
         {
-            AnsiConsole.MarkupLine("[yellow]Manual run dibatalkan.[/]");
+            AnsiConsole.MarkupLine("[yellow]Manual run cancelled.[/]");
             throw;
         }
-    }
-
-    private static async Task CaptureAnswersInteractive(BotEntry bot, string answerFile)
-    {
-        AnsiConsole.MarkupLine("\n[cyan]Configure Auto-Answers for future runs:[/]");
-        
-        var answers = new Dictionary<string, string>();
-
-        // Deteksi bot type untuk preset questions
-        if (bot.Name.Contains("Aster", StringComparison.OrdinalIgnoreCase))
-        {
-            // Bot Aster punya prompt: "Do You Want Use Proxy? (y/n):"
-            var proxyAnswer = AnsiConsole.Prompt(
-                new SelectionPrompt<string>()
-                    .Title("Answer for 'Do You Want Use Proxy?'")
-                    .AddChoices("y", "n"));
-            answers["proxy_question"] = proxyAnswer;
-        }
-
-        // Generic: tanya user untuk custom prompts
-        while (AnsiConsole.Confirm("Add custom prompt answer?", false))
-        {
-            var promptName = AnsiConsole.Ask<string>("Prompt identifier (e.g., 'use_proxy'):");
-            var answer = AnsiConsole.Ask<string>("Answer (e.g., 'y' or 'n'):");
-            answers[promptName] = answer;
-        }
-
-        if (answers.Any())
-        {
-            Directory.CreateDirectory(BOT_ANSWERS_DIR);
-            var json = JsonSerializer.Serialize(answers, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(answerFile, json);
-            AnsiConsole.MarkupLine($"[green]✓ Answers saved to {Path.GetFileName(answerFile)}[/]");
-        }
-
-        await Task.CompletedTask;
     }
 
     private static async Task PromptAndTriggerRemote(BotEntry bot, CancellationToken cancellationToken)
