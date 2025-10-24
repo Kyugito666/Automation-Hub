@@ -3,32 +3,270 @@
   "update_strategy": "clone_or_pull",
   "bots_and_tools": [
     {
-      "name": "ProxySync-Tool",
-      "path": "proxysync",
-      "repo_url": "https://github.com/Kyugito666/ProxySync.git",
-      "enabled": true,
-      "dependencies": ["requests", "aiohttp"]
-    },
-    {
       "name": "TurnAutoBot-NTE",
       "path": "bots/privatekey/TurnAutoBot-NTE",
-      "repo_url": "https://github.com/REPO_ORANG_LAIN/TurnAutoBot-NTE.git",
-      "enabled": true,
-      "type": "python"
-    },
-    {
-      "name": "AsterAutoBot-NTE",
-      "path": "bots/token/AsterAutoBot-NTE",
-      "repo_url": "https://github.com/REPO_ORANG_LAIN/Aster-Bot.git",
+      "repo_url": "https://github.com/VinzSenzoo/TurnAutoBot-NTE.git",
       "enabled": true,
       "type": "python"
     },
     {
       "name": "UomiAutoBot-NTE",
       "path": "bots/privatekey/UomiAutoBot-NTE",
-      "repo_url": "https://github.com/REPO_ORANG_LAIN/UomiAutoBot-NTE.git",
-      "enabled": false,
-      "note": "Disabled for testing"
+      "repo_url": "https://github.com/VinzSenzoo/UomiAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Empeiria-Testnet-Bot",
+      "path": "bots/privatekey/Empeiria-Testnet-Bot",
+      "repo_url": "https://github.com/kazmight/Empeiria-Testnet-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "EqualAutoBot-NTE",
+      "path": "bots/privatekey/EqualAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/EqualAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "FaroSwapAutoBot-NTE",
+      "path": "bots/privatekey/FaroSwapAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/FaroSwapAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Galkite-AutoInteraction",
+      "path": "bots/privatekey/Galkite-AutoInteraction",
+      "repo_url": "https://github.com/UNKNOWN_OWNER/Galkite-AutoInteraction.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "GopherAutoBot-NTE",
+      "path": "bots/privatekey/GopherAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/GopherAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "GopherFaucetBot-NTE",
+      "path": "bots/privatekey/GopherFaucetBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/GopherFaucetBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Intuition-Testnet-Bot",
+      "path": "bots/privatekey/Intuition-Testnet-Bot",
+      "repo_url": "https://github.com/LinuxDil/Intuition-Testnet-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Irys-Game",
+      "path": "bots/privatekey/Irys-Game",
+      "repo_url": "https://github.com/LinuxDil/Irys-Game.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Kite-Auto-Bot",
+      "path": "bots/privatekey/Kite-Auto-Bot",
+      "repo_url": "https://github.com/LinuxDil/Kite-Auto-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "KiteBridgeBot-NTE",
+      "path": "bots/privatekey/KiteBridgeBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/KiteBridgeBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Pharos-Grandline-Bot",
+      "path": "bots/privatekey/Pharos-Grandline-Bot",
+      "repo_url": "https://github.com/LinuxDil/Pharos-Grandline-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Pharos-Brokex-Bot",
+      "path": "bots/privatekey/Pharos-Brokex-Bot",
+      "repo_url": "https://github.com/LinuxDil/Pharos-Brokex-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Pharos-AutoStaking-Bot",
+      "path": "bots/privatekey/Pharos-AutoStaking-Bot",
+      "repo_url": "https://github.com/LinuxDil/Pharos-AutoStaking-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Pharos-Domain-Bot",
+      "path": "bots/privatekey/Pharos-Domain-Bot",
+      "repo_url": "https://github.com/LinuxDil/Pharos-Domain-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Pharos-Faro-Swap",
+      "path": "bots/privatekey/Pharos-Faro-Swap",
+      "repo_url": "https://github.com/LinuxDil/Pharos-Faro-Swap.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Pharos-OpenFi-Bot",
+      "path": "bots/privatekey/Pharos-OpenFi-Bot",
+      "repo_url": "https://github.com/LinuxDil/Pharos-OpenFi-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Pharos-R2-Bot",
+      "path": "bots/privatekey/Pharos-R2-Bot",
+      "repo_url": "https://github.com/LinuxDil/Pharos-R2-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Pharos-S2-Bot",
+      "path": "bots/privatekey/Pharos-S2-Bot",
+      "repo_url": "https://github.com/kazmight/Pharos-S2-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "PharosV2AutoBot-NTE",
+      "path": "bots/privatekey/PharosV2AutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/PharosV2AutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "RedactAutoBot-NTE",
+      "path": "bots/privatekey/RedactAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/RedactAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "IdosAutoBot-NTE",
+      "path": "bots/privatekey/IdosAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/IdosAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "NitroAutoBot-NTE",
+      "path": "bots/privatekey/NitroAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/NitroAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "NeuraAutoBot-NTE",
+      "path": "bots/privatekey/NeuraAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/NeuraAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "AsterAutoBot-NTE",
+      "path": "bots/token/AsterAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/AsterAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Billion-Bot",
+      "path": "bots/token/Billion-Bot",
+      "repo_url": "https://github.com/LinuxDil/Billion-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "CryptalAutoBot-NTE",
+      "path": "bots/token/CryptalAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/CryptalAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "FishingFrenzy-NTE",
+      "path": "bots/token/FishingFrenzy-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/FishingFrenzy-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "MNAutoBot-NTE",
+      "path": "bots/token/MNAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/MNAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "UnichAutoBot-NTE",
+      "path": "bots/token/UnichAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/UnichAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Interlink-BOT",
+      "path": "bots/token/Interlink-BOT",
+      "repo_url": "https://github.com/UNKNOWN_OWNER/Interlink-BOT.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "TeneoAutoBot-NTE",
+      "path": "bots/token/TeneoAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/TeneoAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "Teneo-Auto-Bot",
+      "path": "bots/token/Teneo-Auto-Bot",
+      "repo_url": "https://github.com/LinuxDil/Teneo-Auto-Bot.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "EmofiAutoBot-NTE",
+      "path": "bots/token/EmofiAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/EmofiAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "SolticeAutoBot-NTE",
+      "path": "bots/token/SolticeAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/SolticeAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "PsyAutoBot-NTE",
+      "path": "bots/token/PsyAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/PsyAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
+    },
+    {
+      "name": "MytierAutoBot-NTE",
+      "path": "bots/token/MytierAutoBot-NTE",
+      "repo_url": "https://github.com/VinzSenzoo/MytierAutoBot-NTE.git",
+      "enabled": true,
+      "type": "python"
     }
   ]
 }
