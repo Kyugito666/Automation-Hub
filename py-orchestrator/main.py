@@ -98,7 +98,7 @@ async def show_setup_menu(cancel_event: asyncio.Event):
                 await gitmanager.invite_collaborators()
             elif selection == "3":
                 await gitmanager.accept_invitations()
-            elif selection == "4";
+            elif selection == "4":
                 TokenManager.show_status()
             elif selection == "5":
                 TokenManager.reload_all_configs()
