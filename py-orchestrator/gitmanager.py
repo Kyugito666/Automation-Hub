@@ -5,7 +5,6 @@ from rich.progress import (
     Progress,
     TextColumn,
     BarColumn,
-    PercentageColumn,
     SpinnerColumn
 )
 # --------------------------------
@@ -26,7 +25,6 @@ async def validate_all_tokens():
     with Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
-        PercentageColumn(),
         SpinnerColumn(),
         console=console,
         transient=True
@@ -96,7 +94,6 @@ async def invite_collaborators():
     with Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
-        PercentageColumn(),
         SpinnerColumn(),
         console=console,
         transient=True
@@ -144,7 +141,6 @@ async def accept_invitations():
     with Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
-        PercentageColumn(),
         SpinnerColumn(),
         console=console,
         transient=True
