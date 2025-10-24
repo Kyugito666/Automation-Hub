@@ -5,8 +5,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
-	"syscall"
+	// "os/signal"  <-- Dihapus
+	// "syscall"    <-- Dihapus
 
 	"github.com/creack/pty" // Library PTY
 	"golang.org/x/term"    // Library TTY Raw Mode
@@ -25,6 +25,7 @@ func main() {
 	cmd := exec.Command(command, args...)
 
 	// Mulai perintah di dalam PTY
+	// Di Windows, ini akan otomatis inherit TTY size
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting PTY: %v\n", err)
@@ -33,7 +34,6 @@ func main() {
 	defer ptmx.Close()
 
 	// Set STDIN ke RAW mode
-	// Ini adalah KUNCI untuk 'y/n'
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error setting STDIN to raw mode: %v\n", err)
@@ -42,15 +42,7 @@ func main() {
 	// Kembalikan TTY state saat program exit
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	// Handle window resize
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGWINCH)
-	go func() {
-		for range ch {
-			pty.InheritSize(os.Stdin, ptmx)
-		}
-	}()
-	ch <- syscall.SIGWINCH // Trigger sekali saat start
+	// BLOK SIGWINCH DIHAPUS DARI SINI
 
 	// Sambungkan I/O
 	// Salin output PTY (bot) ke STDOUT (C#)
