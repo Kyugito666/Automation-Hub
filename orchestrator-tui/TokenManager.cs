@@ -30,34 +30,27 @@ public class TokenManager
         {
             AnsiConsole.MarkupLine($"[red]ERROR: {TokensPath} tidak ditemukan![/]");
             AnsiConsole.MarkupLine("[yellow]Buat file dengan format:[/]");
-            AnsiConsole.MarkupLine("[dim]ghp_token1,ghp_token2,ghp_token3[/]");
+            AnsiConsole.MarkupLine("[dim]Line 1: owner[/]");
+            AnsiConsole.MarkupLine("[dim]Line 2: repo[/]");
+            AnsiConsole.MarkupLine("[dim]Line 3: token1,token2,token3[/]");
             return;
         }
 
-        var content = File.ReadAllText(TokensPath).Trim();
-        var tokens = content.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        var lines = File.ReadAllLines(TokensPath);
         
-        _tokens = tokens.Select(t => new TokenEntry { Token = t.Trim() }).ToList();
-        
-        AnsiConsole.MarkupLine($"[green]Loaded {_tokens.Count} GitHub tokens[/]");
-
-        // Load owner/repo dari github_config.json (fallback)
-        var oldConfigPath = "../config/github_config.json";
-        if (File.Exists(oldConfigPath))
+        if (lines.Length < 3)
         {
-            try
-            {
-                var json = File.ReadAllText(oldConfigPath);
-                var config = JsonSerializer.Deserialize<GitHubConfig>(json);
-                _owner = config?.Owner ?? "";
-                _repo = config?.Repo ?? "";
-            }
-            catch { }
+            AnsiConsole.MarkupLine("[red]ERROR: github_tokens.txt format salah![/]");
+            return;
         }
 
-        // Atau dari environment
-        _owner = Environment.GetEnvironmentVariable("GITHUB_OWNER") ?? _owner;
-        _repo = Environment.GetEnvironmentVariable("GITHUB_REPO") ?? _repo;
+        _owner = lines[0].Trim();
+        _repo = lines[1].Trim();
+        
+        var tokens = lines[2].Split(',', StringSplitOptions.RemoveEmptyEntries);
+        _tokens = tokens.Select(t => new TokenEntry { Token = t.Trim() }).ToList();
+        
+        AnsiConsole.MarkupLine($"[green]Loaded {_tokens.Count} tokens for {_owner}/{_repo}[/]");
     }
 
     private static void LoadProxyList()
