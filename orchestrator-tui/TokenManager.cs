@@ -10,18 +10,56 @@ public class TokenManager
     private static readonly string TokensPath = "../config/github_tokens.txt";
     private static readonly string StatePath = "../.token-state.json";
     private static readonly string ProxyListPath = "../proxysync/proxy.txt";
+    private static readonly string TokenCachePath = "../.token-cache.json"; // BARU
+
     private static List<TokenEntry> _tokens = new();
     private static List<string> _proxyList = new();
     private static TokenState? _state;
     private static string _owner = "";
     private static string _repo = "";
+    
+    private static Dictionary<string, string> _tokenCache = new(); // BARU
 
     public static void Initialize()
     {
         LoadTokens();
         LoadProxyList();
         LoadState();
-        AssignProxiesToTokens();
+        LoadTokenCache(); // BARU
+        AssignProxiesAndUsernames(); // NAMA DIGANTI
+    }
+
+    private static void LoadTokenCache() // BARU
+    {
+        if (File.Exists(TokenCachePath))
+        {
+            try
+            {
+                var json = File.ReadAllText(TokenCachePath);
+                _tokenCache = JsonSerializer.Deserialize<Dictionary<string, string>>(json) 
+                              ?? new Dictionary<string, string>();
+                AnsiConsole.MarkupLine($"[green]Loaded {_tokenCache.Count} usernames from cache[/]");
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[yellow]Warning: Gagal memuat token cache: {ex.Message}[/]");
+                _tokenCache = new Dictionary<string, string>();
+            }
+        }
+    }
+
+    public static void SaveTokenCache(Dictionary<string, string> cache) // BARU
+    {
+        try
+        {
+            _tokenCache = cache;
+            var json = JsonSerializer.Serialize(_tokenCache, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(TokenCachePath, json);
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error saving token cache: {ex.Message}[/]");
+        }
     }
 
     private static void LoadTokens()
@@ -69,14 +107,24 @@ public class TokenManager
         }
     }
 
-    private static void AssignProxiesToTokens()
+    private static void AssignProxiesAndUsernames() // NAMA DIGANTI
     {
-        if (!_proxyList.Any()) return;
+        if (!_tokens.Any()) return;
 
         for (int i = 0; i < _tokens.Count; i++)
         {
-            var proxyIndex = i % _proxyList.Count;
-            _tokens[i].Proxy = _proxyList[proxyIndex];
+            // Assign proxy
+            if (_proxyList.Any())
+            {
+                var proxyIndex = i % _proxyList.Count;
+                _tokens[i].Proxy = _proxyList[proxyIndex];
+            }
+            
+            // Assign username from cache
+            if (_tokenCache.TryGetValue(_tokens[i].Token, out var username))
+            {
+                _tokens[i].Username = username;
+            }
         }
     }
 
@@ -111,6 +159,18 @@ public class TokenManager
         var current = _tokens[_state!.CurrentIndex];
         return (current.Token, current.Proxy, _owner, _repo);
     }
+    
+    // Helper untuk CollaboratorManager
+    public static (List<TokenEntry> tokens, string owner, string repo) GetAllTokenEntries()
+    {
+        return (_tokens, _owner, _repo);
+    }
+
+    // Helper untuk CollaboratorManager
+    public static Dictionary<string, string> GetUsernameCache()
+    {
+        return _tokenCache;
+    }
 
     public static void SwitchToNextToken()
     {
@@ -120,7 +180,7 @@ public class TokenManager
         SaveState();
 
         var current = _tokens[_state.CurrentIndex];
-        AnsiConsole.MarkupLine($"[yellow]Switched to token #{_state.CurrentIndex + 1}[/]");
+        AnsiConsole.MarkupLine($"[yellow]Switched to token #{_state.CurrentIndex + 1} ({current.Username ?? "???"})[/]");
         if (!string.IsNullOrEmpty(current.Proxy))
         {
             AnsiConsole.MarkupLine($"[dim]Proxy: {current.Proxy}[/]");
@@ -176,7 +236,18 @@ public class TokenManager
     public static HttpClient CreateHttpClient()
     {
         var (token, proxy, _, _) = GetCurrentToken();
-        
+        return CreateHttpClient(token, proxy);
+    }
+    
+    // Overload BARU untuk CollaboratorManager
+    public static HttpClient CreateHttpClient(TokenEntry entry)
+    {
+        return CreateHttpClient(entry.Token, entry.Proxy);
+    }
+
+    // Fungsi inti BARU untuk membuat client
+    private static HttpClient CreateHttpClient(string token, string? proxy)
+    {
         var handler = new HttpClientHandler();
         
         if (!string.IsNullOrEmpty(proxy))
@@ -197,8 +268,15 @@ public class TokenManager
     {
         AnsiConsole.MarkupLine("[cyan]Reloading proxies from ProxySync...[/]");
         LoadProxyList();
-        AssignProxiesToTokens();
+        AssignProxiesAndUsernames(); // Diganti
         AnsiConsole.MarkupLine("[green]Proxies reloaded and assigned to tokens[/]");
+    }
+    
+    public static string MaskToken(string token) // BARU
+    {
+        return token.Length > 20 
+            ? token[..10] + "..." + token[^7..] 
+            : token;
     }
 
     public static void ShowStatus()
@@ -208,6 +286,7 @@ public class TokenManager
         var table = new Table().Title("GitHub Tokens Status");
         table.AddColumn("Index");
         table.AddColumn("Token");
+        table.AddColumn("Username"); // BARU
         table.AddColumn("Proxy");
         table.AddColumn("Active");
 
@@ -215,9 +294,7 @@ public class TokenManager
         {
             var token = _tokens[i];
             var isActive = i == _state!.CurrentIndex ? "[green]✓[/]" : "";
-            var tokenDisplay = token.Token.Length > 20 
-                ? token.Token[..10] + "..." + token.Token[^7..] 
-                : token.Token;
+            var tokenDisplay = MaskToken(token.Token);
             
             var proxyDisplay = token.Proxy ?? "[yellow]no proxy[/]";
             if (!string.IsNullOrEmpty(token.Proxy) && token.Proxy.Length > 40)
@@ -228,6 +305,7 @@ public class TokenManager
             table.AddRow(
                 (i + 1).ToString(),
                 tokenDisplay,
+                token.Username ?? "[grey]???[/]", // BARU
                 proxyDisplay,
                 isActive
             );
@@ -268,6 +346,7 @@ public class TokenEntry
 {
     public string Token { get; set; } = string.Empty;
     public string? Proxy { get; set; }
+    public string? Username { get; set; } // BARU
 }
 
 public class TokenState
