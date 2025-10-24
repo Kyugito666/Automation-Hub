@@ -12,7 +12,7 @@ namespace Orchestrator;
 public static class InteractiveProxyRunner
 {
     private const string InputsDir = "../.bot-inputs"; 
-    // private const string VenvDirName = ".venv"; // <-- DIHAPUS, tidak terpakai di file ini
+    // private const string VenvDirName = ".venv"; // <-- Dihapus, tidak terpakai di file ini
 
     public static async Task CaptureAndTriggerBot(BotEntry bot, CancellationToken cancellationToken = default)
     {
@@ -29,7 +29,7 @@ public static class InteractiveProxyRunner
         cancellationToken.ThrowIfCancellationRequested();
 
         Dictionary<string, string>? capturedInputs = null;
-        // bool cancelledDuringRun = false; // <-- DIHAPUS, variabel ini tidak terpakai dan bikin warning CS0219
+        // bool cancelledDuringRun = false; // <-- Dihapus, variabel ini tidak terpakai dan bikin warning CS0219
 
         try
         {
@@ -38,7 +38,6 @@ public static class InteractiveProxyRunner
         }
         catch (OperationCanceledException)
         {
-            // bool cancelledDuringRun = true; // <-- Dihapus dari sini
             AnsiConsole.MarkupLine("[yellow]Capture run cancelled by user (Ctrl+C).[/]");
             var inputCapturePath = Path.Combine(botPath, ".input-capture.tmp");
             capturedInputs = ReadAndDeleteCaptureFile(inputCapturePath); 
@@ -412,7 +411,7 @@ try {{
             if (actualCallback) {{ try {{ actualCallback(answer); }} catch (cbError) {{ console.error('JS Wrapper Error: CB Exception:', cbError); }} }}
         }});
     }};
-}} catch (e) {{ console.error('JS Wrapper Error: Readline init failed:', e); gracefulExit(1S); }}
+}} catch (e) {{ console.error('JS Wrapper Error: Readline init failed:', e); gracefulExit(1); }}
 
 // --- Target Script Execution Logic ---
 try {{
