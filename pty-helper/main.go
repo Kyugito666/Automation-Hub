@@ -5,8 +5,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	// "os/signal"  <-- Dihapus
-	// "syscall"    <-- Dihapus
+	// "os/signal"  // <-- Tidak perlu di Windows
+	// "syscall"    // <-- Tidak perlu di Windows
 
 	"github.com/creack/pty" // Library PTY
 	"golang.org/x/term"    // Library TTY Raw Mode
@@ -41,8 +41,6 @@ func main() {
 	}
 	// Kembalikan TTY state saat program exit
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-	// BLOK SIGWINCH DIHAPUS DARI SINI
 
 	// Sambungkan I/O
 	// Salin output PTY (bot) ke STDOUT (C#)
