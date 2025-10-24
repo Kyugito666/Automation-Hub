@@ -1,4 +1,14 @@
-# ... (semua isi .gitignore lu sebelumnya) ...
+# Abaikan SEMUA yang di-clone saat runtime
+bots/*
+!bots/.gitkeep
+
+proxysync/
+
+# File cache dan rahasia lainnya
+__pycache__/
+.venv/
+*.log
+*.env
 
 # === UPDATE ===
 
@@ -7,9 +17,9 @@
 .bot-inputs/
 .token-cache.json
 
-# File log baru dari BotScanner
-.raw-bots.log
-
 # Abaikan file .NET build (bin/obj)
 **/bin/
 **/obj/
+
+# File log baru dari BotScanner
+.raw-bots.log
