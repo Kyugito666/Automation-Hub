@@ -3,6 +3,13 @@
   "update_strategy": "clone_or_pull",
   "bots_and_tools": [
     {
+     "name": "ProxySync-Tool",
+     "path": "proxysync",
+     "repo_url": "https://github.com/Kyugito666/ProxySync.git",
+     "enabled": true,
+     "dependencies": ["requests", "aiohttp"]
+    },
+    {
       "name": "TurnAutoBot-NTE",
       "path": "bots/privatekey/TurnAutoBot-NTE",
       "repo_url": "https://github.com/VinzSenzoo/TurnAutoBot-NTE.git",
