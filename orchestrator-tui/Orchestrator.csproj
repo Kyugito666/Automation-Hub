@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="Spectre.Console" Version="0.49.1" />
-    <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,9 +27,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\pty-helper\pty-helper.exe" Condition="Exists('..\pty-helper\pty-helper.exe')">
+    <Content Include="..\pty-helper-node\pty-helper.exe" Condition="Exists('..\pty-helper-node\pty-helper.exe')">
       <Link>pty-helper.exe</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
-  </Project>
+
+</Project>
