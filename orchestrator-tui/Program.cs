@@ -41,7 +41,7 @@ internal static class Program
     }
 
     // =================================================================
-    // NAVIGASI MENU UTAMA (BARU)
+    // NAVIGASI MENU UTAMA (FIXED)
     // =================================================================
 
     private static async Task RunInteractive()
@@ -56,13 +56,14 @@ internal static class Program
                 new SelectionPrompt<string>()
                     .Title("\n[bold cyan]MAIN MENU[/]")
                     .PageSize(10)
+                    // === FIX DI SINI: Kurung siku di-escape menjadi [[ ]] ===
                     .AddChoices(new[]
                     {
-                        "1. [SETUP] Configuration & Token Management",
-                        "2. [LOCAL] Bot & Proxy Management",
-                        "3. [HYBRID] Interactive Remote Execution",
-                        "4. [REMOTE] GitHub Actions Control",
-                        "5. [DEBUG] Local Bot Testing",
+                        "1. [[SETUP]] Configuration & Token Management",
+                        "2. [[LOCAL]] Bot & Proxy Management",
+                        "3. [[HYBRID]] Interactive Remote Execution",
+                        "4. [[REMOTE]] GitHub Actions Control",
+                        "5. [[DEBUG]] Local Bot Testing",
                         "0. Exit"
                     }));
 
@@ -81,7 +82,7 @@ internal static class Program
     }
     
     // =================================================================
-    // SUB-MENU HANDLERS (BARU)
+    // SUB-MENU HANDLERS (Tidak berubah, tapi disertakan)
     // =================================================================
 
     private static async Task ShowSetupMenu()
@@ -101,7 +102,7 @@ internal static class Program
                         "2. Invite Collaborators",
                         "3. Accept Invitations",
                         "4. Show Token/Proxy Status",
-                        "0. [Back] Kembali ke Menu Utama"
+                        "0. [[Back]] Kembali ke Menu Utama" // Escape juga di sini
                     }));
 
             var selection = choice.Split('.')[0];
@@ -137,7 +138,7 @@ internal static class Program
                         "1. Update All Bots & Tools",
                         "2. Deploy Proxies",
                         "3. Show Bot Config",
-                        "0. [Back] Kembali ke Menu Utama"
+                        "0. [[Back]] Kembali ke Menu Utama"
                     }));
 
             var selection = choice.Split('.')[0];
@@ -171,7 +172,7 @@ internal static class Program
                     {
                         "1. Run Interactive Bot -> Remote",
                         "2. Run ALL Interactive Bots -> Remote",
-                        "0. [Back] Kembali ke Menu Utama"
+                        "0. [[Back]] Kembali ke Menu Utama"
                     }));
 
             var selection = choice.Split('.')[0];
@@ -204,7 +205,7 @@ internal static class Program
                     {
                         "1. Trigger ALL Bots (Workflow)",
                         "2. View Workflow Status",
-                        "0. [Back] Kembali ke Menu Utama"
+                        "0. [[Back]] Kembali ke Menu Utama"
                     }));
 
             var selection = choice.Split('.')[0];
@@ -236,7 +237,7 @@ internal static class Program
                     .AddChoices(new[]
                     {
                         "1. Test Local Bot (No Remote)",
-                        "0. [Back] Kembali ke Menu Utama"
+                        "0. [[Back]] Kembali ke Menu Utama"
                     }));
 
             var selection = choice.Split('.')[0];
