@@ -89,7 +89,9 @@ def run_interactive(command, args, cwd):
             stdout=sys.stdout,
             stderr=sys.stderr,
             text=True,
-            shell=use_shell
+            shell=use_shell,
+            encoding='utf-8',
+            errors='replace'
         )
         
         returncode = _current_process.wait()
@@ -184,7 +186,9 @@ def run_with_script(input_file, command, args, cwd):
             text=True,
             bufsize=1,
             universal_newlines=True,
-            shell=use_shell
+            shell=use_shell,
+            encoding='utf-8',
+            errors='replace'
         )
         
         # Thread untuk kirim input secara bertahap
