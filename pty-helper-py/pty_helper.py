@@ -134,11 +134,25 @@ def detect_error_type(error_msg):
     else:
         return 'unknown'
 
+def detect_bot_type(output_sample):
+    """
+    Detect bot interaction type from initial output
+    Returns: 'raw_keyboard' or 'simple'
+    """
+    lower = output_sample.lower()
+    
+    # Raw keyboard bots (inquirer, blessed, blessed-contrib)
+    raw_indicators = ['↑', '↓', '→', '←', 'arrow key', 'use arrow', 'move up/down', 'inquirer']
+    if any(x in lower for x in raw_indicators):
+        return 'raw_keyboard'
+    
+    return 'simple'
+
 def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
-    """Strategy 1: Smart timing dengan output monitoring"""
+    """Strategy 1: Smart timing dengan bot type detection"""
     global _current_process
     
-    log_info("Trying Strategy 1: Smart timing with output monitoring")
+    log_info("Trying Strategy 1: Smart timing with bot type detection")
     
     resolved_cmd = resolve_command(command)
     cmd_list = [resolved_cmd] + args
@@ -165,6 +179,8 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
     output_lock = threading.Lock()
     prompt_detected = threading.Event()
     last_output_time = [time.time()]
+    bot_type_detected = [None]  # Mutable for closure
+    initial_output = []  # For bot type detection
     
     # Prompt patterns
     prompt_patterns = [
@@ -193,9 +209,19 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
                     with output_lock:
                         output_buffer.append(char)
                         last_output_time[0] = time.time()
+                        
+                        # Collect initial output for bot type detection
+                        if len(output_buffer) < 1000:
+                            initial_output.append(char)
                     
                     buffer.append(char)
                     recent = ''.join(buffer)
+                    
+                    # Detect bot type from initial output
+                    if bot_type_detected[0] is None and len(initial_output) > 200:
+                        initial_text = ''.join(initial_output)
+                        bot_type_detected[0] = detect_bot_type(initial_text)
+                        log_info(f"Bot type detected: {bot_type_detected[0]}")
                     
                     # Check for prompt
                     for pattern in prompt_patterns:
@@ -226,8 +252,20 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
     def input_sender():
         """Send inputs with smart timing"""
         try:
-            # Wait for initial output
-            time.sleep(1.5)
+            # Wait for initial output + bot type detection
+            time.sleep(2.0)
+            
+            # Check if bot needs raw keyboard (can't automate via stdin)
+            with output_lock:
+                if bot_type_detected[0] == 'raw_keyboard':
+                    log_error("═══════════════════════════════════════════════════")
+                    log_error("Bot uses RAW KEYBOARD navigation (arrow keys)")
+                    log_error("Auto-answer via stdin NOT POSSIBLE")
+                    log_error("═══════════════════════════════════════════════════")
+                    log_warn("Attempting to run bot without interaction...")
+                    log_warn("Bot may hang waiting for input. Press Ctrl+C to cancel.")
+                    # Don't send input, let bot hang or timeout
+                    return
             
             for i, line in enumerate(input_lines):
                 if _current_process.poll() is not None:
@@ -427,7 +465,7 @@ def run_with_script_strategy_3(input_file, command, args, cwd, inputs):
         
         full_output = ''.join(output)
         
-        # Jika exit code 0, abaikan WinError 6 di output (bot issue, bukan input issue)
+        # Jika exit code 0, abaikan WinError 6 (bot issue, bukan input issue)
         if returncode == 0:
             log_info("Process exited successfully (exit code 0)")
             if 'winerror 6' in full_output.lower():
