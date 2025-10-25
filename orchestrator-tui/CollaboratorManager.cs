@@ -42,18 +42,22 @@ public static class CollaboratorManager
                     var tokenDisplay = TokenManager.MaskToken(entry.Token);
                     task.Description = $"[green]Cek:[/] {tokenDisplay}";
 
+                    // Skip jika sudah punya username
                     if (!string.IsNullOrEmpty(entry.Username))
                     {
+                        AnsiConsole.MarkupLine($"[dim]⏭️  {tokenDisplay} → @{entry.Username} (cached)[/]");
                         task.Increment(1);
                         continue;
                     }
                     
-                     if (cache.TryGetValue(entry.Token, out var cachedUsername))
-                     {
+                    // Check cache
+                    if (cache.TryGetValue(entry.Token, out var cachedUsername))
+                    {
                         entry.Username = cachedUsername;
+                        AnsiConsole.MarkupLine($"[dim]⏭️  {tokenDisplay} → @{cachedUsername} (cache)[/]");
                         task.Increment(1);
                         continue;
-                     }
+                    }
 
                     bool success = false;
                     for (int retry = 0; retry < MAX_PROXY_RETRY && !success; retry++)
@@ -75,18 +79,29 @@ public static class CollaboratorManager
                                     cacheUpdated = true;
                                     success = true;
                                 } else {
-                                     AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay} [red]INVALID[/]");
+                                     AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay} [red]INVALID RESPONSE[/]");
                                      break;
                                 }
                             }
                             else if (response.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
                             {
-                                AnsiConsole.MarkupLine($"[yellow]🔁 Proxy 407 (retry {retry + 1}/{MAX_PROXY_RETRY})[/]");
+                                AnsiConsole.MarkupLine($"[yellow]🔁 407 (retry {retry + 1}/{MAX_PROXY_RETRY})[/]");
                                 if (!TokenManager.RotateProxyForToken(entry))
                                 {
+                                    AnsiConsole.MarkupLine($"[red]✗ No more proxies[/]");
                                     break;
                                 }
-                                await Task.Delay(1000);
+                                await Task.Delay(1500);
+                            }
+                            else if (response.StatusCode == HttpStatusCode.Unauthorized)
+                            {
+                                AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: INVALID TOKEN (401)");
+                                break;
+                            }
+                            else if (response.StatusCode == HttpStatusCode.Forbidden)
+                            {
+                                AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: RATE LIMIT (403)");
+                                break;
                             }
                             else
                             {
@@ -96,7 +111,6 @@ public static class CollaboratorManager
                         }
                         catch (HttpRequestException httpEx)
                         {
-                            // Cek semua jenis error proxy (407, timeout, connection refused)
                             bool isProxyError = httpEx.Message.Contains("407") || 
                                                httpEx.Message.Contains("proxy", StringComparison.OrdinalIgnoreCase) ||
                                                httpEx.Message.Contains("tunnel", StringComparison.OrdinalIgnoreCase) ||
@@ -107,15 +121,14 @@ public static class CollaboratorManager
                                 AnsiConsole.MarkupLine($"[yellow]🔁 Proxy error (retry {retry + 1}/{MAX_PROXY_RETRY})[/]");
                                 if (!TokenManager.RotateProxyForToken(entry))
                                 {
-                                    AnsiConsole.MarkupLine($"[red]✗ No more proxies available[/]");
+                                    AnsiConsole.MarkupLine($"[red]✗ No more proxies[/]");
                                     break;
                                 }
                                 await Task.Delay(1500);
-                                continue;
+                                // JANGAN break, lanjut ke retry berikutnya
                             }
                             else
                             {
-                                // Bukan proxy error, langsung break
                                 AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {httpEx.Message.Split('\n').FirstOrDefault()}");
                                 break;
                             }
@@ -125,9 +138,10 @@ public static class CollaboratorManager
                             AnsiConsole.MarkupLine($"[yellow]🔁 Timeout (retry {retry + 1}/{MAX_PROXY_RETRY})[/]");
                             if (!TokenManager.RotateProxyForToken(entry))
                             {
+                                AnsiConsole.MarkupLine($"[red]✗ No more proxies[/]");
                                 break;
                             }
-                            await Task.Delay(1000);
+                            await Task.Delay(1500);
                         }
                         catch (Exception ex)
                         {
@@ -138,11 +152,11 @@ public static class CollaboratorManager
 
                     if (!success)
                     {
-                        AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay} GAGAL ({MAX_PROXY_RETRY} retry)");
+                        AnsiConsole.MarkupLine($"[red]💀 {tokenDisplay} GAGAL setelah {MAX_PROXY_RETRY} retry[/]");
                     }
 
                     task.Increment(1);
-                    await Task.Delay(200);
+                    await Task.Delay(300); // Delay antar token
                 }
             });
 
