@@ -14,7 +14,10 @@ public static class TokenManager
     private static readonly string ProxyListPath = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
     
     private static readonly string StatePath = Path.Combine(ProjectRoot, ".token-state.json");
-    private static readonly string TokenCachePath = Path.Combine(ProjectRoot, ".token-cache.json"); 
+    private static readonly string TokenCachePath = Path.Combine(ProjectRoot, ".token-cache.json");
+    
+    // TAMBAH INI: Track proxy yang sudah dicoba per token
+    private static Dictionary<string, HashSet<string>> _triedProxies = new();
 
     private static List<TokenEntry> _tokens = new();
     private static List<string> _proxyList = new();
@@ -59,6 +62,7 @@ public static class TokenManager
         _tokens.Clear();
         _proxyList.Clear();
         _tokenCache.Clear();
+        _triedProxies.Clear(); // TAMBAH INI
         _state = new TokenState();
         
         Initialize();
@@ -176,6 +180,13 @@ public static class TokenManager
                 .ToList();
             
             AnsiConsole.MarkupLine($"[dim]Loaded {_proxyList.Count} proxies from ProxySync[/]");
+            
+            var fileAge = DateTime.Now - File.GetLastWriteTime(ProxyListPath);
+            if (fileAge.TotalHours > 12)
+            {
+                AnsiConsole.MarkupLine($"[yellow]⚠ Warning: proxy.txt berumur {fileAge.TotalHours:F1} jam.[/]");
+                AnsiConsole.MarkupLine($"[yellow]   Proxy gratis biasanya expire < 24 jam. Pertimbangkan re-run ProxySync.[/]");
+            }
         }
         else
         {
@@ -200,6 +211,46 @@ public static class TokenManager
                 _tokens[i].Username = username;
             }
         }
+    }
+
+    // TAMBAH METHOD BARU: Rotate proxy untuk token tertentu
+    public static bool RotateProxyForToken(TokenEntry token)
+    {
+        if (!_proxyList.Any())
+        {
+            AnsiConsole.MarkupLine("[yellow]Tidak ada proxy tersedia untuk rotasi.[/]");
+            return false;
+        }
+
+        // Init tracking jika belum ada
+        if (!_triedProxies.ContainsKey(token.Token))
+        {
+            _triedProxies[token.Token] = new HashSet<string>();
+        }
+
+        // Tandai proxy lama sebagai sudah dicoba
+        if (!string.IsNullOrEmpty(token.Proxy))
+        {
+            _triedProxies[token.Token].Add(token.Proxy);
+        }
+
+        // Cari proxy yang belum dicoba
+        var availableProxies = _proxyList.Where(p => !_triedProxies[token.Token].Contains(p)).ToList();
+
+        if (!availableProxies.Any())
+        {
+            AnsiConsole.MarkupLine("[red]Semua proxy sudah dicoba untuk token ini. Reset...[/]");
+            _triedProxies[token.Token].Clear();
+            availableProxies = _proxyList.ToList();
+        }
+
+        // Pilih proxy random
+        var random = new Random();
+        var newProxy = availableProxies[random.Next(availableProxies.Count)];
+        token.Proxy = newProxy;
+
+        AnsiConsole.MarkupLine($"[yellow]🔁 Rotasi Proxy:[/] {MaskProxy(newProxy)}");
+        return true;
     }
 
     private static void LoadState()
