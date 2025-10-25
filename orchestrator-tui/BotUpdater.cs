@@ -5,12 +5,31 @@ namespace Orchestrator;
 
 public static class BotUpdater
 {
-    // Path relatif dari executable TUI
-    private static readonly string ProjectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    private static readonly string ProjectRoot = GetProjectRoot();
+
+    private static string GetProjectRoot()
+    {
+        var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
+        
+        while (currentDir != null)
+        {
+            var configDir = Path.Combine(currentDir.FullName, "config");
+            var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
+            
+            if (Directory.Exists(configDir) && File.Exists(gitignore))
+            {
+                return currentDir.FullName;
+            }
+            
+            currentDir = currentDir.Parent;
+        }
+        
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    }
 
     private static BotConfig? LoadConfig()
     {
-        return BotConfig.Load(); // Gunakan loader dari BotConfig
+        return BotConfig.Load();
     }
 
     public static void ShowConfig()
@@ -38,10 +57,6 @@ public static class BotUpdater
         AnsiConsole.Write(table);
     }
     
-    /// <summary>
-    /// Update SEMUA bot secara LOKAL. Berguna untuk setup awal atau debug.
-    /// Di mode Codespace, ini TIDAK mempengaruhi environment remote.
-    /// </summary>
     public static async Task UpdateAllBotsLocally()
     {
         var config = LoadConfig();
@@ -64,18 +79,15 @@ public static class BotUpdater
                 continue;
             }
             
-            // Target path sekarang relatif terhadap ProjectRoot
             var targetPath = Path.Combine(ProjectRoot, bot.Path);
 
             try 
             {
-                // Pastikan parent directory ada
                 Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
 
                 if (Directory.Exists(Path.Combine(targetPath, ".git")))
                 {
                     AnsiConsole.MarkupLine($"   Folder [yellow]{bot.Path}[/] ditemukan. Menjalankan 'git pull'...");
-                    // Gunakan ShellHelper tanpa token (command lokal)
                     await ShellHelper.RunCommandAsync("git", "pull --rebase", targetPath);
                     successCount++;
                 }
