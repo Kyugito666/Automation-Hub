@@ -7,8 +7,8 @@ namespace Orchestrator;
 
 public static class TokenManager
 {
-    private static readonly string ConfigRoot = GetConfigRoot();
     private static readonly string ProjectRoot = GetProjectRoot();
+    private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
     
     private static readonly string TokensPath = Path.Combine(ConfigRoot, "github_tokens.txt");
     private static readonly string ProxyListPath = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
@@ -21,13 +21,10 @@ public static class TokenManager
     private static TokenState _state = new();
     private static Dictionary<string, string> _tokenCache = new(); 
 
-    // Helper untuk resolve path dengan benar
     private static string GetProjectRoot()
     {
-        // Mulai dari executable directory
         var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
         
-        // Cari folder yang mengandung "config" dan ".gitignore" (indikator root project)
         while (currentDir != null)
         {
             var configDir = Path.Combine(currentDir.FullName, "config");
@@ -41,21 +38,13 @@ public static class TokenManager
             currentDir = currentDir.Parent;
         }
         
-        // Fallback ke path lama jika tidak ketemu (untuk backward compatibility)
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    }
-    
-    private static string GetConfigRoot()
-    {
-        return Path.Combine(GetProjectRoot(), "config");
     }
 
     public static void Initialize()
     {
-        // Debug: Print paths yang digunakan
         AnsiConsole.MarkupLine($"[dim]Project Root: {ProjectRoot}[/]");
         AnsiConsole.MarkupLine($"[dim]Config Root: {ConfigRoot}[/]");
-        AnsiConsole.MarkupLine($"[dim]Looking for tokens at: {TokensPath}[/]");
         
         LoadTokens();
         LoadProxyList();
@@ -109,19 +98,14 @@ public static class TokenManager
 
     private static void LoadTokens()
     {
-        // Debug: Cek apakah file benar-benar ada
-        AnsiConsole.MarkupLine($"[dim]Checking file exists: {File.Exists(TokensPath)}[/]");
-        
         if (!File.Exists(TokensPath))
         {
             AnsiConsole.MarkupLine($"[red]ERROR: {TokensPath} tidak ditemukan![/]");
-            AnsiConsole.MarkupLine($"[yellow]Path yang dicari: {TokensPath}[/]");
             AnsiConsole.MarkupLine("[yellow]Buat file dengan format:[/]");
             AnsiConsole.MarkupLine("[dim]Line 1: owner (misal: Kyugito666)[/]");
             AnsiConsole.MarkupLine("[dim]Line 2: repo (misal: automation-hub)[/]");
             AnsiConsole.MarkupLine("[dim]Line 3: token1,token2,token3[/]");
             
-            // Coba buat file template otomatis
             try
             {
                 Directory.CreateDirectory(ConfigRoot);
@@ -142,9 +126,6 @@ public static class TokenManager
         }
 
         var lines = File.ReadAllLines(TokensPath);
-        
-        // Debug: Print isi file
-        AnsiConsole.MarkupLine($"[dim]File has {lines.Length} lines[/]");
         
         if (lines.Length < 3)
         {
