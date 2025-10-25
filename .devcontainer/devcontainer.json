@@ -1,1 +1,18 @@
-
+{
+  "name": "Automation-Hub Runner",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.10"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y tmux jq",
+  
+  "remoteUser": "vscode"
+}
