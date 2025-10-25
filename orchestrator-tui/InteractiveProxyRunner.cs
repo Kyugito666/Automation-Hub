@@ -18,8 +18,7 @@ public static class InteractiveProxyRunner
         AnsiConsole.MarkupLine($"[bold cyan]=== Auto-Capture Mode: {bot.Name} ===[/]");
         AnsiConsole.MarkupLine("[yellow]Step 1: Run bot locally (session will be recorded automatically)[/]\n");
 
-        string transcriptFile;
-        await RunInExternalTerminal(bot, out transcriptFile, cancellationToken);
+        var transcriptFile = await RunInExternalTerminal(bot, cancellationToken);
 
         if (cancellationToken.IsCancellationRequested)
         {
@@ -84,15 +83,15 @@ public static class InteractiveProxyRunner
         await PromptAndTriggerRemote(bot, capturedInputs, cancellationToken);
     }
 
-    private static async Task RunInExternalTerminal(BotEntry bot, out string transcriptFile, CancellationToken cancellationToken)
+    private static async Task<string> RunInExternalTerminal(BotEntry bot, CancellationToken cancellationToken)
     {
-        transcriptFile = string.Empty;
+        var transcriptFile = string.Empty;
         
         var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
         if (!Directory.Exists(botPath))
         {
             AnsiConsole.MarkupLine($"[red]Bot path not found: {botPath}[/]");
-            return;
+            return transcriptFile;
         }
 
         AnsiConsole.MarkupLine($"[cyan]Preparing bot: {bot.Name}[/]");
@@ -104,11 +103,11 @@ public static class InteractiveProxyRunner
         if (string.IsNullOrEmpty(executor))
         {
             AnsiConsole.MarkupLine($"[red]No run command found for {bot.Name}[/]");
-            return;
+            return transcriptFile;
         }
 
         AnsiConsole.MarkupLine("\n[cyan]Opening bot in external terminal with recording...[/]");
-        ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args, out transcriptFile);
+        transcriptFile = ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args);
 
         AnsiConsole.MarkupLine("[yellow]Interact with the bot normally.[/]");
         AnsiConsole.MarkupLine("[dim]All your inputs are being recorded automatically.[/]");
@@ -116,6 +115,8 @@ public static class InteractiveProxyRunner
         
         await WaitForEnterAsync(cancellationToken);
         AnsiConsole.MarkupLine("[green]✓ Local testing complete[/]");
+        
+        return transcriptFile;
     }
 
     private static async Task PromptAndTriggerRemote(BotEntry bot, Dictionary<string, string> capturedInputs, CancellationToken cancellationToken)
