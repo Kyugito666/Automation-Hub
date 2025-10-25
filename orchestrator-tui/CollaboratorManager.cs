@@ -7,16 +7,14 @@ using Spectre.Console;
 
 namespace Orchestrator;
 
-/// <summary>
-/// Mengelola validasi token, undangan kolaborator, dan penerimaan undangan.
-/// Penting untuk setup awal PAT sebelum bisa dipakai CodespaceManager.
-/// </summary>
 public static class CollaboratorManager
 {
+    private const int MAX_PROXY_RETRY = 3; // TAMBAH INI: Max retry per token
+
     public static async Task ValidateAllTokens()
     {
         AnsiConsole.MarkupLine("[bold cyan]--- 1. Validasi Token & Ambil Usernames ---[/]");
-        var tokens = TokenManager.GetAllTokenEntries(); // Hanya butuh list TokenEntry
+        var tokens = TokenManager.GetAllTokenEntries();
         if (!tokens.Any()) 
         {
              AnsiConsole.MarkupLine("[yellow]Tidak ada token di config/github_tokens.txt.[/]");
@@ -44,14 +42,12 @@ public static class CollaboratorManager
                     var tokenDisplay = TokenManager.MaskToken(entry.Token);
                     task.Description = $"[green]Memvalidasi:[/] {tokenDisplay}";
 
-                    // Jika username sudah ada di entry (dari cache saat init), skip API call
                     if (!string.IsNullOrEmpty(entry.Username))
                     {
                         task.Increment(1);
                         continue; 
                     }
                     
-                    // Jika belum ada di entry TAPI ada di cache, update entry & skip API call
                      if (cache.TryGetValue(entry.Token, out var cachedUsername))
                      {
                         entry.Username = cachedUsername;
@@ -59,47 +55,84 @@ public static class CollaboratorManager
                         continue;
                      }
 
-                    // Jika tidak ada sama sekali, panggil API
-                    try
+                    // RETRY LOOP dengan proxy rotation
+                    bool success = false;
+                    for (int retry = 0; retry < MAX_PROXY_RETRY && !success; retry++)
                     {
-                        // Penting: Gunakan HttpClient DENGAN proxy dari entry ini
-                        using var client = TokenManager.CreateHttpClient(entry); 
-                        var response = await client.GetAsync("https://api.github.com/user");
-
-                        if (response.IsSuccessStatusCode)
+                        try
                         {
-                            var user = await response.Content.ReadFromJsonAsync<GitHubUser>();
-                            if (user?.Login != null)
+                            using var client = TokenManager.CreateHttpClient(entry); 
+                            var response = await client.GetAsync("https://api.github.com/user");
+
+                            if (response.IsSuccessStatusCode)
                             {
-                                AnsiConsole.MarkupLine($"[green]✓[/] Token {tokenDisplay} valid untuk [yellow]@{user.Login}[/]");
-                                entry.Username = user.Login;
-                                cache[entry.Token] = user.Login; // Update cache
-                                newUsers++;
-                                cacheUpdated = true;
-                            } else {
-                                 AnsiConsole.MarkupLine($"[red]✗[/] Token {tokenDisplay} [red]INVALID:[/] Respons API tidak valid.");
+                                var user = await response.Content.ReadFromJsonAsync<GitHubUser>();
+                                if (user?.Login != null)
+                                {
+                                    AnsiConsole.MarkupLine($"[green]✓[/] Token {tokenDisplay} valid untuk [yellow]@{user.Login}[/]");
+                                    entry.Username = user.Login;
+                                    cache[entry.Token] = user.Login;
+                                    newUsers++;
+                                    cacheUpdated = true;
+                                    success = true;
+                                } else {
+                                     AnsiConsole.MarkupLine($"[red]✗[/] Token {tokenDisplay} [red]INVALID:[/] Respons API tidak valid.");
+                                     break; // Jangan retry jika response jelek
+                                }
+                            }
+                            else if (response.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
+                            {
+                                // 407 Proxy error - ROTATE
+                                AnsiConsole.MarkupLine($"[red]✗[/] Proxy error 407. Retry {retry + 1}/{MAX_PROXY_RETRY}");
+                                if (!TokenManager.RotateProxyForToken(entry))
+                                {
+                                    break; // Tidak ada proxy lagi
+                                }
+                                await Task.Delay(1000); // Delay sebelum retry
+                            }
+                            else
+                            {
+                                var error = await response.Content.ReadAsStringAsync();
+                                AnsiConsole.MarkupLine($"[red]✗[/] Token {tokenDisplay} [red]INVALID:[/] {response.StatusCode} - {error.Split('\n').FirstOrDefault()}");
+                                break; // Status code lain, jangan retry
                             }
                         }
-                        else
+                        catch (HttpRequestException httpEx) when (httpEx.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
                         {
-                            var error = await response.Content.ReadAsStringAsync();
-                            AnsiConsole.MarkupLine($"[red]✗[/] Token {tokenDisplay} [red]INVALID:[/] {response.StatusCode} - {error.Split('\n').FirstOrDefault()}");
+                             AnsiConsole.MarkupLine($"[red]✗[/] Proxy 407. Retry {retry + 1}/{MAX_PROXY_RETRY}");
+                             if (!TokenManager.RotateProxyForToken(entry))
+                             {
+                                 break;
+                             }
+                             await Task.Delay(1000);
+                        }
+                        catch (HttpRequestException httpEx) when (httpEx.InnerException is System.Net.Sockets.SocketException)
+                        {
+                            // Timeout atau connection refused - ROTATE
+                            AnsiConsole.MarkupLine($"[red]✗[/] Proxy timeout/refused. Retry {retry + 1}/{MAX_PROXY_RETRY}");
+                            if (!TokenManager.RotateProxyForToken(entry))
+                            {
+                                break;
+                            }
+                            await Task.Delay(1000);
+                        }
+                        catch (Exception ex)
+                        {
+                            AnsiConsole.MarkupLine($"[red]✗[/] Token {tokenDisplay} [red]ERROR:[/] {ex.Message.Split('\n').FirstOrDefault()}");
+                            break; // Error lain, jangan retry
                         }
                     }
-                    catch (HttpRequestException httpEx) when (httpEx.StatusCode == HttpStatusCode.Unauthorized || httpEx.StatusCode == HttpStatusCode.Forbidden)
+
+                    if (!success)
                     {
-                         AnsiConsole.MarkupLine($"[red]✗[/] Token {tokenDisplay} [red]INVALID:[/] {httpEx.StatusCode}");
+                        AnsiConsole.MarkupLine($"[red]✗[/] Token {tokenDisplay} GAGAL setelah {MAX_PROXY_RETRY} retry");
                     }
-                    catch (Exception ex)
-                    {
-                        AnsiConsole.MarkupLine($"[red]✗[/] Token {tokenDisplay} [red]ERROR:[/] {ex.Message.Split('\n').FirstOrDefault()}");
-                    }
+
                     task.Increment(1);
-                    await Task.Delay(200); // Rate limit ringan
+                    await Task.Delay(200);
                 }
             });
 
-        // Simpan cache jika ada perubahan
         if (cacheUpdated)
         {
             TokenManager.SaveTokenCache(cache);
@@ -123,11 +156,9 @@ public static class CollaboratorManager
             return;
         }
 
-        // Cari token milik owner utama
         var mainTokenEntry = tokens.FirstOrDefault(t => t.Username?.Equals(owner, StringComparison.OrdinalIgnoreCase) ?? false);
         if (mainTokenEntry == null)
         {
-            // Coba pakai token pertama jika owner tidak ada di list (misal token owner tidak di-list)
             mainTokenEntry = tokens.FirstOrDefault();
              if (mainTokenEntry == null) {
                   AnsiConsole.MarkupLine($"[red]Tidak ada token sama sekali untuk mengundang.[/]");
@@ -138,11 +169,10 @@ public static class CollaboratorManager
              AnsiConsole.MarkupLine($"[dim]Menggunakan token [yellow]@{owner}[/] untuk mengundang...[/]");
         }
         
-        // Ambil SEMUA username valid dari token list (kecuali owner)
         var usersToInvite = tokens
             .Where(t => t.Username != null && !t.Username.Equals(owner, StringComparison.OrdinalIgnoreCase))
             .Select(t => t.Username!)
-            .Distinct() // Hindari duplikasi jika username sama punya >1 token
+            .Distinct()
             .ToList();
             
         if (!usersToInvite.Any())
@@ -167,20 +197,19 @@ public static class CollaboratorManager
             {
                 var task = ctx.AddTask("[green]Mengirim undangan...[/]", new ProgressTaskSettings { MaxValue = usersToInvite.Count });
                 
-                // Gunakan HttpClient dari token owner
                 using var client = TokenManager.CreateHttpClient(mainTokenEntry); 
 
                 foreach (var username in usersToInvite)
                 {
                     task.Description = $"[green]Mengundang:[/] [yellow]@{username}[/]";
                     string url = $"https://api.github.com/repos/{owner}/{repo}/collaborators/{username}";
-                    var payload = new { permission = "push" }; // Permission 'push'
+                    var payload = new { permission = "push" };
                     var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
                     try
                     {
                         var response = await client.PutAsync(url, content);
-                        if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NoContent) // 201 Created atau 204 No Content (sudah ada)
+                        if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NoContent)
                         {
                             if (response.StatusCode == HttpStatusCode.Created) {
                                 AnsiConsole.MarkupLine($"[green]✓[/] Undangan terkirim ke [yellow]@{username}[/]");
@@ -203,7 +232,7 @@ public static class CollaboratorManager
                          failed++;
                     }
                     task.Increment(1);
-                    await Task.Delay(500); // Rate limit API invite
+                    await Task.Delay(500);
                 }
             });
         
@@ -242,7 +271,6 @@ public static class CollaboratorManager
                     var tokenDisplay = TokenManager.MaskToken(entry.Token);
                     task.Description = $"[green]Mengecek:[/] {entry.Username ?? tokenDisplay}";
 
-                    // Jangan proses token owner utama
                     if (entry.Username?.Equals(owner, StringComparison.OrdinalIgnoreCase) ?? false) {
                         task.Increment(1);
                         continue;
@@ -268,7 +296,6 @@ public static class CollaboratorManager
                         {
                             AnsiConsole.Markup($"[yellow]![/] Undangan ditemukan untuk {entry.Username ?? "user"}. Menerima... ");
                             string acceptUrl = $"https://api.github.com/user/repository_invitations/{targetInvite.Id}";
-                            // Kirim request PATCH KOSONG untuk accept
                             var patchResponse = await client.PatchAsync(acceptUrl, null); 
 
                             if (patchResponse.IsSuccessStatusCode)
@@ -294,16 +321,8 @@ public static class CollaboratorManager
                     }
                     
                     task.Increment(1);
-                    await Task.Delay(200); // Rate limit ringan
+                    await Task.Delay(200);
                 }
             });
             
-        AnsiConsole.MarkupLine($"[green]✓ Proses selesai.[/] Diterima: {accepted}, Tidak ditemukan: {notFound}, Gagal Cek/Accept: {failed}.");
-    }
-    
-    // --- Helper class untuk deserialization ---
-    private class GitHubUser { [JsonPropertyName("login")] public string? Login { get; set; } }
-    private class GitHubError { [JsonPropertyName("message")] public string? Message { get; set; } }
-    private class GitHubInvitation { [JsonPropertyName("id")] public long Id { get; set; } [JsonPropertyName("repository")] public GitHubRepo? Repository { get; set; } }
-    private class GitHubRepo { [JsonPropertyName("full_name")] public string? FullName { get; set; } }
-}
+        AnsiConsole.Markup
