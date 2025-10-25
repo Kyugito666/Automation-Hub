@@ -1,1 +1,11 @@
-
+{
+  "profiles": {
+    "Orchestrator (Interactive)": {
+      "commandName": "Project"
+    },
+    "Orchestrator (Non-Interactive Loop)": {
+      "commandName": "Project",
+      "commandLineArgs": "--run"
+    }
+  }
+}
