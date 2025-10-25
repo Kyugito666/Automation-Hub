@@ -14,6 +14,7 @@ import signal
 import shutil
 import re
 from pathlib import Path
+from collections import deque
 
 # Force UTF-8 encoding for stdout/stderr
 if sys.platform == 'win32':
@@ -131,59 +132,11 @@ def detect_error_type(error_msg):
     else:
         return 'unknown'
 
-def wait_for_prompt(process, timeout=5.0):
-    """
-    Wait for prompt indicators before sending input
-    Returns True if prompt detected, False if timeout
-    """
-    prompt_patterns = [
-        r'pilih.*\[',        # "Pilih Antara [1/2/3]"
-        r'enter.*:',         # "Enter your choice:"
-        r'select.*:',        # "Select option:"
-        r'\[.*\]\s*->\s*$',  # "[1/2/3] -> "
-        r'>\s*$',            # Generic ">"
-        r':\s*$',            # Generic ":"
-    ]
-    
-    start_time = time.time()
-    buffer = ""
-    
-    while time.time() - start_time < timeout:
-        if process.poll() is not None:
-            return False
-        
-        try:
-            chunk = process.stdout.read(1)
-            if not chunk:
-                time.sleep(0.05)
-                continue
-            
-            char = chunk.decode('utf-8', errors='replace')
-            buffer += char
-            print(char, end='', flush=True)
-            
-            # Keep only last 200 chars for pattern matching
-            if len(buffer) > 200:
-                buffer = buffer[-200:]
-            
-            # Check if any prompt pattern matches
-            for pattern in prompt_patterns:
-                if re.search(pattern, buffer, re.IGNORECASE):
-                    log_info(f"Prompt detected: {pattern}")
-                    return True
-                    
-        except Exception as e:
-            log_warn(f"Error reading prompt: {e}")
-            time.sleep(0.05)
-    
-    log_warn(f"Prompt wait timeout ({timeout}s)")
-    return False
-
 def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
-    """Strategy 1: Standard mode dengan prompt detection"""
+    """Strategy 1: Smart timing dengan output monitoring"""
     global _current_process
     
-    log_info("Trying Strategy 1: Standard stdin pipe with prompt detection")
+    log_info("Trying Strategy 1: Smart timing with output monitoring")
     
     resolved_cmd = resolve_command(command)
     cmd_list = [resolved_cmd] + args
@@ -202,35 +155,115 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
         stderr=subprocess.STDOUT,
         shell=use_shell,
         env=env,
-        bufsize=0  # Unbuffered
+        bufsize=0
     )
     
     input_lines = inputs.strip().split('\n')
-    input_index = [0]  # Mutable container for closure
+    output_buffer = []
+    output_lock = threading.Lock()
+    prompt_detected = threading.Event()
+    last_output_time = [time.time()]
     
-    def send_input():
+    # Prompt patterns
+    prompt_patterns = [
+        r'pilih.*\[',
+        r'enter.*:',
+        r'select.*:',
+        r'\[.*\]\s*->\s*$',
+        r'>\s*$',
+        r':\s*$',
+    ]
+    
+    def output_reader():
+        """Continuous output reader thread"""
+        buffer = deque(maxlen=300)
         try:
-            for i, line in enumerate(input_lines):
-                # Wait for prompt before sending input
-                if not wait_for_prompt(_current_process, timeout=8.0):
-                    log_warn(f"No prompt detected before input {i+1}, sending anyway...")
-                    time.sleep(0.5)
+            while _current_process.poll() is None:
+                try:
+                    chunk = _current_process.stdout.read(1)
+                    if not chunk:
+                        time.sleep(0.01)
+                        continue
+                    
+                    char = chunk.decode('utf-8', errors='replace')
+                    print(char, end='', flush=True)
+                    
+                    with output_lock:
+                        output_buffer.append(char)
+                        last_output_time[0] = time.time()
+                    
+                    buffer.append(char)
+                    recent = ''.join(buffer)
+                    
+                    # Check for prompt
+                    for pattern in prompt_patterns:
+                        if re.search(pattern, recent, re.IGNORECASE):
+                            prompt_detected.set()
+                            break
+                    
+                except Exception as e:
+                    if _current_process.poll() is not None:
+                        break
+                    log_warn(f"Output read error: {e}")
+                    time.sleep(0.05)
+            
+            # Final drain
+            try:
+                remaining = _current_process.stdout.read()
+                if remaining:
+                    text = remaining.decode('utf-8', errors='replace')
+                    print(text, end='', flush=True)
+                    with output_lock:
+                        output_buffer.append(text)
+            except:
+                pass
                 
+        except Exception as e:
+            log_warn(f"Reader thread error: {e}")
+    
+    def input_sender():
+        """Send inputs with smart timing"""
+        try:
+            # Wait for initial output
+            time.sleep(1.5)
+            
+            for i, line in enumerate(input_lines):
                 if _current_process.poll() is not None:
                     log_info(f"Process ended before input {i+1}")
+                    break
+                
+                # Wait for prompt OR output silence (max 8s)
+                prompt_detected.clear()
+                start_wait = time.time()
+                
+                while time.time() - start_wait < 8.0:
+                    if prompt_detected.is_set():
+                        log_info(f"Prompt detected for input {i+1}")
+                        break
+                    
+                    # Check output silence (0.8s without new output = likely waiting)
+                    with output_lock:
+                        silence_time = time.time() - last_output_time[0]
+                    
+                    if silence_time > 0.8:
+                        log_info(f"Output silence detected ({silence_time:.1f}s), likely prompt ready")
+                        break
+                    
+                    time.sleep(0.05)
+                
+                # Extra safety delay
+                time.sleep(0.3)
+                
+                if _current_process.poll() is not None:
                     break
                 
                 log_info(f"Sending input {i+1}/{len(input_lines)}: {line[:50]}")
                 _current_process.stdin.write((line + '\n').encode('utf-8'))
                 _current_process.stdin.flush()
-                time.sleep(0.2)
                 
-                input_index[0] = i + 1
+                time.sleep(0.2)
             
-            # Wait a bit for final output
-            time.sleep(0.5)
-            
-            # Keep stdin alive until process ends
+            # Keep stdin alive
             while _current_process.poll() is None:
                 time.sleep(0.1)
             
@@ -240,34 +273,31 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
                 pass
                 
         except BrokenPipeError:
-            log_info("Process closed stdin (normal for some bots)")
+            log_info("Process closed stdin (normal)")
         except Exception as e:
-            log_warn(f"Input thread error: {e}")
+            log_warn(f"Input sender error: {e}")
     
-    input_thread = threading.Thread(target=send_input, daemon=True)
-    input_thread.start()
+    # Start threads
+    reader_thread = threading.Thread(target=output_reader, daemon=True)
+    sender_thread = threading.Thread(target=input_sender, daemon=True)
     
-    output = []
-    try:
-        while True:
-            chunk = _current_process.stdout.read(1024)
-            if not chunk:
-                break
-            text = chunk.decode('utf-8', errors='replace')
-            # Don't print here - already printed in wait_for_prompt
-            output.append(text)
-    except Exception as e:
-        log_warn(f"Output read error: {e}")
+    reader_thread.start()
+    sender_thread.start()
     
+    # Wait for completion
     returncode = _current_process.wait()
-    input_thread.join(timeout=2)
+    
+    reader_thread.join(timeout=2)
+    sender_thread.join(timeout=2)
+    
     _current_process = None
     
-    full_output = ''.join(output)
+    with output_lock:
+        full_output = ''.join(output_buffer)
     
-    # Check for WinError 6 in output
+    # Check for WinError 6
     if 'winerror 6' in full_output.lower() or 'handle is invalid' in full_output.lower():
-        log_warn("Detected WinError 6 in output, strategy failed")
+        log_warn("Detected WinError 6 in output")
         raise Exception("WinError 6: The handle is invalid")
     
     return returncode, full_output
