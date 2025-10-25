@@ -6,8 +6,28 @@ namespace Orchestrator;
 
 public class BotConfig
 {
-    // Path relatif dari executable TUI
-    private static readonly string ConfigFile = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "config", "bots_config.json"));
+    private static readonly string ProjectRoot = GetProjectRoot();
+    private static readonly string ConfigFile = Path.Combine(ProjectRoot, "config", "bots_config.json");
+
+    private static string GetProjectRoot()
+    {
+        var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
+        
+        while (currentDir != null)
+        {
+            var configDir = Path.Combine(currentDir.FullName, "config");
+            var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
+            
+            if (Directory.Exists(configDir) && File.Exists(gitignore))
+            {
+                return currentDir.FullName;
+            }
+            
+            currentDir = currentDir.Parent;
+        }
+        
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    }
 
     [JsonPropertyName("bots_and_tools")]
     public List<BotEntry> BotsAndTools { get; set; } = new();
@@ -57,8 +77,6 @@ public class BotEntry
     [JsonPropertyName("type")]
     public string Type { get; set; } = string.Empty;
     
-    // Properti ini tidak lagi relevan karena eksekusi di remote
-    // Tapi biarkan saja untuk kompatibilitas jika masih dipakai di Debug Local
     [JsonIgnore]
     public bool IsBot => Path.Contains("/privatekey/") || Path.Contains("/token/");
 }
