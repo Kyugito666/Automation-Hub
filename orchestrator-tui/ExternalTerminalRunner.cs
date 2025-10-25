@@ -20,12 +20,14 @@ public static class ExternalTerminalRunner
         if (string.IsNullOrEmpty(scriptPath))
         {
             AnsiConsole.MarkupLine("[red]Failed to create runner script[/]");
-            return;
+            return string.Empty;
         }
 
         LaunchInTerminal(scriptPath, botPath);
         AnsiConsole.MarkupLine("[green]✓ Bot launched with session recording[/]");
         AnsiConsole.MarkupLine($"[dim]Transcript will be saved to: {Path.GetFileName(transcriptFile)}[/]");
+        
+        return transcriptFile;
     }
 
     private static string? CreateRunnerScript(string botPath, string executor, string args, string transcriptFile)
