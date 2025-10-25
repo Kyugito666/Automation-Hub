@@ -3,6 +3,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices; // Pastikan ini ada
+using System.Text.Json; // Ditambahkan untuk JsonDocument
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -17,18 +18,19 @@ internal static class Program
 
     public static async Task Main(string[] args)
     {
-        // ... (Handler Ctrl+C tetap sama) ...
-        Console.CancelKeyPress += (sender, e) => { /* ... */ };
+        Console.CancelKeyPress += (sender, e) => {
+            e.Cancel = true;
+            if (!_mainCts.IsCancellationRequested) {
+                AnsiConsole.MarkupLine("\n[bold yellow]Ctrl+C detected. Requesting shutdown...[/]");
+                _mainCts.Cancel();
+            } else { AnsiConsole.MarkupLine("[grey](Shutdown already requested...)[/]"); }
+        };
 
-        try
-        {
+        try {
             TokenManager.Initialize();
-            if (args.Length > 0 && args[0].ToLower() == "--run")
-            {
+            if (args.Length > 0 && args[0].ToLower() == "--run") {
                 await RunOrchestratorLoopAsync(_mainCts.Token);
-            }
-            else
-            {
+            } else {
                 await RunInteractiveMenuAsync(_mainCts.Token);
             }
         }
@@ -37,23 +39,31 @@ internal static class Program
         finally { AnsiConsole.MarkupLine("\n[cyan]Orchestrator shutting down.[/]"); }
     }
 
-    // ... (RunInteractiveMenuAsync, ShowSetupMenuAsync, ShowLocalMenuAsync, ShowDebugMenuAsync, TestLocalBotAsync, GetRunCommandLocal, GetProjectRoot tetap sama) ...
-     private static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken)
+    private static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken)
     {
-        // ... (Kode menu utama tetap sama) ...
-         while (!cancellationToken.IsCancellationRequested)
+        while (!cancellationToken.IsCancellationRequested)
         {
             AnsiConsole.Clear();
             AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
             AnsiConsole.MarkupLine("[grey]Codespace Orchestrator - Local Control, Remote Execution[/]");
 
-            var choice = AnsiConsole.Prompt(/* ... */);
-            var selection = choice.Split('.')[0];
+            // --- PERBAIKAN DI SINI ---
+            var prompt = new SelectionPrompt<string>() // Buat object prompt dulu
+                    .Title("\n[bold cyan]MAIN MENU[/]")
+                    .PageSize(10).WrapAround()
+                    .AddChoices(new[] {
+                        "1. [[REMOTE]] Start/Manage Codespace Runner (Continuous Loop)",
+                        "2. [[SETUP]] Token & Collaborator Management",
+                        "3. [[LOCAL]] Proxy Management (Run ProxySync)",
+                        "4. [[DEBUG]] Test Local Bot",
+                        "5. [[SYSTEM]] Refresh All Configs",
+                        "0. Exit" });
+            var choice = AnsiConsole.Prompt(prompt); // Panggil Prompt dengan object
+            var selection = choice.Split('.')[0]; // Split pakai '.'
+             // --- AKHIR PERBAIKAN ---
 
-            try
-            {
-                switch (selection)
-                {
+            try {
+                switch (selection) {
                     case "1": await RunOrchestratorLoopAsync(cancellationToken); break;
                     case "2": await ShowSetupMenuAsync(cancellationToken); break;
                     case "3": await ShowLocalMenuAsync(cancellationToken); break;
@@ -67,34 +77,150 @@ internal static class Program
         }
     }
 
-    private static async Task ShowSetupMenuAsync(CancellationToken cancellationToken) { /* ... */ }
-    private static async Task ShowLocalMenuAsync(CancellationToken cancellationToken) { /* ... */ }
-    private static async Task ShowDebugMenuAsync(CancellationToken cancellationToken) { /* ... */ }
-    private static async Task TestLocalBotAsync(CancellationToken cancellationToken) { /* ... */ }
-    private static (string executor, string args) GetRunCommandLocal(string botPath, string type) { /* ... */ }
-    private static string GetProjectRoot() { /* ... */ }
+    private static async Task ShowSetupMenuAsync(CancellationToken cancellationToken) {
+        while (!cancellationToken.IsCancellationRequested) {
+             AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
+             var prompt = new SelectionPrompt<string>().Title("\n[bold yellow]TOKEN & COLLABORATOR SETUP[/]").PageSize(10).WrapAround()
+                    .AddChoices(new[] { "1. Validate Tokens & Get Usernames", "2. Invite Collaborators", "3. Accept Invitations", "4. Show Token/Proxy Status", "0. [[Back]]" });
+             var choice = AnsiConsole.Prompt(prompt);
+             var sel = choice.Split('.')[0]; if (sel == "0") return;
+             await (sel switch {
+                 "1": CollaboratorManager.ValidateAllTokens(cancellationToken),
+                 "2": CollaboratorManager.InviteCollaborators(cancellationToken),
+                 "3": CollaboratorManager.AcceptInvitations(cancellationToken),
+                 "4": Task.Run(() => TokenManager.ShowStatus()), // Jalankan sync di thread pool
+                 _ => Task.CompletedTask
+             });
+            Pause("Tekan Enter...", cancellationToken);
+        }
+     }
 
+    private static async Task ShowLocalMenuAsync(CancellationToken cancellationToken) {
+        while (!cancellationToken.IsCancellationRequested) {
+             AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Local").Centered().Color(Color.Green));
+             var prompt = new SelectionPrompt<string>().Title("\n[bold green]LOCAL PROXY MANAGEMENT[/]").PageSize(10).WrapAround()
+                    .AddChoices(new[] { "1. Run ProxySync (Download, Test, Generate proxy.txt)", "0. [[Back]]" });
+             var choice = AnsiConsole.Prompt(prompt);
+             var sel = choice.Split('.')[0]; if (sel == "0") return;
+             if (sel == "1") await ProxyManager.DeployProxies(cancellationToken);
+             Pause("Tekan Enter...", cancellationToken);
+        }
+    }
+
+    private static async Task ShowDebugMenuAsync(CancellationToken cancellationToken) {
+        while (!cancellationToken.IsCancellationRequested) {
+            AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Debug").Centered().Color(Color.Grey));
+            var prompt = new SelectionPrompt<string>().Title("\n[bold grey]DEBUG & LOCAL TESTING[/]").PageSize(10).WrapAround()
+                   .AddChoices(new[] { "1. Test Local Bot (Run Interactively)", "2. Update All Bots Locally", "0. [[Back]]" });
+            var choice = AnsiConsole.Prompt(prompt);
+            var sel = choice.Split('.')[0]; if (sel == "0") return;
+            switch (sel) {
+                case "1": await TestLocalBotAsync(cancellationToken); break; // Ini sudah await
+                case "2": await BotUpdater.UpdateAllBotsLocally(); Pause("...", cancellationToken); break; // Tambah pause di sini
+            }
+            // Hapus pause di akhir loop ShowDebugMenuAsync
+        }
+    }
+
+    private static async Task TestLocalBotAsync(CancellationToken cancellationToken) {
+        // ... (Kode TestLocalBotAsync tetap sama seperti di respons sebelumnya) ...
+         var config = BotConfig.Load();
+        if (config == null || !config.BotsAndTools.Any()) { /* Pesan error */ Pause("...", cancellationToken); return; }
+        var enabledBots = config.BotsAndTools.Where(b => b.Enabled).ToList();
+        if (!enabledBots.Any()) { /* Pesan error */ Pause("...", cancellationToken); return; }
+
+        var backOption = new BotEntry { Name = "[[Back]]", Path = "BACK" };
+        var choices = enabledBots.OrderBy(b => b.Name).ToList(); choices.Add(backOption);
+        var selectedBot = AnsiConsole.Prompt(new SelectionPrompt<BotEntry>().Title("[cyan]Pilih bot:[/]").PageSize(15).WrapAround().UseConverter(b => b.Name).AddChoices(choices));
+        if (selectedBot == backOption) return;
+
+        AnsiConsole.MarkupLine($"\n[cyan]Mempersiapkan {selectedBot.Name}...[/]");
+        string projectRoot = GetProjectRoot(); string botPath = Path.Combine(projectRoot, selectedBot.Path);
+        if (!Directory.Exists(botPath)) { /* Pesan error */ Pause("...", cancellationToken); return; }
+
+        try { // Instal deps
+            AnsiConsole.MarkupLine("[dim]   Menginstal dependensi lokal...[/]");
+            if (selectedBot.Type == "python") { /* Logika instal python venv */
+                 var reqFile = Path.Combine(botPath, "requirements.txt");
+                 if (File.Exists(reqFile)) {
+                      var venvDir = Path.Combine(botPath, ".venv");
+                      string pipCmd = "pip";
+                      if (!Directory.Exists(venvDir)) { await ShellHelper.RunCommandAsync("python", $"-m venv .venv", botPath); }
+                      var winPip = Path.Combine(venvDir, "Scripts", "pip.exe");
+                      var linPip = Path.Combine(venvDir, "bin", "pip");
+                      if (File.Exists(winPip)) pipCmd = winPip; else if (File.Exists(linPip)) pipCmd = linPip;
+                      await ShellHelper.RunCommandAsync(pipCmd, $"install --no-cache-dir -r requirements.txt", botPath);
+                 }
+             }
+            else if (selectedBot.Type == "javascript") { /* Logika npm install */
+                 var pkgFile = Path.Combine(botPath, "package.json");
+                 if (File.Exists(pkgFile)) { await ShellHelper.RunCommandAsync("npm", "install --silent --no-progress", botPath); }
+             }
+            AnsiConsole.MarkupLine("[green]   ✓ Dependensi lokal OK.[/]");
+        } catch (Exception ex) { /* Pesan error */ Pause("...", cancellationToken); return; }
+
+        var (executor, args) = GetRunCommandLocal(botPath, selectedBot.Type); // Cari command run
+        if (string.IsNullOrEmpty(executor)) { /* Pesan error */ Pause("...", cancellationToken); return; }
+
+        AnsiConsole.MarkupLine($"\n[green]Menjalankan {selectedBot.Name}...[/]"); /* Info command & path */
+        AnsiConsole.MarkupLine("[yellow]   Tekan Ctrl+C di sini untuk stop.[/]");
+        try { await ShellHelper.RunInteractive(executor, args, botPath, null, cancellationToken); } // Jalankan interaktif
+        catch (OperationCanceledException) { /* Sudah ditangani */ }
+        catch (Exception ex) { /* Pesan error */ Pause("...", CancellationToken.None); }
+    }
+
+     private static (string executor, string args) GetRunCommandLocal(string botPath, string type) {
+         if (type == "python") {
+             string pythonExe = "python"; var venvDir = Path.Combine(botPath, ".venv");
+             if (Directory.Exists(venvDir)) {
+                 var winPath = Path.Combine(venvDir, "Scripts", "python.exe"); var linPath = Path.Combine(venvDir, "bin", "python");
+                 if (File.Exists(winPath)) pythonExe = winPath; else if (File.Exists(linPath)) pythonExe = linPath;
+             }
+             foreach (var entry in new[] { "run.py", "main.py", "bot.py" }) { if (File.Exists(Path.Combine(botPath, entry))) return (pythonExe, $"\"{entry}\""); }
+         } else if (type == "javascript") {
+             var pkgFile = Path.Combine(botPath, "package.json");
+             if (File.Exists(pkgFile)) { try { var content = File.ReadAllText(pkgFile); using var doc = JsonDocument.Parse(content); if (doc.RootElement.TryGetProperty("scripts", out var s) && s.TryGetProperty("start", out _)) return ("npm", "start"); } catch {} }
+             foreach (var entry in new[] { "index.js", "main.js", "bot.js" }) { if (File.Exists(Path.Combine(botPath, entry))) return ("node", $"\"{entry}\""); }
+         }
+         // --- PERBAIKAN DI SINI ---
+         AnsiConsole.MarkupLine($"[red]   Tidak ada entry point valid ditemukan untuk {Path.GetFileName(botPath)} ({type})[/]");
+         return (string.Empty, string.Empty); // Return default jika tidak ketemu
+         // --- AKHIR PERBAIKAN ---
+     }
+
+    private static string GetProjectRoot() {
+        var currentDir = new DirectoryInfo(AppContext.BaseDirectory); int maxDepth = 10; int currentDepth = 0;
+        while (currentDir != null && currentDepth < maxDepth) {
+            var configDir = Path.Combine(currentDir.FullName, "config"); var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
+            if (Directory.Exists(configDir) && File.Exists(gitignore)) { return currentDir.FullName; }
+            currentDir = currentDir.Parent; currentDepth++;
+        }
+        // --- PERBAIKAN DI SINI ---
+        var fallbackPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        AnsiConsole.MarkupLine($"[yellow]Warning: Tidak bisa auto-detect project root. Menggunakan fallback: {fallbackPath}[/]");
+        return fallbackPath; // Return fallback
+        // --- AKHIR PERBAIKAN ---
+    }
 
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken)
     {
         AnsiConsole.MarkupLine("[bold cyan]Starting Orchestrator Loop...[/]");
-        // ... (Log awal loop) ...
+        // ... (Log awal) ...
 
         while (!cancellationToken.IsCancellationRequested)
         {
             TokenEntry currentToken = TokenManager.GetCurrentToken();
-            TokenState currentState = TokenManager.GetState();
+            TokenState currentState = TokenManager.GetState(); // Ambil state saat ini
             string? activeCodespace = currentState.ActiveCodespaceName;
 
             AnsiConsole.Write(new Rule($"[yellow]Processing Token #{currentState.CurrentIndex + 1} (@{currentToken.Username ?? "???"})[/]").LeftJustified());
 
             try
             {
-                // ... (Cek Billing) ...
-                 AnsiConsole.MarkupLine("Checking billing quota...");
+                // 1. Cek Billing
+                AnsiConsole.MarkupLine("Checking billing quota...");
                 var billingInfo = await BillingManager.GetBillingInfo(currentToken);
                 BillingManager.DisplayBilling(billingInfo, currentToken.Username ?? "???");
-
 
                 if (!billingInfo.IsQuotaOk)
                 {
@@ -104,62 +230,58 @@ internal static class Program
                         await CodespaceManager.DeleteCodespace(currentToken, activeCodespace);
                         currentState.ActiveCodespaceName = null;
                         // --- PERBAIKAN DI SINI ---
-                        TokenManager.SaveState(currentState); // <--- PASS currentState
+                        TokenManager.SaveState(currentState); // <<< PASS currentState
                         // --- AKHIR PERBAIKAN ---
                     }
-                    TokenManager.SwitchToNextToken();
+                    currentToken = TokenManager.SwitchToNextToken(); // Ambil token baru setelah switch
                     await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
-                    continue;
+                    continue; // Lanjut ke iterasi berikutnya
                 }
 
-                // ... (Ensure Codespace) ...
+                // 2. Pastikan Codespace Sehat
                 AnsiConsole.MarkupLine("Ensuring healthy codespace...");
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken);
 
-
+                // Update state JIKA nama codespace berubah atau sebelumnya null
                 if (currentState.ActiveCodespaceName != activeCodespace)
                 {
                     currentState.ActiveCodespaceName = activeCodespace;
                     // --- PERBAIKAN DI SINI ---
-                    TokenManager.SaveState(currentState); // <--- PASS currentState
+                    TokenManager.SaveState(currentState); // <<< PASS currentState
                     // --- AKHIR PERBAIKAN ---
                     AnsiConsole.MarkupLine($"[green]✓ Active codespace set to: {activeCodespace}[/]");
 
-                    // ... (Upload Config & Trigger Startup) ...
+                    // Upload config & trigger startup HANYA jika codespace baru/berubah
                     AnsiConsole.MarkupLine("New/Recreated codespace detected. Uploading configs and triggering startup...");
                     await CodespaceManager.UploadConfigs(currentToken, activeCodespace);
                     await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace);
                     AnsiConsole.MarkupLine("[green]✓ Initial startup complete. Entering Keep-Alive mode.[/]");
-
                 }
                 else
                 {
                     AnsiConsole.MarkupLine("[green]✓ Codespace is healthy and running.[/]");
                 }
 
-                // ... (Keep-Alive Delay) ...
+                // 3. Keep-Alive
                 AnsiConsole.MarkupLine($"Sleeping for Keep-Alive interval ({KeepAliveInterval.TotalMinutes} minutes)...");
                 await Task.Delay(KeepAliveInterval, cancellationToken);
 
-
-                // ... (Keep-Alive SSH Check) ...
-                AnsiConsole.MarkupLine("Keep-Alive: Checking SSH health...");
-                if (string.IsNullOrEmpty(activeCodespace))
-                {
+                // Cek SSH (pastikan activeCodespace tidak null lagi setelah EnsureHealthy)
+                 currentState = TokenManager.GetState(); // Re-fetch state in case it was modified
+                 activeCodespace = currentState.ActiveCodespaceName;
+                 if (string.IsNullOrEmpty(activeCodespace)) // Double check
+                 {
                      AnsiConsole.MarkupLine("[yellow]Keep-Alive: No active codespace found in state. Skipping SSH check.[/]");
-                     currentState.ActiveCodespaceName = null;
-                     // --- PERBAIKAN DI SINI ---
-                     TokenManager.SaveState(currentState); // <--- PASS currentState
-                     // --- AKHIR PERBAIKAN ---
-                     continue;
-                }
+                     continue; // Langsung ke siklus berikutnya
+                 }
 
+                AnsiConsole.MarkupLine("Keep-Alive: Checking SSH health...");
                 if (!await CodespaceManager.CheckSshHealth(currentToken, activeCodespace))
                 {
                     AnsiConsole.MarkupLine("[red]Keep-Alive: SSH check failed![/]");
                     currentState.ActiveCodespaceName = null;
                     // --- PERBAIKAN DI SINI ---
-                    TokenManager.SaveState(currentState); // <--- PASS currentState
+                    TokenManager.SaveState(currentState); // <<< PASS currentState
                     // --- AKHIR PERBAIKAN ---
                     AnsiConsole.MarkupLine("[yellow]Will attempt to recreate on next cycle.[/]");
                 } else {
@@ -170,15 +292,22 @@ internal static class Program
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Orchestrator loop cancelled.[/]"); break; }
             catch (Exception ex)
             {
-                // ... (Error handling loop) ...
-                 AnsiConsole.MarkupLine($"[bold red]ERROR in orchestrator loop:[/]");
-                 AnsiConsole.WriteException(ex);
-                 // ... (Retry delay logic) ...
+                AnsiConsole.MarkupLine($"[bold red]ERROR in orchestrator loop:[/]"); AnsiConsole.WriteException(ex);
+                // Handle retry delay
+                if (!ex.Message.Contains("Triggering token rotation")) {
+                     AnsiConsole.MarkupLine($"[yellow]Retrying after {ErrorRetryDelay.TotalMinutes} minutes...[/]");
+                     try { await Task.Delay(ErrorRetryDelay, cancellationToken); } catch (OperationCanceledException) { break; }
+                } else { // Jika rotasi sudah terjadi
+                     try { await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken); } catch (OperationCanceledException) { break; }
+                }
             }
-        }
+        } // End while loop
     }
 
-    // ... (Pause helper) ...
-     private static void Pause(string message, CancellationToken cancellationToken) { /* ... */ }
-
+    private static void Pause(string message, CancellationToken cancellationToken) {
+        // ... (Kode Pause tetap sama) ...
+         AnsiConsole.MarkupLine($"\n[grey]{message} (Ctrl+C to cancel wait)[/]");
+        try { while (true) { if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException(); if (Console.KeyAvailable) break; Task.Delay(50).Wait(); } while(Console.KeyAvailable) Console.ReadKey(intercept: true); }
+        catch (OperationCanceledException) { AnsiConsole.MarkupLine("[yellow]Wait cancelled.[/]"); throw; }
+    }
 } // Akhir class Program
