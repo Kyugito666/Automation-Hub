@@ -295,7 +295,14 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
     with output_lock:
         full_output = ''.join(output_buffer)
     
-    # Check for WinError 6
+    # Jika exit code 0, abaikan WinError 6 (bot issue, bukan input issue)
+    if returncode == 0:
+        log_info("Process exited successfully (exit code 0)")
+        if 'winerror 6' in full_output.lower():
+            log_warn("WinError 6 in output ignored (bot completed successfully)")
+            return returncode, full_output
+    
+    # Check for WinError 6 only if returncode != 0
     if 'winerror 6' in full_output.lower() or 'handle is invalid' in full_output.lower():
         log_warn("Detected WinError 6 in output")
         raise Exception("WinError 6: The handle is invalid")
@@ -349,7 +356,15 @@ def run_with_script_strategy_2(input_file, command, args, cwd, inputs):
             returncode = _current_process.wait()
             _current_process = None
             
-            return returncode, ''.join(output)
+            full_output = ''.join(output)
+            
+            # Jika exit code 0, abaikan WinError 6 (bot issue, bukan input issue)
+            if returncode == 0:
+                log_info("Process exited successfully (exit code 0)")
+                if 'winerror 6' in full_output.lower():
+                    log_warn("WinError 6 in output ignored (bot completed successfully)")
+            
+            return returncode, full_output
     finally:
         try:
             os.unlink(temp_input)
@@ -408,7 +423,15 @@ def run_with_script_strategy_3(input_file, command, args, cwd, inputs):
         returncode = _current_process.wait()
         _current_process = None
         
-        return returncode, ''.join(output)
+        full_output = ''.join(output)
+        
+        # Jika exit code 0, abaikan WinError 6 di output (bot issue, bukan input issue)
+        if returncode == 0:
+            log_info("Process exited successfully (exit code 0)")
+            if 'winerror 6' in full_output.lower():
+                log_warn("WinError 6 in output ignored (bot completed successfully)")
+        
+        return returncode, full_output
     finally:
         try:
             os.unlink(temp_input)
