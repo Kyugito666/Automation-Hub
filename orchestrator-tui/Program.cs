@@ -1,6 +1,6 @@
 using Spectre.Console;
 
-namespace OrchestratorV2;
+namespace Orchestrator;
 
 internal static class Program
 {
