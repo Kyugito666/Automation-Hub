@@ -7,14 +7,12 @@ namespace Orchestrator;
 
 public static class TokenManager
 {
-    // Konfigurasi file (relative to orchestrator-tui/bin/Debug/net8.0)
-    private static readonly string ConfigRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "config"));
-    private static readonly string ProjectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    private static readonly string ConfigRoot = GetConfigRoot();
+    private static readonly string ProjectRoot = GetProjectRoot();
     
     private static readonly string TokensPath = Path.Combine(ConfigRoot, "github_tokens.txt");
     private static readonly string ProxyListPath = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
     
-    // State file (disimpan di root project, di-ignore oleh .gitignore)
     private static readonly string StatePath = Path.Combine(ProjectRoot, ".token-state.json");
     private static readonly string TokenCachePath = Path.Combine(ProjectRoot, ".token-cache.json"); 
 
@@ -23,8 +21,42 @@ public static class TokenManager
     private static TokenState _state = new();
     private static Dictionary<string, string> _tokenCache = new(); 
 
+    // Helper untuk resolve path dengan benar
+    private static string GetProjectRoot()
+    {
+        // Mulai dari executable directory
+        var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
+        
+        // Cari folder yang mengandung "config" dan ".gitignore" (indikator root project)
+        while (currentDir != null)
+        {
+            var configDir = Path.Combine(currentDir.FullName, "config");
+            var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
+            
+            if (Directory.Exists(configDir) && File.Exists(gitignore))
+            {
+                return currentDir.FullName;
+            }
+            
+            currentDir = currentDir.Parent;
+        }
+        
+        // Fallback ke path lama jika tidak ketemu (untuk backward compatibility)
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    }
+    
+    private static string GetConfigRoot()
+    {
+        return Path.Combine(GetProjectRoot(), "config");
+    }
+
     public static void Initialize()
     {
+        // Debug: Print paths yang digunakan
+        AnsiConsole.MarkupLine($"[dim]Project Root: {ProjectRoot}[/]");
+        AnsiConsole.MarkupLine($"[dim]Config Root: {ConfigRoot}[/]");
+        AnsiConsole.MarkupLine($"[dim]Looking for tokens at: {TokensPath}[/]");
+        
         LoadTokens();
         LoadProxyList();
         LoadState();
@@ -77,27 +109,73 @@ public static class TokenManager
 
     private static void LoadTokens()
     {
+        // Debug: Cek apakah file benar-benar ada
+        AnsiConsole.MarkupLine($"[dim]Checking file exists: {File.Exists(TokensPath)}[/]");
+        
         if (!File.Exists(TokensPath))
         {
             AnsiConsole.MarkupLine($"[red]ERROR: {TokensPath} tidak ditemukan![/]");
+            AnsiConsole.MarkupLine($"[yellow]Path yang dicari: {TokensPath}[/]");
             AnsiConsole.MarkupLine("[yellow]Buat file dengan format:[/]");
             AnsiConsole.MarkupLine("[dim]Line 1: owner (misal: Kyugito666)[/]");
             AnsiConsole.MarkupLine("[dim]Line 2: repo (misal: automation-hub)[/]");
             AnsiConsole.MarkupLine("[dim]Line 3: token1,token2,token3[/]");
+            
+            // Coba buat file template otomatis
+            try
+            {
+                Directory.CreateDirectory(ConfigRoot);
+                File.WriteAllLines(TokensPath, new[]
+                {
+                    "YourGitHubUsername",
+                    "automation-hub",
+                    "ghp_YourToken1,ghp_YourToken2"
+                });
+                AnsiConsole.MarkupLine($"[green]✓ Template file dibuat di: {TokensPath}[/]");
+                AnsiConsole.MarkupLine("[yellow]Silakan edit file tersebut dengan data Anda![/]");
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Gagal membuat template: {ex.Message}[/]");
+            }
             return;
         }
 
         var lines = File.ReadAllLines(TokensPath);
+        
+        // Debug: Print isi file
+        AnsiConsole.MarkupLine($"[dim]File has {lines.Length} lines[/]");
+        
         if (lines.Length < 3)
         {
             AnsiConsole.MarkupLine("[red]ERROR: github_tokens.txt format salah![/]");
+            AnsiConsole.MarkupLine($"[yellow]File hanya punya {lines.Length} baris, butuh minimal 3[/]");
             return;
         }
 
         var owner = lines[0].Trim();
         var repo = lines[1].Trim();
         
-        var tokens = lines[2].Split(',', StringSplitOptions.RemoveEmptyEntries);
+        if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo))
+        {
+            AnsiConsole.MarkupLine("[red]ERROR: Owner atau Repo kosong![/]");
+            return;
+        }
+        
+        if (string.IsNullOrWhiteSpace(lines[2]))
+        {
+            AnsiConsole.MarkupLine("[red]ERROR: Baris 3 (tokens) kosong![/]");
+            return;
+        }
+        
+        var tokens = lines[2].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        
+        if (tokens.Length == 0)
+        {
+            AnsiConsole.MarkupLine("[red]ERROR: Tidak ada token valid di baris 3![/]");
+            return;
+        }
+        
         _tokens = tokens.Select(t => new TokenEntry 
         { 
             Token = t.Trim(),
@@ -105,12 +183,11 @@ public static class TokenManager
             Repo = repo
         }).ToList();
         
-        AnsiConsole.MarkupLine($"[green]Loaded {_tokens.Count} tokens for {owner}/{repo}[/]");
+        AnsiConsole.MarkupLine($"[green]✓ Loaded {_tokens.Count} tokens for {owner}/{repo}[/]");
     }
 
     private static void LoadProxyList()
     {
-        // proxy.txt di-generate oleh proxysync/main.py
         if (File.Exists(ProxyListPath))
         {
             _proxyList = File.ReadAllLines(ProxyListPath)
@@ -131,14 +208,12 @@ public static class TokenManager
 
         for (int i = 0; i < _tokens.Count; i++)
         {
-            // Assign proxy (1:1 mapping)
             if (_proxyList.Any())
             {
                 var proxyIndex = i % _proxyList.Count;
                 _tokens[i].Proxy = _proxyList[proxyIndex];
             }
             
-            // Assign username from cache
             if (_tokenCache.TryGetValue(_tokens[i].Token, out var username))
             {
                 _tokens[i].Username = username;
@@ -162,7 +237,6 @@ public static class TokenManager
             _state = new TokenState();
         }
         
-        // Pastikan index valid
         if (_state.CurrentIndex >= _tokens.Count)
         {
             _state.CurrentIndex = 0;
@@ -219,8 +293,10 @@ public static class TokenManager
 
         var current = _tokens[_state.CurrentIndex];
         AnsiConsole.MarkupLine($"[bold yellow]🔁 Token Rotated[/]: Now using Token #{_state.CurrentIndex + 1} (@{current.Username ?? "???"})");
+        
+        _state.ActiveCodespaceName = null;
+        
         if (!string.IsNullOrEmpty(current.Proxy))
-        _state.ActiveCodespaceName = null; // Hapus codespace aktif saat ganti token
         {
             AnsiConsole.MarkupLine($"[dim]   Proxy: {MaskProxy(current.Proxy)}[/]");
         }
@@ -274,7 +350,11 @@ public static class TokenManager
 
     public static void ShowStatus()
     {
-        if (!_tokens.Any()) return;
+        if (!_tokens.Any()) 
+        {
+            AnsiConsole.MarkupLine("[red]No tokens loaded![/]");
+            return;
+        }
 
         AnsiConsole.MarkupLine($"[bold cyan]Owner:[/][yellow] {_tokens.FirstOrDefault()?.Owner ?? "N/A"}[/]");
         AnsiConsole.MarkupLine($"[bold cyan]Repo:[/][yellow] {_tokens.FirstOrDefault()?.Repo ?? "N/A"}[/]");
@@ -305,8 +385,6 @@ public static class TokenManager
         AnsiConsole.Write(table);
     }
 }
-
-// --- Kelas Model Baru ---
 
 public class TokenEntry
 {
