@@ -1,6 +1,6 @@
 using Spectre.Console;
 using System;
-using System.Runtime.InteropServices; // TAMBAHKAN INI
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -156,7 +156,7 @@ internal static class Program
                         "0. [[Back]]" }));
             var sel = choice.Split('.')[0]; if (sel == "0") return;
             
-            if (sel == "1") await ProxyManager.DeployProxies();
+            if (sel == "1") await ProxyManager.DeployProxies(cancellationToken);
             Pause("Tekan Enter...", cancellationToken);
         }
     }
@@ -222,7 +222,7 @@ internal static class Program
 
         AnsiConsole.MarkupLine($"\n[cyan]Mempersiapkan {selectedBot.Name} untuk run lokal...[/]");
 
-        string projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        string projectRoot = GetProjectRoot();
         string botPath = Path.Combine(projectRoot, selectedBot.Path);
 
         if (!Directory.Exists(botPath))
@@ -321,6 +321,26 @@ internal static class Program
          }
          return (string.Empty, string.Empty);
      }
+
+    private static string GetProjectRoot()
+    {
+        var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
+        
+        while (currentDir != null)
+        {
+            var configDir = Path.Combine(currentDir.FullName, "config");
+            var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
+            
+            if (Directory.Exists(configDir) && File.Exists(gitignore))
+            {
+                return currentDir.FullName;
+            }
+            
+            currentDir = currentDir.Parent;
+        }
+        
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    }
 
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken)
     {
