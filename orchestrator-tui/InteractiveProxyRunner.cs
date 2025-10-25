@@ -14,7 +14,6 @@ namespace Orchestrator;
 public static class InteractiveProxyRunner
 {
     private const string BOT_ANSWERS_DIR = "../.bot-inputs";
-    private const string WRAPPER_TEMPLATE_PATH = "../orchestrator-tui/templates/bot-wrapper-template.js";
 
     public static async Task CaptureAndTriggerBot(BotEntry bot, CancellationToken cancellationToken = default)
     {
@@ -65,7 +64,7 @@ public static class InteractiveProxyRunner
             
             if (choice.StartsWith("1"))
             {
-                await RunWithWrapper(bot, cancellationToken);
+                await RunInExternalTerminal(bot, answerFile: null, cancellationToken);
                 if (!cancellationToken.IsCancellationRequested)
                 {
                     await PromptAndTriggerRemote(bot, answerFile, cancellationToken);
@@ -77,23 +76,17 @@ public static class InteractiveProxyRunner
                 AnsiConsole.MarkupLine("[yellow]Bot skipped.[/]");
                 return;
             }
-            // If "2", continue to auto-answer (will likely fail)
         }
 
-        if (hasAnswerFile && !isRawKeyboardBot)
+        if (hasAnswerFile)
         {
             AnsiConsole.MarkupLine("[yellow]Mode: AUTO-ANSWER (Using saved responses)[/]");
-            await RunWithAutoAnswers(bot, answerFile, cancellationToken);
-        }
-        else if (hasAnswerFile && isRawKeyboardBot)
-        {
-            AnsiConsole.MarkupLine("[yellow]Mode: AUTO-ANSWER (Forced attempt despite raw keyboard detection)[/]");
-            await RunWithAutoAnswers(bot, answerFile, cancellationToken);
+            await RunInExternalTerminal(bot, answerFile, cancellationToken);
         }
         else
         {
             AnsiConsole.MarkupLine("[yellow]Mode: MANUAL (No answer file)[/]");
-            await RunManualCapture(bot, cancellationToken);
+            await RunInExternalTerminal(bot, answerFile: null, cancellationToken);
         }
 
         if (cancellationToken.IsCancellationRequested)
@@ -132,125 +125,8 @@ public static class InteractiveProxyRunner
         }
     }
 
-    private static async Task RunWithAutoAnswers(BotEntry bot, string answerFile, CancellationToken cancellationToken)
+    private static async Task RunInExternalTerminal(BotEntry bot, string? answerFile, CancellationToken cancellationToken)
     {
-        AnsiConsole.MarkupLine("[dim]Loading saved answers...[/]");
-        
-        try
-        {
-            var json = File.ReadAllText(answerFile);
-            var answers = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-            
-            if (answers != null && answers.Any())
-            {
-                var displayAnswers = answers.Where(x => !x.Key.StartsWith("_")).ToList();
-                if (displayAnswers.Any())
-                {
-                    AnsiConsole.MarkupLine("[green]Answers loaded:[/]");
-                    foreach (var kv in displayAnswers)
-                    {
-                        AnsiConsole.MarkupLine($"  [dim]{kv.Key}:[/] [yellow]{kv.Value}[/]");
-                    }
-                }
-                else
-                {
-                    AnsiConsole.MarkupLine("[yellow]No user answers found (metadata only)[/]");
-                }
-            }
-            else
-            {
-                AnsiConsole.MarkupLine("[yellow]Warning: Answer file is empty[/]");
-            }
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Error loading answers: {ex.Message}[/]");
-            return;
-        }
-
-        var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
-        if (!Directory.Exists(botPath)) 
-        { 
-            AnsiConsole.MarkupLine($"[red]Bot path not found: {botPath}[/]"); 
-            return; 
-        }
-
-        await BotRunner.InstallDependencies(botPath, bot.Type);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var (executor, args) = BotRunner.GetRunCommand(botPath, bot.Type);
-        if (string.IsNullOrEmpty(executor))
-        {
-            AnsiConsole.MarkupLine($"[red]Gagal menemukan run command untuk {bot.Name}[/]");
-            return;
-        }
-
-        try
-        {
-            AnsiConsole.MarkupLine("[dim]Running bot with auto-answers via PTY...[/]");
-            AnsiConsole.MarkupLine("[grey]─────────────────────────────────────[/]\n");
-
-            await ShellHelper.RunPtyWithScript(answerFile, executor, args, botPath, cancellationToken);
-
-            AnsiConsole.MarkupLine("\n[grey]─────────────────────────────────────[/]");
-            AnsiConsole.MarkupLine("[green]Auto-answer run completed.[/]");
-        }
-        catch (OperationCanceledException)
-        {
-            AnsiConsole.MarkupLine("[yellow]Run cancelled.[/]");
-            throw;
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Error: {ex.Message}[/]");
-        }
-    }
-
-    private static async Task RunManualCapture(BotEntry bot, CancellationToken cancellationToken)
-    {
-        AnsiConsole.MarkupLine("[yellow]Running in manual interactive mode via PTY...[/]");
-        
-        var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
-        if (!Directory.Exists(botPath)) 
-        { 
-            AnsiConsole.MarkupLine($"[red]Bot path not found: {botPath}[/]"); 
-            return; 
-        }
-
-        await BotRunner.InstallDependencies(botPath, bot.Type);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var (executor, args) = BotRunner.GetRunCommand(botPath, bot.Type);
-        if (string.IsNullOrEmpty(executor))
-        {
-            AnsiConsole.MarkupLine($"[red]Gagal menemukan run command untuk {bot.Name}[/]");
-            return;
-        }
-
-        AnsiConsole.MarkupLine("[grey]─────────────────────────────────────[/]\n");
-
-        try
-        {
-            await ShellHelper.RunInteractivePty(executor, args, botPath, cancellationToken);
-            
-            AnsiConsole.MarkupLine("\n[grey]─────────────────────────────────────[/]");
-            AnsiConsole.MarkupLine("[green]Manual run completed.[/]");
-        }
-        catch (OperationCanceledException)
-        {
-            AnsiConsole.MarkupLine("[yellow]Manual run cancelled.[/]");
-            throw;
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Error during manual run: {ex.Message}[/]");
-        }
-    }
-
-    private static async Task RunWithWrapper(BotEntry bot, CancellationToken cancellationToken)
-    {
-        AnsiConsole.MarkupLine("[yellow]Generating wrapper script...[/]");
-        
         var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
         if (!Directory.Exists(botPath))
         {
@@ -258,6 +134,8 @@ public static class InteractiveProxyRunner
             return;
         }
 
+        AnsiConsole.MarkupLine($"[cyan]Preparing bot: {bot.Name}[/]");
+        
         await BotRunner.InstallDependencies(botPath, bot.Type);
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -268,59 +146,44 @@ public static class InteractiveProxyRunner
             return;
         }
 
-        if (bot.Type == "javascript")
+        if (!string.IsNullOrEmpty(answerFile) && File.Exists(answerFile))
         {
-            var entryFile = args;
-            var wrapperPath = Path.Combine(botPath, "_auto_wrapper.js");
-            
             try
             {
-                if (!File.Exists(WRAPPER_TEMPLATE_PATH))
+                var json = File.ReadAllText(answerFile);
+                var answers = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                
+                if (answers != null)
                 {
-                    AnsiConsole.MarkupLine($"[red]Wrapper template not found: {WRAPPER_TEMPLATE_PATH}[/]");
-                    AnsiConsole.MarkupLine("[yellow]Falling back to direct terminal launch...[/]");
-                    ShellHelper.RunInNewTerminal(executor, args, botPath);
-                    
-                    AnsiConsole.MarkupLine("[dim]Press Enter when finished...[/]");
-                    await WaitForEnterAsync(cancellationToken);
-                    return;
+                    var displayAnswers = answers.Where(x => !x.Key.StartsWith("_")).ToList();
+                    if (displayAnswers.Any())
+                    {
+                        AnsiConsole.MarkupLine("[green]Answers loaded:[/]");
+                        foreach (var kv in displayAnswers)
+                        {
+                            AnsiConsole.MarkupLine($"  [dim]{kv.Key}:[/] [yellow]{kv.Value}[/]");
+                        }
+                    }
                 }
-
-                var template = File.ReadAllText(WRAPPER_TEMPLATE_PATH);
-                var wrapper = template
-                    .Replace("__BOT_DIR__", botPath.Replace("\\", "\\\\"))
-                    .Replace("__BOT_ENTRY__", entryFile);
-
-                File.WriteAllText(wrapperPath, wrapper);
-                
-                AnsiConsole.MarkupLine($"[green]✓ Wrapper created: {Path.GetFileName(wrapperPath)}[/]");
-                AnsiConsole.MarkupLine("[cyan]Launching bot in separate terminal...[/]");
-                
-                ShellHelper.RunInNewTerminal("node", "_auto_wrapper.js", botPath);
-                
-                AnsiConsole.MarkupLine("[green]✓ Bot launched. Interact with it in the new window.[/]");
-                AnsiConsole.MarkupLine("[dim]Press Enter when finished...[/]");
-                
-                await WaitForEnterAsync(cancellationToken);
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]Wrapper error: {ex.Message}[/]");
-                AnsiConsole.MarkupLine("[yellow]Falling back to direct launch...[/]");
-                ShellHelper.RunInNewTerminal(executor, args, botPath);
-                
-                AnsiConsole.MarkupLine("[dim]Press Enter when finished...[/]");
-                await WaitForEnterAsync(cancellationToken);
+                AnsiConsole.MarkupLine($"[yellow]Warning: Could not parse answers: {ex.Message}[/]");
+                answerFile = null;
             }
         }
-        else
-        {
-            AnsiConsole.MarkupLine("[yellow]Python bot - launching directly in terminal...[/]");
-            ShellHelper.RunInNewTerminal(executor, args, botPath);
-            
-            AnsiConsole.MarkupLine("[dim]Press Enter when finished...[/]");
-            await WaitForEnterAsync(cancellationToken);
-        }
+
+        AnsiConsole.MarkupLine("\n[cyan]Opening bot in external terminal...[/]");
+        AnsiConsole.MarkupLine("[dim]Interact with the bot in the new window[/]");
+
+        ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args, answerFile);
+
+        AnsiConsole.MarkupLine("[green]✓ Bot terminal opened[/]");
+        AnsiConsole.MarkupLine("[dim]Press Enter when bot execution is complete...[/]");
+        
+        await WaitForEnterAsync(cancellationToken);
+        
+        AnsiConsole.MarkupLine("[green]Continuing to next step...[/]");
     }
 
     private static async Task PromptAndTriggerRemote(BotEntry bot, string answerFile, CancellationToken cancellationToken)
@@ -343,12 +206,11 @@ public static class InteractiveProxyRunner
             if (File.Exists(answerFile))
             {
                 var json = File.ReadAllText(answerFile);
-                capturedInputs = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
+                var allData = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
                 
-                // Remove metadata fields
-                capturedInputs = capturedInputs.Where(x => !x.Key.StartsWith("_")).ToDictionary(x => x.Key, x => x.Value);
+                capturedInputs = allData.Where(x => !x.Key.StartsWith("_")).ToDictionary(x => x.Key, x => x.Value);
                 
-                AnsiConsole.MarkupLine($"[dim]Menggunakan {capturedInputs.Count} input dari {Path.GetFileName(answerFile)} untuk remote trigger...[/]");
+                AnsiConsole.MarkupLine($"[dim]Sending {capturedInputs.Count} inputs to remote trigger...[/]");
             }
             else
             {
@@ -357,7 +219,7 @@ public static class InteractiveProxyRunner
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Gagal baca answer file, kirim input kosong: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]Failed to read answer file, sending empty inputs: {ex.Message}[/]");
         }
 
         AnsiConsole.MarkupLine("[cyan]Triggering remote job...[/]");
