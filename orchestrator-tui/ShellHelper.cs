@@ -1,203 +1,111 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using Spectre.Console;
-using System.Threading;
-using System.Threading.Tasks;
-using System.IO;
 
 namespace Orchestrator;
 
 public static class ShellHelper
 {
-    private static readonly string PtyHelperScript;
-    private static readonly string PythonExecutable;
-
-    static ShellHelper()
+    /// <summary>
+    /// Menjalankan perintah 'gh' (GitHub CLI) dengan token dan proxy yang sesuai.
+    /// Ini adalah wrapper utama untuk semua interaksi Codespace.
+    /// </summary>
+    /// <param name="token">TokenEntry yang berisi PAT dan Proxy</param>
+    /// <param name="args">Argument untuk 'gh' (misal: "codespace list --json name")</param>
+    /// <param name="timeoutMilliseconds">Opsional timeout</param>
+    /// <returns>Hasil stdout jika sukses</returns>
+    /// <exception cref="Exception">Jika command gagal</exception>
+    public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = 60000)
     {
-        // FIX: Resolve dari bin/Debug/net8.0 ke root project
-        var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        var projectRoot = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", ".."));
-        PtyHelperScript = Path.Combine(projectRoot, "pty-helper-py", "pty_helper.py");
-
-        PythonExecutable = DetectPythonExecutable();
-
-        if (!File.Exists(PtyHelperScript))
-        {
-            AnsiConsole.MarkupLine($"[red]CRITICAL: PTY helper NOT FOUND: {PtyHelperScript}[/]");
-            AnsiConsole.MarkupLine("[yellow]Fitur auto-answer akan fallback ke mode basic.[/]");
-        }
-        else
-        {
-            AnsiConsole.MarkupLine($"[dim]✓ PTY helper: {PtyHelperScript}[/]");
-        }
-
-        AnsiConsole.MarkupLine($"[dim]✓ Python: {PythonExecutable}[/]");
-    }
-
-    private static string DetectPythonExecutable()
-    {
-        string[] candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? new[] { "python", "py", "python3" }
-            : new[] { "python3", "python" };
-
-        foreach (var candidate in candidates)
-        {
-            if (IsCommandAvailable(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "python" : "python3";
-    }
-
-    public static async Task RunStream(string command, string args, string? workingDir = null)
-    {
-        string fileName;
-        string finalArgs;
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            fileName = "cmd.exe";
-            finalArgs = $"/c \"{command} {args}\"";
-        }
-        else
-        {
-            fileName = "/bin/bash";
-            finalArgs = $"-c \"{command} {args}\"";
-        }
-
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = finalArgs,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory()
-            },
-            EnableRaisingEvents = true
-        };
-
-        process.OutputDataReceived += (sender, e) =>
-        {
-            if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
-        };
-        process.ErrorDataReceived += (sender, e) =>
-        {
-            if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
-        };
-
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        await process.WaitForExitAsync();
-
-        if (process.ExitCode != 0)
-        {
-            AnsiConsole.MarkupLine($"[red]Exit Code: {process.ExitCode}[/]");
-        }
-    }
-
-    public static async Task RunInteractivePty(string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
-    {
-        if (!File.Exists(PtyHelperScript))
-        {
-            AnsiConsole.MarkupLine($"[red]PTY helper tidak ditemukan, fallback ke mode basic[/]");
-            await RunStreamInteractive(command, args, workingDir, cancellationToken);
-            return;
-        }
-
-        string pythonArgs = $"\"{PtyHelperScript}\" \"{command}\" {args}";
-
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = PythonExecutable,
-                Arguments = pythonArgs,
-                UseShellExecute = false,
-                CreateNoWindow = false,
-                WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory(),
-                RedirectStandardInput = false,
-                RedirectStandardOutput = false,
-                RedirectStandardError = false
-            }
-        };
-
-        try
-        {
-            process.Start();
-            await process.WaitForExitAsync(cancellationToken);
-
-            if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
-            {
-                AnsiConsole.MarkupLine($"[yellow]Process exited: {process.ExitCode}[/]");
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            AnsiConsole.MarkupLine("[yellow]Process cancelled[/]");
-            try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw;
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Error running PTY: {ex.Message}[/]");
-            try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw;
-        }
-    }
-
-    public static async Task RunPtyWithScript(string inputFile, string command, string args, string? workingDir = null, CancellationToken cancellationToken = default)
-    {
-        if (!File.Exists(PtyHelperScript))
-        {
-            AnsiConsole.MarkupLine($"[red]PTY helper tidak ditemukan, skip auto-answer[/]");
-            await RunStreamInteractive(command, args, workingDir, cancellationToken);
-            return;
-        }
-
-        string absInputFile = Path.GetFullPath(inputFile);
+        var startInfo = CreateStartInfo("gh", args, token);
         
-        if (!File.Exists(absInputFile))
+        var (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, timeoutMilliseconds);
+
+        if (exitCode != 0)
         {
-            AnsiConsole.MarkupLine($"[red]Input file tidak ditemukan: {absInputFile}[/]");
-            return;
+            if (stderr.Contains("Bad credentials") || stderr.Contains("401"))
+            {
+                TokenManager.SwitchToNextToken();
+            }
+            throw new Exception($"gh command failed (Exit Code: {exitCode}): {stderr}");
         }
 
-        string pythonArgs = $"\"{PtyHelperScript}\" \"{absInputFile}\" \"{command}\" {args}";
+        return stdout;
+    }
 
-        var process = new Process
+    /// <summary>
+    /// Menjalankan perintah shell umum (seperti python, git) dengan proxy opsional.
+    /// </summary>
+    public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
+    {
+        var startInfo = CreateStartInfo(command, args, token);
+        if (workingDir != null)
         {
-            StartInfo = new ProcessStartInfo
+            startInfo.WorkingDirectory = workingDir;
+        }
+
+        var (stdout, stderr, exitCode) = await RunProcessAsync(startInfo);
+
+        if (exitCode != 0)
+        {
+            throw new Exception($"Command failed (Exit Code: {exitCode}): {stderr}");
+        }
+    }
+
+    /// <summary>
+    /// Helper untuk membuat ProcessStartInfo dengan environment variables (token+proxy).
+    /// </summary>
+    private static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = command,
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+
+        // Inject environment variables
+        if (token != null)
+        {
+            startInfo.EnvironmentVariables["GH_TOKEN"] = token.Token;
+            if (!string.IsNullOrEmpty(token.Proxy))
             {
-                FileName = PythonExecutable,
-                Arguments = pythonArgs,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory(),
-                RedirectStandardInput = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
+                // Set proxy untuk 'gh' dan tools lain (seperti git)
+                startInfo.EnvironmentVariables["https_proxy"] = token.Proxy;
+                startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
+            }
+        }
+
+        return startInfo;
+    }
+
+    /// <summary>
+    /// Inti dari eksekusi proses, membaca stdout/stderr secara async.
+    /// </summary>
+    private static async Task<(string stdout, string stderr, int exitCode)> RunProcessAsync(ProcessStartInfo startInfo, int timeoutMilliseconds = 120000)
+    {
+        using var process = new Process { StartInfo = startInfo };
+
+        var stdoutBuilder = new StringBuilder();
+        var stderrBuilder = new StringBuilder();
+
+        process.OutputDataReceived += (sender, e) => {
+            if (e.Data != null) {
+                stdoutBuilder.AppendLine(e.Data);
+                AnsiConsole.MarkupLine($"[grey]OUT: {e.Data.EscapeMarkup()}[/]");
             }
         };
-
-        process.OutputDataReceived += (s, e) =>
-        {
-            if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
-        };
-        process.ErrorDataReceived += (s, e) =>
-        {
-            if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
+        process.ErrorDataReceived += (sender, e) => {
+            if (e.Data != null) {
+                stderrBuilder.AppendLine(e.Data);
+                AnsiConsole.MarkupLine($"[yellow]ERR: {e.Data.EscapeMarkup()}[/]");
+            }
         };
 
         try
@@ -205,143 +113,23 @@ public static class ShellHelper
             process.Start();
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            await process.WaitForExitAsync(cancellationToken);
 
-            if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0)
-            {
-                AnsiConsole.MarkupLine($"[yellow]Auto-run exited: {process.ExitCode}[/]");
-            }
+            await process.WaitForExitAsync(new CancellationTokenSource(timeoutMilliseconds).Token);
+            
+            return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim(), process.ExitCode);
         }
-        catch (OperationCanceledException)
+        catch (TaskCanceledException)
         {
-            AnsiConsole.MarkupLine("[yellow]Auto-run cancelled[/]");
-            try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw;
+            try
+            {
+                process.Kill(true);
+            }
+            catch {}
+            throw new Exception($"Process timed out after {timeoutMilliseconds / 1000}s: {startInfo.FileName} {startInfo.Arguments}");
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error auto-run: {ex.Message}[/]");
-            try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw;
-        }
-    }
-
-    private static async Task RunStreamInteractive(string command, string args, string? workingDir, CancellationToken cancellationToken)
-    {
-        // FIX: Gunakan shell wrapper untuk npm/node agar PATH ter-resolve
-        string fileName;
-        string finalArgs;
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            fileName = "cmd.exe";
-            finalArgs = $"/c \"{command} {args}\"";
-        }
-        else
-        {
-            fileName = "/bin/bash";
-            finalArgs = $"-c \"{command} {args}\"";
-        }
-
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = finalArgs,
-                UseShellExecute = false,
-                CreateNoWindow = false,
-                WorkingDirectory = workingDir ?? Directory.GetCurrentDirectory(),
-                RedirectStandardInput = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            }
-        };
-
-        process.OutputDataReceived += (s, e) =>
-        {
-            if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[grey]{e.Data.EscapeMarkup()}[/]");
-        };
-        process.ErrorDataReceived += (s, e) =>
-        {
-            if (!string.IsNullOrEmpty(e.Data))
-                AnsiConsole.MarkupLineInterpolated($"[yellow]{e.Data.EscapeMarkup()}[/]");
-        };
-
-        try
-        {
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw;
-        }
-    }
-
-    public static void RunInNewTerminal(string command, string args, string? workingDir = null)
-    {
-        var absPath = workingDir != null ? Path.GetFullPath(workingDir) : Directory.GetCurrentDirectory();
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = $"/k \"cd /d \"{absPath}\" && {command} {args}\"",
-                UseShellExecute = true
-            });
-        }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            var terminal = "gnome-terminal";
-            if (!IsCommandAvailable("gnome-terminal"))
-            {
-                terminal = IsCommandAvailable("xterm") ? "xterm" : "x-terminal-emulator";
-            }
-
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = terminal,
-                Arguments = $"-- bash -c 'cd \"{absPath}\" && {command} {args}; exec bash'",
-                UseShellExecute = true
-            });
-        }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "osascript",
-                Arguments = $"-e 'tell application \"Terminal\" to do script \"cd \\\"{absPath}\\\" && {command} {args}\"'",
-                UseShellExecute = true
-            });
-        }
-    }
-
-    private static bool IsCommandAvailable(string command)
-    {
-        string executor = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "where" : "which";
-        try
-        {
-            var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = executor,
-                Arguments = command,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            process?.WaitForExit();
-            string? output = process?.StandardOutput.ReadToEnd();
-            return process?.ExitCode == 0 && !string.IsNullOrWhiteSpace(output);
-        }
-        catch
-        {
-            return false;
+            return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim() + "\n" + ex.Message, -1);
         }
     }
 }
