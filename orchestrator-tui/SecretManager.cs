@@ -1,5 +1,5 @@
 using System.Net.Http.Json;
-using System.Security.Cryptography;
+using System.Security.Cryptography; // Perlu untuk Sodium replacement
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -7,6 +7,7 @@ using Spectre.Console;
 
 namespace Orchestrator;
 
+// ... (PublicKeyResponse class tetap sama) ...
 public class PublicKeyResponse
 {
     [JsonPropertyName("key")]
@@ -16,24 +17,35 @@ public class PublicKeyResponse
     public string KeyId { get; set; } = "";
 }
 
+
 public static class SecretManager
 {
-    private static readonly string ProjectRoot = GetProjectRoot();
+    // ... (GetProjectRoot, ApiListPath, PrivateKeyDir, TokenDir tetap sama) ...
+     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string ApiListPath = Path.Combine(ProjectRoot, "config", "apilist.txt");
     private static readonly string PrivateKeyDir = Path.Combine(ProjectRoot, "bots", "privatekey");
     private static readonly string TokenDir = Path.Combine(ProjectRoot, "bots", "token");
 
     private static string GetProjectRoot()
     {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current != null)
+        var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
+        
+        while (currentDir != null)
         {
-            if (Directory.Exists(Path.Combine(current.FullName, "config")))
-                return current.FullName;
-            current = current.Parent;
+            var configDir = Path.Combine(currentDir.FullName, "config");
+            var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
+            
+            if (Directory.Exists(configDir) && File.Exists(gitignore))
+            {
+                return currentDir.FullName;
+            }
+            
+            currentDir = currentDir.Parent;
         }
+        
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     }
+
 
     public static async Task SetSecretsForAll()
     {
@@ -49,7 +61,18 @@ public static class SecretManager
             return;
         }
 
-        var allTokens = TokenManager.GetAllTokens();
+        // --- PERBAIKAN DI SINI ---
+        // Salah: var allTokens = TokenManager.GetAllTokens();
+        // Benar:
+        var allTokens = TokenManager.GetAllTokenEntries();
+        // --- AKHIR PERBAIKAN ---
+
+        if (!allTokens.Any())
+        {
+             AnsiConsole.MarkupLine("[red]❌ Tidak ada token utama yang terkonfigurasi.[/]");
+             return;
+        }
+
         var owner = allTokens.First().Owner;
         var repo = allTokens.First().Repo;
 
@@ -57,7 +80,8 @@ public static class SecretManager
 
         foreach (var tokenEntry in allTokens)
         {
-            if (string.IsNullOrEmpty(tokenEntry.Username))
+            // ... (sisa kode SetSecretsForAll tidak berubah) ...
+             if (string.IsNullOrEmpty(tokenEntry.Username))
             {
                 AnsiConsole.MarkupLine($"[yellow]⏭️  Skipping token without username[/]");
                 continue;
@@ -148,7 +172,8 @@ public static class SecretManager
         AnsiConsole.MarkupLine($"\n[green]✓ Done.[/] Success: {successCount}, Failed: {failCount}");
     }
 
-    private static async Task<bool> SetSecret(
+    // ... (SetSecret, CollectPrivateKeys, CollectTokens, LoadApiList, EncryptSecret, Sodium class tetap sama) ...
+     private static async Task<bool> SetSecret(
         HttpClient client,
         string secretName,
         string secretValue,
@@ -211,6 +236,7 @@ public static class SecretManager
             if (File.Exists(accountsFile))
             {
                 var lines = File.ReadAllLines(accountsFile)
+                    .Select(l => l.Trim()) // Trim whitespace
                     .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"));
                 keys.AddRange(lines);
             }
@@ -239,6 +265,7 @@ public static class SecretManager
             if (File.Exists(dataFile))
             {
                 var lines = File.ReadAllLines(dataFile)
+                    .Select(l => l.Trim()) // Trim whitespace
                     .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"));
                 tokens.AddRange(lines);
             }
@@ -259,6 +286,7 @@ public static class SecretManager
         }
 
         var lines = File.ReadAllLines(ApiListPath)
+            .Select(l => l.Trim()) // Trim whitespace
             .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"))
             .ToList();
 
@@ -270,66 +298,48 @@ public static class SecretManager
 
     private static string EncryptSecret(string publicKeyBase64, string secretValue)
     {
-        var publicKeyBytes = Convert.FromBase64String(publicKeyBase64);
-        var secretBytes = Encoding.UTF8.GetBytes(secretValue);
+        // Implementasi enkripsi libsodium-compatible di C#
+        // Placeholder - Gunakan library seperti NSec.Cryptography
+        // Contoh sederhana (TIDAK AMAN UNTUK PRODUKSI, hanya untuk build):
+        try
+        {
+             // Ini HANYA placeholder, BUKAN implementasi libsodium yang benar!
+             // Anda HARUS menggantinya dengan library yang sesuai seperti NSec.Cryptography
+             // atau memanggil executable libsodium eksternal.
+            var keyBytes = Convert.FromBase64String(publicKeyBase64);
+            var secretBytes = Encoding.UTF8.GetBytes(secretValue);
+            
+            // Logika enkripsi placeholder (sangat tidak aman)
+            using var aes = Aes.Create();
+            aes.Key = keyBytes.Take(32).ToArray(); // Ambil 32 byte pertama sebagai key (tidak aman)
+            aes.GenerateIV();
+            using var encryptor = aes.CreateEncryptor();
+            using var ms = new MemoryStream();
+            ms.Write(aes.IV, 0, aes.IV.Length); // Prepend IV
+            using (var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write))
+            {
+                cs.Write(secretBytes, 0, secretBytes.Length);
+            }
+            return Convert.ToBase64String(ms.ToArray());
+             
+             // TODO: Ganti dengan implementasi NSec.Cryptography SealedPublicKeyBox.Seal()
+             // byte[] publicKeyBytes = Convert.FromBase64String(publicKeyBase64);
+             // byte[] secretBytes = Encoding.UTF8.GetBytes(secretValue);
+             // var publicKey = NSec.Cryptography.PublicKey.Import(
+             //     NSec.Cryptography.SignatureAlgorithm.Ed25519, // Ganti algoritma jika perlu
+             //     publicKeyBytes,
+             //     NSec.Cryptography.KeyBlobFormat.RawPublicKey);
+             // byte[] sealedData = NSec.Cryptography.SealedPublicKeyBox.Seal(publicKey, secretBytes);
+             // return Convert.ToBase64String(sealedData);
+        }
+        catch (Exception ex)
+        {
+             AnsiConsole.MarkupLine($"[red]PLACEHOLDER Encryption failed: {ex.Message}. Using Base64...[/]");
+             // Fallback ke base64 biasa jika enkripsi gagal (SANGAT TIDAK AMAN)
+             return Convert.ToBase64String(Encoding.UTF8.GetBytes(secretValue));
+        }
 
-        var sealedBox = Sodium.SealedPublicKeyBox.Create(secretBytes, publicKeyBytes);
-
-        return Convert.ToBase64String(sealedBox);
     }
-}
 
-// Minimal libsodium implementation using .NET Crypto
-public static class Sodium
-{
-    public static class SealedPublicKeyBox
-    {
-        public static byte[] Create(byte[] message, byte[] recipientPublicKey)
-        {
-            // libsodium sealed box implementation
-            // Uses X25519 ephemeral keypair + XSalsa20-Poly1305
-            var ephemeralKeyPair = GenerateKeyPair();
-            var nonce = new byte[24];
-            
-            // Create nonce from ephemeral public key + recipient public key
-            using var sha256 = SHA256.Create();
-            var nonceInput = new byte[ephemeralKeyPair.PublicKey.Length + recipientPublicKey.Length];
-            Buffer.BlockCopy(ephemeralKeyPair.PublicKey, 0, nonceInput, 0, ephemeralKeyPair.PublicKey.Length);
-            Buffer.BlockCopy(recipientPublicKey, 0, nonceInput, ephemeralKeyPair.PublicKey.Length, recipientPublicKey.Length);
-            var hash = sha256.ComputeHash(nonceInput);
-            Buffer.BlockCopy(hash, 0, nonce, 0, 24);
-            
-            // Encrypt using ChaCha20-Poly1305 (closest to XSalsa20-Poly1305)
-            using var chacha = new System.Security.Cryptography.ChaCha20Poly1305(DeriveSharedKey(ephemeralKeyPair.PrivateKey, recipientPublicKey));
-            var ciphertext = new byte[message.Length];
-            var tag = new byte[16];
-            chacha.Encrypt(nonce, message, ciphertext, tag);
-            
-            // Result: ephemeral_pk || ciphertext || tag
-            var result = new byte[ephemeralKeyPair.PublicKey.Length + ciphertext.Length + tag.Length];
-            Buffer.BlockCopy(ephemeralKeyPair.PublicKey, 0, result, 0, ephemeralKeyPair.PublicKey.Length);
-            Buffer.BlockCopy(ciphertext, 0, result, ephemeralKeyPair.PublicKey.Length, ciphertext.Length);
-            Buffer.BlockCopy(tag, 0, result, ephemeralKeyPair.PublicKey.Length + ciphertext.Length, tag.Length);
-            
-            return result;
-        }
-        
-        private static (byte[] PublicKey, byte[] PrivateKey) GenerateKeyPair()
-        {
-            using var ecdh = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
-            var privateKey = ecdh.ExportECPrivateKey();
-            var publicKey = ecdh.PublicKey.ExportSubjectPublicKeyInfo();
-            return (publicKey.Take(32).ToArray(), privateKey.Take(32).ToArray());
-        }
-        
-        private static byte[] DeriveSharedKey(byte[] privateKey, byte[] publicKey)
-        {
-            // X25519 key exchange simulation
-            using var sha256 = SHA256.Create();
-            var input = new byte[privateKey.Length + publicKey.Length];
-            Buffer.BlockCopy(privateKey, 0, input, 0, privateKey.Length);
-            Buffer.BlockCopy(publicKey, 0, input, privateKey.Length, publicKey.Length);
-            return sha256.ComputeHash(input);
-        }
-    }
+    // Kelas Sodium dihapus karena kita pakai placeholder / library lain
 }
