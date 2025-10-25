@@ -9,7 +9,7 @@ public static class ProxyManager
     private static readonly string ProxySyncScript = Path.Combine(ProxySyncDir, "main.py");
     private static readonly string ProxySyncReqs = Path.Combine(ProxySyncDir, "requirements.txt");
 
-    public static async Task DeployProxies()
+    public static async Task DeployProxies(CancellationToken cancellationToken = default) // Tambahkan CancellationToken
     {
         AnsiConsole.MarkupLine("[bold cyan]--- Menjalankan ProxySync (Lokal) ---[/]");
 
@@ -36,24 +36,25 @@ public static class ProxyManager
         // 2. Jalankan skrip ProxySync secara interaktif
         AnsiConsole.MarkupLine("\n[cyan]2. Menjalankan ProxySync...[/]");
         AnsiConsole.MarkupLine("[dim]   (Anda akan masuk ke UI interaktif ProxySync)[/]");
-        
-        // Hapus komentar ini setelah ShellHelper.RunInteractive (Part 4) ditambahkan
-        // try
-        // {
-        //     await ShellHelper.RunInteractive("python", $"\"{ProxySyncScript}\"", ProxySyncDir);
-        // }
-        // catch (Exception ex)
-        // {
-        //     AnsiConsole.MarkupLine($"[red]   Gagal menjalankan ProxySync: {ex.Message}[/]");
-        // }
 
-        // Placeholder sampai Part 4:
-        AnsiConsole.MarkupLine("[yellow]   (Placeholder: ShellHelper.RunInteractive akan ditambahkan di Part 4)[/]");
-        AnsiConsole.MarkupLine("[yellow]   (Untuk saat ini, jalankan 'python proxysync/main.py' manual jika perlu)[/]");
+        try
+        {
+            // Jalankan interaktif dengan CancellationToken
+            await ShellHelper.RunInteractive("python", $"\"{ProxySyncScript}\"", ProxySyncDir, null, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+             AnsiConsole.MarkupLine("[yellow]   ProxySync dibatalkan oleh user.[/]");
+             // Tidak perlu throw lagi, biarkan kembali ke menu
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]   Gagal menjalankan ProxySync: {ex.Message}[/]");
+        }
 
 
         AnsiConsole.MarkupLine("\n[bold green]✅ Proses ProxySync selesai.[/]");
-        AnsiConsole.MarkupLine("[dim]   File 'proxysync/proxy.txt' (master list) telah diperbarui.[/]");
+        AnsiConsole.MarkupLine("[dim]   File 'proxysync/proxy.txt' (master list) mungkin telah diperbarui.[/]");
         AnsiConsole.MarkupLine("[dim]   File ini akan di-upload ke Codespace pada 'Start/Manage'.[/]");
     }
 }
