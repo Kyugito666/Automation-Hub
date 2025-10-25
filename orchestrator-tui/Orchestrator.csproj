@@ -5,32 +5,13 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <BaseOutputPath>..\bin\</BaseOutputPath> 
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Spectre.Console" Version="0.49.1" />
-  </ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.49.1" /> 
+    </ItemGroup>
 
-  <ItemGroup>
-    <Content Include="../config/bots_config.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>config/bots_config.json</Link>
-    </Content>
-    <Content Include="../config/apilist.txt">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>config/apilist.txt</Link>
-    </Content>
-    <Content Include="../config/paths.txt">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>config/paths.txt</Link>
-    </Content>
-  </ItemGroup>
-
-  <ItemGroup>
-    <Content Include="..\pty-helper-node\pty-helper.exe" Condition="Exists('..\pty-helper-node\pty-helper.exe')">
-      <Link>pty-helper.exe</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
-
-</Project>
+  </Project>
