@@ -1,24 +1,80 @@
-# Abaikan SEMUA yang di-clone saat runtime
+# ============================================
+# AUTOMATION-HUB (Codespace Architecture) GITIGNORE
+# ============================================
+
+# --- CRITICAL: Runtime & State ---
+# Abaikan SEMUA yang di-clone/dibuat saat runtime di remote
+# TAPI JANGAN abaikan skrip deployer itu sendiri
 bots/*
 !bots/.gitkeep
 
-proxysync/
+# Abaikan folder proxysync (jika dikelola git terpisah, jika tidak, hapus baris ini)
+# proxysync/ 
 
-# File cache dan rahasia lainnya
-__pycache__/
-.venv/
-*.log
-*.env
-
-# File state & input rahasia dari Orchestrator
+# File state & cache dari Orchestrator TUI (LOKAL)
 .token-state.json
-.bot-inputs/
 .token-cache.json
-.encryption-key
 
-# Abaikan file .NET build (bin/obj)
+# Log remote
+startup.log
+
+# --- Python Cache & Venv ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+myenv/
+
+# --- Node Modules ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- .NET Build Artifacts ---
 **/bin/
 **/obj/
 
-# File log baru dari BotScanner
-.raw-bots.log
+# --- General Logs ---
+*.log
+*.log.*
+logs/
+*.log
+
+# --- Environment & Secrets ---
+# (Meskipun config utama di-commit, .env lokal JANGAN)
+.env
+.env.*
+*.env
+
+# --- IDE & Editor Files ---
+.vscode/
+.idea/
+*.suo
+*.user
+*.sln.docstates
+*.sw? # Vim swap files
+
+# --- OS Generated Files ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# --- Temporary & Backup Files ---
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# --- File yang TIDAK DIPAKAI lagi ---
+# .bot-inputs/
+# .encryption-key
