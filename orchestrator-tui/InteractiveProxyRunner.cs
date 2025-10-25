@@ -143,6 +143,8 @@ public static class InteractiveProxyRunner
             return;
         }
 
+        bool recordMode = false;
+
         if (!string.IsNullOrEmpty(inputFile) && File.Exists(inputFile))
         {
             try
@@ -167,15 +169,27 @@ public static class InteractiveProxyRunner
             {
                 AnsiConsole.MarkupLine($"[yellow]Warning: Could not parse answers: {ex.Message}[/]");
                 inputFile = null;
+                recordMode = true;
             }
+        }
+        else
+        {
+            recordMode = true;
         }
 
         AnsiConsole.MarkupLine("\n[cyan]Opening bot in external terminal...[/]");
         
-        ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args, inputFile);
+        ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args, inputFile, recordMode);
 
         AnsiConsole.MarkupLine("[dim]Press Enter when bot execution is complete...[/]");
         await WaitForEnterAsync(cancellationToken);
+        
+        if (recordMode)
+        {
+            AnsiConsole.MarkupLine("[yellow]REMINDER: Input recording complete.[/]");
+            AnsiConsole.MarkupLine($"[yellow]Create answer file manually at:[/]");
+            AnsiConsole.MarkupLine($"[dim]  {Path.Combine(BOT_ANSWERS_DIR, $"{SanitizeBotName(bot.Name)}.json")}[/]");
+        }
         
         AnsiConsole.MarkupLine("[green]Continuing to next step...[/]");
     }
