@@ -15,76 +15,11 @@ public static class InteractiveProxyRunner
 
     public static async Task CaptureAndTriggerBot(BotEntry bot, CancellationToken cancellationToken = default)
     {
-        AnsiConsole.MarkupLine($"[bold cyan]=== Proxy Mode: {bot.Name} ===[/]");
+        AnsiConsole.MarkupLine($"[bold cyan]=== Interactive Mode: {bot.Name} ===[/]");
+        AnsiConsole.MarkupLine("[yellow]Step 1: Run bot locally (manual interaction)[/]");
+        AnsiConsole.MarkupLine("[dim]You will interact with the bot normally in a new window[/]\n");
 
-        var answerFile = Path.Combine(BOT_ANSWERS_DIR, $"{SanitizeBotName(bot.Name)}.json");
-        bool hasAnswerFile = File.Exists(answerFile);
-
-        if (!hasAnswerFile)
-        {
-            CreateDefaultAnswerFile(bot, answerFile);
-            hasAnswerFile = File.Exists(answerFile);
-        }
-
-        bool isRawKeyboardBot = false;
-        if (hasAnswerFile)
-        {
-            try
-            {
-                var json = File.ReadAllText(answerFile);
-                var data = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                
-                if (data != null && data.ContainsKey("_bot_type") && data["_bot_type"] == "raw_keyboard")
-                {
-                    isRawKeyboardBot = true;
-                }
-            }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"[yellow]Warning: Could not parse answer file: {ex.Message}[/]");
-            }
-        }
-
-        if (isRawKeyboardBot)
-        {
-            AnsiConsole.MarkupLine("[yellow]⚠ RAW KEYBOARD bot detected (uses arrow keys)[/]");
-            AnsiConsole.MarkupLine("[red]Auto-answer NOT supported for this bot type[/]");
-            
-            var choice = AnsiConsole.Prompt(
-                new SelectionPrompt<string>()
-                    .Title("[cyan]How to proceed?[/]")
-                    .AddChoices(new[]
-                    {
-                        "1. Launch in separate terminal (manual interaction)",
-                        "2. Skip this bot"
-                    }));
-            
-            if (choice.StartsWith("1"))
-            {
-                await RunInExternalTerminal(bot, inputFile: null, cancellationToken);
-                if (!cancellationToken.IsCancellationRequested)
-                {
-                    await PromptAndTriggerRemote(bot, answerFile, cancellationToken);
-                }
-                return;
-            }
-            else
-            {
-                AnsiConsole.MarkupLine("[yellow]Bot skipped.[/]");
-                return;
-            }
-        }
-
-        if (hasAnswerFile)
-        {
-            AnsiConsole.MarkupLine("[yellow]Mode: AUTO-ANSWER (Using saved responses)[/]");
-            await RunInExternalTerminal(bot, answerFile, cancellationToken);
-        }
-        else
-        {
-            AnsiConsole.MarkupLine("[yellow]Mode: MANUAL (No answer file)[/]");
-            await RunInExternalTerminal(bot, inputFile: null, cancellationToken);
-        }
+        await RunInExternalTerminal(bot, cancellationToken);
 
         if (cancellationToken.IsCancellationRequested)
         {
@@ -92,37 +27,11 @@ public static class InteractiveProxyRunner
             return;
         }
 
+        var answerFile = Path.Combine(BOT_ANSWERS_DIR, $"{SanitizeBotName(bot.Name)}.json");
         await PromptAndTriggerRemote(bot, answerFile, cancellationToken);
     }
 
-    private static void CreateDefaultAnswerFile(BotEntry bot, string answerFile)
-    {
-        var answers = new Dictionary<string, string>();
-
-        if (bot.Name.Contains("Aster", StringComparison.OrdinalIgnoreCase))
-        {
-            answers["proxy_question"] = "y";
-        }
-        else
-        {
-            answers["proxy_question"] = "y";
-            answers["continue_question"] = "y";
-        }
-
-        try
-        {
-            Directory.CreateDirectory(BOT_ANSWERS_DIR);
-            var json = JsonSerializer.Serialize(answers, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(answerFile, json);
-            AnsiConsole.MarkupLine($"[green]✓ Created default answer file: {Path.GetFileName(answerFile)}[/]");
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Failed to create answer file: {ex.Message}[/]");
-        }
-    }
-
-    private static async Task RunInExternalTerminal(BotEntry bot, string? inputFile, CancellationToken cancellationToken)
+    private static async Task RunInExternalTerminal(BotEntry bot, CancellationToken cancellationToken)
     {
         var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
         if (!Directory.Exists(botPath))
@@ -143,62 +52,52 @@ public static class InteractiveProxyRunner
             return;
         }
 
-        bool recordMode = false;
-
-        if (!string.IsNullOrEmpty(inputFile) && File.Exists(inputFile))
-        {
-            try
-            {
-                var json = File.ReadAllText(inputFile);
-                var answers = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                
-                if (answers != null)
-                {
-                    var displayAnswers = answers.Where(x => !x.Key.StartsWith("_")).ToList();
-                    if (displayAnswers.Any())
-                    {
-                        AnsiConsole.MarkupLine("[green]Answers loaded:[/]");
-                        foreach (var kv in displayAnswers)
-                        {
-                            AnsiConsole.MarkupLine($"  [dim]{kv.Key}:[/] [yellow]{kv.Value}[/]");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"[yellow]Warning: Could not parse answers: {ex.Message}[/]");
-                inputFile = null;
-                recordMode = true;
-            }
-        }
-        else
-        {
-            recordMode = true;
-        }
-
         AnsiConsole.MarkupLine("\n[cyan]Opening bot in external terminal...[/]");
-        
-        ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args, inputFile, recordMode);
+        ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args);
 
-        AnsiConsole.MarkupLine("[dim]Press Enter when bot execution is complete...[/]");
+        AnsiConsole.MarkupLine("[yellow]After testing the bot:[/]");
+        AnsiConsole.MarkupLine("[dim]1. Note down your answers/choices[/]");
+        AnsiConsole.MarkupLine("[dim]2. Create answer file for remote execution (optional)[/]");
+        AnsiConsole.MarkupLine($"[dim]   Location: {Path.Combine(BOT_ANSWERS_DIR, $"{SanitizeBotName(bot.Name)}.json")}[/]");
+        AnsiConsole.MarkupLine($"[dim]   Format: {{ \"question1\": \"answer1\", \"question2\": \"answer2\" }}[/]");
+        AnsiConsole.MarkupLine("\n[dim]Press Enter when bot execution is complete...[/]");
+        
         await WaitForEnterAsync(cancellationToken);
-        
-        if (recordMode)
-        {
-            AnsiConsole.MarkupLine("[yellow]REMINDER: Input recording complete.[/]");
-            AnsiConsole.MarkupLine($"[yellow]Create answer file manually at:[/]");
-            AnsiConsole.MarkupLine($"[dim]  {Path.Combine(BOT_ANSWERS_DIR, $"{SanitizeBotName(bot.Name)}.json")}[/]");
-        }
-        
-        AnsiConsole.MarkupLine("[green]Continuing to next step...[/]");
+        AnsiConsole.MarkupLine("[green]✓ Local testing complete[/]");
     }
 
     private static async Task PromptAndTriggerRemote(BotEntry bot, string answerFile, CancellationToken cancellationToken)
     {
-        AnsiConsole.MarkupLine("\n[yellow]Step 2: Trigger remote execution on GitHub Actions?[/]");
+        AnsiConsole.MarkupLine("\n[bold yellow]Step 2: Trigger remote execution on GitHub Actions?[/]");
+        
+        Dictionary<string, string> capturedInputs = new();
+        
+        if (File.Exists(answerFile))
+        {
+            try
+            {
+                var json = File.ReadAllText(answerFile);
+                var allData = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
+                capturedInputs = allData.Where(x => !x.Key.StartsWith("_")).ToDictionary(x => x.Key, x => x.Value);
+                
+                if (capturedInputs.Any())
+                {
+                    AnsiConsole.MarkupLine($"[green]✓ Found answer file with {capturedInputs.Count} inputs[/]");
+                    AnsiConsole.MarkupLine("[dim]These will be sent to GitHub Actions for automation[/]");
+                }
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[yellow]Warning: Could not read answer file: {ex.Message}[/]");
+            }
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[yellow]⚠ No answer file found[/]");
+            AnsiConsole.MarkupLine("[dim]Remote bot will run without auto-input (may hang if bot needs input)[/]");
+        }
 
-        bool proceed = await ConfirmAsync("Lanjutkan trigger remote?", true, cancellationToken);
+        bool proceed = await ConfirmAsync("\nTrigger remote execution?", true, cancellationToken);
 
         if (cancellationToken.IsCancellationRequested) return;
 
@@ -207,26 +106,20 @@ public static class InteractiveProxyRunner
             AnsiConsole.MarkupLine("[yellow]Remote trigger skipped.[/]");
             return;
         }
-        
-        Dictionary<string, string> capturedInputs = new();
-        try
-        {
-            if (File.Exists(answerFile))
-            {
-                var json = File.ReadAllText(answerFile);
-                var allData = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
-                capturedInputs = allData.Where(x => !x.Key.StartsWith("_")).ToDictionary(x => x.Key, x => x.Value);
-                AnsiConsole.MarkupLine($"[dim]Sending {capturedInputs.Count} inputs to remote...[/]");
-            }
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Failed to read answers: {ex.Message}[/]");
-        }
 
-        AnsiConsole.MarkupLine("[cyan]Triggering remote job...[/]");
+        AnsiConsole.MarkupLine("[cyan]Triggering GitHub Actions workflow...[/]");
         await GitHubDispatcher.TriggerBotWithInputs(bot, capturedInputs);
         AnsiConsole.MarkupLine("\n[bold green]✅ Bot triggered remotely![/]");
+        
+        if (capturedInputs.Any())
+        {
+            AnsiConsole.MarkupLine($"[dim]Sent {capturedInputs.Count} inputs for automation[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[yellow]Note: Bot triggered without input data[/]");
+            AnsiConsole.MarkupLine("[dim]Check GitHub Actions logs if bot hangs[/]");
+        }
     }
 
     private static async Task<bool> ConfirmAsync(string prompt, bool defaultValue, CancellationToken cancellationToken)
