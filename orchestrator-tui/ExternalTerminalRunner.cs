@@ -26,8 +26,6 @@ public static class ExternalTerminalRunner
         LaunchInTerminal(scriptPath, botPath);
         AnsiConsole.MarkupLine("[green]✓ Bot launched with session recording[/]");
         AnsiConsole.MarkupLine($"[dim]Transcript will be saved to: {Path.GetFileName(transcriptFile)}[/]");
-        
-        return transcriptFile;
     }
 
     private static string? CreateRunnerScript(string botPath, string executor, string args, string transcriptFile)
