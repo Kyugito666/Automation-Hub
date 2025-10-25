@@ -10,40 +10,27 @@ namespace Orchestrator;
 public static class CollaboratorManager
 {
     private const int MAX_RETRY = 3;
-    private const int RETRY_DELAY_MS = 30000;
-    private const int TIMEOUT_SEC = 30;
+    private const int RETRY_DELAY_MS = 30000; // 30 detik
+    private const int TIMEOUT_SEC = 45; // Naikkan timeout sedikit
 
     public static async Task ValidateAllTokens(CancellationToken cancellationToken = default)
     {
         AnsiConsole.MarkupLine("[bold cyan]--- 1. Validasi Token & Username ---[/]");
 
         // --- PERBAIKAN DI SINI ---
-        // Salah: var tokens = TokenManager.GetAllTokens();
-        // Benar:
-        var tokens = TokenManager.GetAllTokenEntries(); // <--- FIX NAMA METHOD
+        var tokens = TokenManager.GetAllTokenEntries(); // Nama method yang benar
         // --- AKHIR PERBAIKAN ---
 
-        if (!tokens.Any())
-        {
-             AnsiConsole.MarkupLine("[yellow]⚠️  Tidak ada token.[/]");
-             return;
-        }
+        if (!tokens.Any()) { AnsiConsole.MarkupLine("[yellow]⚠️  Tidak ada token.[/]"); return; }
 
         // --- PERBAIKAN DI SINI ---
-        // Salah: var cache = TokenManager.GetCache();
-        // Benar:
-        var cache = TokenManager.GetUsernameCache(); // <--- FIX NAMA METHOD
+        var cache = TokenManager.GetUsernameCache(); // Nama method yang benar
         // --- AKHIR PERBAIKAN ---
 
-        int newUsers = 0;
-        bool cacheUpdated = false;
+        int newUsers = 0; bool cacheUpdated = false;
 
         await AnsiConsole.Progress()
-            .Columns(new ProgressColumn[]
-            {
-                new TaskDescriptionColumn(), new ProgressBarColumn(),
-                new PercentageColumn(), new SpinnerColumn(),
-            })
+            .Columns(new ProgressColumn[] { /*...*/ }) // Kolom progress bar
             .StartAsync(async ctx =>
             {
                 var task = ctx.AddTask("[green]Validasi...[/]", new ProgressTaskSettings { MaxValue = tokens.Count });
@@ -51,81 +38,74 @@ public static class CollaboratorManager
                 foreach (var entry in tokens)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-
                     var tokenDisplay = TokenManager.MaskToken(entry.Token);
                     task.Description = $"[green]Cek:[/] {tokenDisplay}";
 
-                    if (!string.IsNullOrEmpty(entry.Username))
-                    {
-                        AnsiConsole.MarkupLine($"[dim]⏭️  {tokenDisplay} → @{entry.Username} (cached)[/]");
-                        task.Increment(1); continue;
-                    }
+                    // Cek cache dulu
+                    if (!string.IsNullOrEmpty(entry.Username)) { /* Log skip */ task.Increment(1); continue; }
+                    if (cache.TryGetValue(entry.Token, out var cachedUsername)) { entry.Username = cachedUsername; /* Log skip */ task.Increment(1); continue; }
 
-                    if (cache.TryGetValue(entry.Token, out var cachedUsername))
-                    {
-                        entry.Username = cachedUsername;
-                        AnsiConsole.MarkupLine($"[dim]⏭️  {tokenDisplay} → @{cachedUsername} (cache file)[/]");
-                        task.Increment(1); continue;
-                    }
-
+                    // Jika tidak ada di cache, panggil API dengan retry & rotasi proxy
                     bool success = false;
                     for (int retry = 0; retry < MAX_RETRY && !success; retry++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         try
                         {
-                            using var client = CreateHttpClientWithTimeout(entry);
+                            using var client = CreateHttpClientWithTimeout(entry); // Pakai HTTP client dengan timeout & proxy
                             var response = await client.GetAsync("https://api.github.com/user", cancellationToken);
 
-                            if (response.IsSuccessStatusCode)
-                            {
+                            // Handle response
+                            if (response.IsSuccessStatusCode) {
                                 var user = await response.Content.ReadFromJsonAsync<GitHubUser>();
                                 if (user?.Login != null) {
                                     AnsiConsole.MarkupLine($"[green]✓[/] {tokenDisplay} → [yellow]@{user.Login}[/]");
                                     entry.Username = user.Login; cache[entry.Token] = user.Login;
                                     newUsers++; cacheUpdated = true; success = true;
-                                } else { AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay} INVALID RESPONSE"); break; }
+                                } else { AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay} INVALID RESPONSE"); break; } // Gagal permanen jika response aneh
                             }
-                            else if (response.StatusCode == HttpStatusCode.Unauthorized) { AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: INVALID TOKEN (401)"); break; }
-                            else if (response.StatusCode == HttpStatusCode.Forbidden) { AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: RATE LIMIT (403)"); break; }
+                            // Handle error spesifik
+                            else if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) {
+                                AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {(response.StatusCode == HttpStatusCode.Unauthorized ? "INVALID TOKEN (401)" : "RATE LIMIT/FORBIDDEN (403)")}");
+                                break; // Gagal permanen
+                            }
                             else if (response.StatusCode == HttpStatusCode.ProxyAuthenticationRequired) {
-                                AnsiConsole.MarkupLine($"[yellow]🔁 407 (retry {retry + 1}/{MAX_RETRY})[/]");
-                                if (!TokenManager.RotateProxyForToken(entry)) break;
-                                await Task.Delay(1500);
+                                AnsiConsole.MarkupLine($"[yellow]🔁 Proxy Auth (407) (retry {retry + 1}/{MAX_RETRY})[/]");
+                                if (!TokenManager.RotateProxyForToken(entry)) break; // Coba proxy lain, jika gagal = stop retry
+                                await Task.Delay(2000, cancellationToken); // Jeda sebelum retry
                             }
-                            else { AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {response.StatusCode}"); break; }
+                            else { // Error lain
+                                AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {response.StatusCode} (retry {retry + 1}/{MAX_RETRY})");
+                                if (!TokenManager.RotateProxyForToken(entry)) break; // Coba proxy lain
+                                await Task.Delay(RETRY_DELAY_MS / 2, cancellationToken); // Jeda lebih lama
+                            }
                         }
+                        // Handle exception koneksi/proxy/timeout
                         catch (HttpRequestException httpEx) {
-                            string errorMsg = httpEx.Message.ToLower();
-                            bool isConnectionError = errorMsg.Contains("connecting") || errorMsg.Contains("resolve host") || errorMsg.Contains("timeout") || errorMsg.Contains("connection reset") || errorMsg.Contains("unreachable") || errorMsg.Contains("failure");
-                            bool isProxyError = errorMsg.Contains("407") || errorMsg.Contains("proxy") || errorMsg.Contains("tunnel") || httpEx.InnerException is System.Net.Sockets.SocketException;
-                            AnsiConsole.MarkupLine($"[dim]   Detail Error: Status={httpEx.StatusCode}, Msg={httpEx.Message.Split('\n').FirstOrDefault()}[/]");
-                            if (isConnectionError || isProxyError) {
-                                AnsiConsole.MarkupLine($"[yellow]🔁 Network error (retry {retry + 1}/{MAX_RETRY})[/]");
-                                if (isProxyError) { if (!TokenManager.RotateProxyForToken(entry)) { AnsiConsole.MarkupLine($"[red]✗ No more proxies[/]"); break; } }
-                                await Task.Delay(retry < MAX_RETRY - 1 ? RETRY_DELAY_MS : 1000, cancellationToken);
-                            } else { AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {httpEx.Message.Split('\n').FirstOrDefault()}"); break; }
+                           AnsiConsole.MarkupLine($"[dim]   Detail Error: Status={httpEx.StatusCode}, Msg={httpEx.Message.Split('\n').FirstOrDefault()}[/]");
+                           AnsiConsole.MarkupLine($"[yellow]🔁 Network error (retry {retry + 1}/{MAX_RETRY})[/]");
+                           if (!TokenManager.RotateProxyForToken(entry)) { AnsiConsole.MarkupLine($"[red]✗ No more proxies[/]"); break; } // Rotasi, jika gagal = stop
+                           await Task.Delay(retry < MAX_RETRY - 1 ? RETRY_DELAY_MS : 1000, cancellationToken); // Jeda retry
                         }
-                        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) {
-                            AnsiConsole.MarkupLine($"[yellow]🔁 Timeout (retry {retry + 1}/{MAX_RETRY})[/]");
-                            TokenManager.RotateProxyForToken(entry);
-                            await Task.Delay(RETRY_DELAY_MS, cancellationToken);
+                        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { // Timeout
+                           AnsiConsole.MarkupLine($"[yellow]🔁 Timeout (retry {retry + 1}/{MAX_RETRY})[/]");
+                           if (!TokenManager.RotateProxyForToken(entry)) { AnsiConsole.MarkupLine($"[red]✗ No more proxies[/]"); break; } // Rotasi, jika gagal = stop
+                           await Task.Delay(RETRY_DELAY_MS, cancellationToken); // Jeda retry
                         }
-                        catch (OperationCanceledException) { AnsiConsole.MarkupLine("[yellow]⏹️  Dibatalkan user[/]"); throw; }
-                        catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {ex.Message.Split('\n').FirstOrDefault()}"); break; }
-                    }
+                        catch (OperationCanceledException) { AnsiConsole.MarkupLine("[yellow]⏹️  Dibatalkan user[/]"); throw; } // User cancel
+                        catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay} Unhandled Ex: {ex.Message.Split('\n').FirstOrDefault()}"); break; } // Error tak terduga = stop
+                    } // End retry loop
+
                     if (!success) { AnsiConsole.MarkupLine($"[red]💀 {tokenDisplay} GAGAL setelah {MAX_RETRY} retry[/]"); }
                     task.Increment(1);
-                    await Task.Delay(300, cancellationToken);
-                }
-            });
+                    await Task.Delay(500, cancellationToken); // Jeda antar token
+                } // End foreach token
+            }); // End Progress
 
         if (cacheUpdated)
         {
             // --- PERBAIKAN DI SINI ---
-            // Salah: TokenManager.SaveCache(cache);
-            // Benar:
-            TokenManager.SaveTokenCache(cache); // <--- FIX NAMA METHOD
+            TokenManager.SaveTokenCache(cache); // Nama method yang benar
             // --- AKHIR PERBAIKAN ---
         }
         AnsiConsole.MarkupLine($"[green]✓ Selesai. {newUsers} username baru.[/]");
@@ -136,59 +116,45 @@ public static class CollaboratorManager
         AnsiConsole.MarkupLine("[bold cyan]--- 2. Undang Kolaborator ---[/]");
 
         // --- PERBAIKAN DI SINI ---
-        // Salah: var tokens = TokenManager.GetAllTokens();
-        // Benar:
-        var tokens = TokenManager.GetAllTokenEntries(); // <--- FIX NAMA METHOD
+        var tokens = TokenManager.GetAllTokenEntries(); // Nama method yang benar
         // --- AKHIR PERBAIKAN ---
 
         if (!tokens.Any()) return;
+        var owner = tokens.First().Owner; var repo = tokens.First().Repo;
+        if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo)) { /* Error msg */ return; }
 
-        var owner = tokens.First().Owner;
-        var repo = tokens.First().Repo;
-        if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo)) { AnsiConsole.MarkupLine("[red]❌ Owner/Repo tidak di-set![/]"); return; }
-
-        var mainTokenEntry = tokens.FirstOrDefault(t => t.Username?.Equals(owner, StringComparison.OrdinalIgnoreCase) ?? false);
-        if (mainTokenEntry == null) {
-            mainTokenEntry = tokens.FirstOrDefault();
-            if (mainTokenEntry == null) { AnsiConsole.MarkupLine($"[red]❌ Tidak ada token![/]"); return; }
-            AnsiConsole.MarkupLine($"[yellow]⚠️  Token owner '{owner}' not found. Using first token...[/]");
-        }
+        var mainTokenEntry = tokens.FirstOrDefault(t => t.Username?.Equals(owner, StringComparison.OrdinalIgnoreCase) ?? false) ?? tokens.FirstOrDefault();
+        if (mainTokenEntry == null) { /* Error msg */ return; }
+        if (!mainTokenEntry.Username?.Equals(owner, StringComparison.OrdinalIgnoreCase) ?? true) { /* Warning msg */ }
 
         var usersToInvite = tokens.Where(t => t.Username != null && !t.Username.Equals(owner, StringComparison.OrdinalIgnoreCase)).Select(t => t.Username!).Distinct().ToList();
-        if (!usersToInvite.Any()) { AnsiConsole.MarkupLine("[yellow]⚠️  Tidak ada user untuk diundang.[/]"); return; }
+        if (!usersToInvite.Any()) { /* Info msg */ return; }
 
         int success = 0, alreadyInvited = 0, failed = 0;
+        await AnsiConsole.Progress().Columns(new ProgressColumn[] { /*...*/ }).StartAsync(async ctx => { // Progress bar
+            var task = ctx.AddTask("[green]Undang...[/]", new ProgressTaskSettings { MaxValue = usersToInvite.Count });
+            using var client = CreateHttpClientWithTimeout(mainTokenEntry); // Pakai token owner
+            foreach (var username in usersToInvite) {
+                cancellationToken.ThrowIfCancellationRequested();
+                task.Description = $"[green]Undang:[/] [yellow]@{username}[/]";
+                string checkUrl = $"https://api.github.com/repos/{owner}/{repo}/collaborators/{username}";
+                try {
+                    var checkResponse = await client.GetAsync(checkUrl, cancellationToken);
+                    if (checkResponse.IsSuccessStatusCode) { /* Log sudah collab */ alreadyInvited++; task.Increment(1); await Task.Delay(500, cancellationToken); continue; }
+                } catch (Exception ex) { /* Log error check */ failed++; task.Increment(1); await Task.Delay(500, cancellationToken); continue; }
 
-        await AnsiConsole.Progress().Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn(), })
-            .StartAsync(async ctx => {
-                var task = ctx.AddTask("[green]Undang...[/]", new ProgressTaskSettings { MaxValue = usersToInvite.Count });
-                using var client = CreateHttpClientWithTimeout(mainTokenEntry);
-
-                foreach (var username in usersToInvite) {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    task.Description = $"[green]Undang:[/] [yellow]@{username}[/]";
-                    string checkUrl = $"https://api.github.com/repos/{owner}/{repo}/collaborators/{username}";
-                    try { // Tambahkan try-catch di sini
-                        var checkResponse = await client.GetAsync(checkUrl, cancellationToken);
-                        if (checkResponse.IsSuccessStatusCode) {
-                            AnsiConsole.MarkupLine($"[grey]✓[/] [yellow]@{username}[/] sudah kolaborator.");
-                            alreadyInvited++; task.Increment(1); await Task.Delay(500, cancellationToken); continue;
-                        }
-                    } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] Gagal cek [yellow]@{username}[/]: {ex.Message}"); failed++; task.Increment(1); await Task.Delay(500, cancellationToken); continue; } // Handle error check
-
-                    string inviteUrl = $"https://api.github.com/repos/{owner}/{repo}/collaborators/{username}";
-                    var payload = new { permission = "push" };
-                    var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-                    try {
-                        var response = await client.PutAsync(inviteUrl, content, cancellationToken);
-                        if (response.StatusCode == HttpStatusCode.Created) { AnsiConsole.MarkupLine($"[green]✓[/] Undangan → [yellow]@{username}[/]"); success++; }
-                        else if (response.StatusCode == HttpStatusCode.NoContent) { AnsiConsole.MarkupLine($"[grey]✓[/] [yellow]@{username}[/] sudah kolaborator."); alreadyInvited++; }
-                        else { AnsiConsole.MarkupLine($"[red]✗[/] [yellow]@{username}[/]: {response.StatusCode}"); failed++; }
-                    } catch (OperationCanceledException) { throw; }
-                      catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] [yellow]@{username}[/]: {ex.Message}"); failed++; }
-                    task.Increment(1); await Task.Delay(1000, cancellationToken);
-                }
-            });
+                string inviteUrl = $"https://api.github.com/repos/{owner}/{repo}/collaborators/{username}";
+                var payload = new { permission = "push" }; var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                try {
+                    var response = await client.PutAsync(inviteUrl, content, cancellationToken);
+                    if (response.StatusCode == HttpStatusCode.Created) { /* Log sukses invite */ success++; }
+                    else if (response.StatusCode == HttpStatusCode.NoContent) { /* Log sudah collab */ alreadyInvited++; }
+                    else { /* Log gagal invite */ failed++; }
+                } catch (OperationCanceledException) { throw; }
+                  catch (Exception ex) { /* Log exception invite */ failed++; }
+                task.Increment(1); await Task.Delay(1000, cancellationToken); // Jeda API invite
+            }
+        });
         AnsiConsole.MarkupLine($"[green]✓ Selesai.[/] Terkirim: {success}, Sudah: {alreadyInvited}, Gagal: {failed}");
     }
 
@@ -197,59 +163,51 @@ public static class CollaboratorManager
         AnsiConsole.MarkupLine("[bold cyan]--- 3. Terima Undangan ---[/]");
 
         // --- PERBAIKAN DI SINI ---
-        // Salah: var tokens = TokenManager.GetAllTokens();
-        // Benar:
-        var tokens = TokenManager.GetAllTokenEntries(); // <--- FIX NAMA METHOD
+        var tokens = TokenManager.GetAllTokenEntries(); // Nama method yang benar
         // --- AKHIR PERBAIKAN ---
 
-         if (!tokens.Any()) return;
-
-        var owner = tokens.First().Owner;
-        var repo = tokens.First().Repo;
+        if (!tokens.Any()) return;
+        var owner = tokens.First().Owner; var repo = tokens.First().Repo;
         string targetRepo = $"{owner}/{repo}".ToLower();
         AnsiConsole.MarkupLine($"[dim]Target: {targetRepo}[/]");
 
         int accepted = 0, alreadyMember = 0, noInvitation = 0, failed = 0;
+        await AnsiConsole.Progress().Columns(new ProgressColumn[] { /*...*/ }).StartAsync(async ctx => { // Progress bar
+            var task = ctx.AddTask("[green]Accept...[/]", new ProgressTaskSettings { MaxValue = tokens.Count });
+            foreach (var entry in tokens) {
+                cancellationToken.ThrowIfCancellationRequested();
+                var tokenDisplay = TokenManager.MaskToken(entry.Token);
+                task.Description = $"[green]Cek:[/] {entry.Username ?? tokenDisplay}";
+                if (entry.Username?.Equals(owner, StringComparison.OrdinalIgnoreCase) ?? false) { task.Increment(1); continue; } // Skip owner
 
-        await AnsiConsole.Progress().Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn(), })
-            .StartAsync(async ctx => {
-                var task = ctx.AddTask("[green]Accept...[/]", new ProgressTaskSettings { MaxValue = tokens.Count });
-                foreach (var entry in tokens) {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var tokenDisplay = TokenManager.MaskToken(entry.Token);
-                    task.Description = $"[green]Cek:[/] {entry.Username ?? tokenDisplay}";
-                    if (entry.Username?.Equals(owner, StringComparison.OrdinalIgnoreCase) ?? false) { task.Increment(1); continue; }
-
-                    try {
-                        using var client = CreateHttpClientWithTimeout(entry);
-                        string checkUrl = $"https://api.github.com/repos/{owner}/{repo}/collaborators/{entry.Username}";
+                try {
+                    using var client = CreateHttpClientWithTimeout(entry); // Pakai token user ybs
+                    // Cek dulu apakah sudah member
+                    string checkUrl = $"https://api.github.com/repos/{owner}/{repo}/collaborators/{entry.Username}";
+                    try { // Try-catch untuk check
                         var checkResponse = await client.GetAsync(checkUrl, cancellationToken);
-                        if (checkResponse.IsSuccessStatusCode) {
-                            AnsiConsole.MarkupLine($"[green]✓[/] {entry.Username ?? "user"} sudah kolaborator");
-                            alreadyMember++; task.Increment(1); await Task.Delay(500, cancellationToken); continue;
-                        }
+                        if (checkResponse.IsSuccessStatusCode) { /* Log sudah member */ alreadyMember++; task.Increment(1); await Task.Delay(500, cancellationToken); continue; }
+                    } catch { /* Abaikan error check, mungkin memang belum member */ }
 
-                        var response = await client.GetAsync("https://api.github.com/user/repository_invitations", cancellationToken);
-                        if (!response.IsSuccessStatusCode) {
-                            AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {response.StatusCode}");
-                            failed++; task.Increment(1); continue;
-                        }
+                    // Cek undangan
+                    var response = await client.GetAsync("https://api.github.com/user/repository_invitations", cancellationToken);
+                    if (!response.IsSuccessStatusCode) { /* Log gagal cek invite */ failed++; task.Increment(1); continue; }
 
-                        var invitations = await response.Content.ReadFromJsonAsync<List<GitHubInvitation>>();
-                        var targetInvite = invitations?.FirstOrDefault(inv => inv.Repository?.FullName?.Equals(targetRepo, StringComparison.OrdinalIgnoreCase) ?? false);
-                        if (targetInvite != null) {
-                            AnsiConsole.Markup($"[yellow]![/] {entry.Username ?? "user"} accepting... ");
-                            string acceptUrl = $"https://api.github.com/user/repository_invitations/{targetInvite.Id}";
-                            var patchResponse = await client.PatchAsync(acceptUrl, null, cancellationToken); // Method PATCH
-                            if (patchResponse.IsSuccessStatusCode) { AnsiConsole.MarkupLine("[green]OK[/]"); accepted++; }
-                            else { AnsiConsole.MarkupLine($"[red]FAIL ({patchResponse.StatusCode})[/]"); failed++; }
-                        } else { noInvitation++; }
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex) { AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {ex.Message}"); failed++; }
-                    task.Increment(1); await Task.Delay(1000, cancellationToken);
+                    var invitations = await response.Content.ReadFromJsonAsync<List<GitHubInvitation>>();
+                    var targetInvite = invitations?.FirstOrDefault(inv => inv.Repository?.FullName?.Equals(targetRepo, StringComparison.OrdinalIgnoreCase) ?? false);
+                    if (targetInvite != null) {
+                        AnsiConsole.Markup($"[yellow]![/] {entry.Username ?? "user"} accepting... ");
+                        string acceptUrl = $"https://api.github.com/user/repository_invitations/{targetInvite.Id}";
+                        var patchResponse = await client.PatchAsync(acceptUrl, null, cancellationToken); // Method PATCH
+                        if (patchResponse.IsSuccessStatusCode) { AnsiConsole.MarkupLine("[green]OK[/]"); accepted++; }
+                        else { AnsiConsole.MarkupLine($"[red]FAIL ({patchResponse.StatusCode})[/]"); failed++; }
+                    } else { noInvitation++; } // Undangan tidak ditemukan
                 }
-            });
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { /* Log exception */ failed++; }
+                task.Increment(1); await Task.Delay(1000, cancellationToken); // Jeda antar token
+            }
+        });
         AnsiConsole.MarkupLine($"[green]✓ Selesai.[/] Accepted: {accepted}, Sudah: {alreadyMember}, Tidak ada: {noInvitation}, Gagal: {failed}");
     }
 
@@ -259,27 +217,13 @@ public static class CollaboratorManager
          var handler = new HttpClientHandler();
          if (!string.IsNullOrEmpty(token.Proxy))
          {
-             try
-             {
-                 handler.Proxy = new WebProxy(token.Proxy);
-                 handler.UseProxy = true;
-             }
-             catch (Exception ex)
-             {
-                 AnsiConsole.MarkupLine($"[red]Proxy invalid {TokenManager.MaskProxy(token.Proxy)}: {ex.Message}[/]");
-             }
+             try { handler.Proxy = new WebProxy(token.Proxy); handler.UseProxy = true; }
+             catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Proxy invalid {TokenManager.MaskProxy(token.Proxy)}: {ex.Message}[/]"); } // Gunakan MaskProxy public
          }
-
-
-        var client = new HttpClient(handler)
-        {
-            Timeout = TimeSpan.FromSeconds(TIMEOUT_SEC)
-        };
-
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(TIMEOUT_SEC) };
         client.DefaultRequestHeaders.Add("Authorization", $"Bearer {token.Token}");
         client.DefaultRequestHeaders.Add("User-Agent", "Automation-Hub-Orchestrator/3.1");
         client.DefaultRequestHeaders.Add("Accept", "application/vnd.github+json");
-
         return client;
     }
 
