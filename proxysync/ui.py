@@ -34,13 +34,21 @@ def display_main_menu():
     menu_table = Table(title="Main Menu", show_header=False, border_style="magenta")
     menu_table.add_column("Option", style="cyan", width=5)
     menu_table.add_column("Description")
-    menu_table.add_row("[1]", "Unduh Proksi dari Daftar API")
-    menu_table.add_row("[2]", "Konversi 'proxylist.txt'")
-    menu_table.add_row("[3]", "Jalankan Tes Akurat & Distribusi")
-    menu_table.add_row("[4]", "Kelola Path Target")
-    menu_table.add_row("[5]", "Keluar")
+    
+    # --- MENU YANG SUDAH DI-UPDATE ---
+    menu_table.add_row("[1]", "Sinkronisasi IP Otorisasi Webshare")
+    menu_table.add_row("[2]", "Unduh Proksi dari Daftar API")
+    menu_table.add_row("[3]", "Konversi 'proxylist.txt'")
+    menu_table.add_row("[4]", "Jalankan Tes Akurat & Distribusi")
+    menu_table.add_row("[5]", "Kelola Path Target")
+    menu_table.add_row("[6]", "Keluar")
+    # --- AKHIR PERUBAHAN ---
+    
     console.print(Align.center(menu_table))
-    return Prompt.ask("Pilih opsi", choices=["1", "2", "3", "4", "5"], default="5")
+    
+    # --- PILIHAN YANG SUDAH DI-UPDATE ---
+    return Prompt.ask("Pilih opsi", choices=["1", "2", "3", "4", "5", "6"], default="6")
+    # --- AKHIR PERUBAHAN ---
 
 def fetch_from_api(url):
     """Fungsi pembantu untuk mengunduh dari satu URL API dengan mekanisme backoff."""
@@ -81,7 +89,6 @@ def run_sequential_api_downloads(urls):
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         console=console
     )
-    # --- LOGIKA BARU: MENGGUNAKAN LOOP BIASA, BUKAN THREADPOOL ---
     with Live(progress):
         task = progress.add_task("[cyan]Mengunduh satu per satu (mode andal)...[/cyan]", total=len(urls))
         for url in urls:
