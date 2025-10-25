@@ -19,6 +19,8 @@ from collections import deque
 # Force UTF-8 encoding for stdout/stderr
 if sys.platform == 'win32':
     import io
+    # Enable Windows UTF-8 console mode
+    os.system('chcp 65001 >nul 2>&1')
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
