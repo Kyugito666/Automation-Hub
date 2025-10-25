@@ -5,7 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
 
-namespace OrchestratorV2;
+namespace Orchestrator;
 
 public class PublicKeyResponse
 {
