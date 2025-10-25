@@ -12,6 +12,7 @@ import threading
 import time
 import signal
 import shutil
+import re
 from pathlib import Path
 
 # Force UTF-8 encoding for stdout/stderr
@@ -130,11 +131,59 @@ def detect_error_type(error_msg):
     else:
         return 'unknown'
 
+def wait_for_prompt(process, timeout=5.0):
+    """
+    Wait for prompt indicators before sending input
+    Returns True if prompt detected, False if timeout
+    """
+    prompt_patterns = [
+        r'pilih.*\[',        # "Pilih Antara [1/2/3]"
+        r'enter.*:',         # "Enter your choice:"
+        r'select.*:',        # "Select option:"
+        r'\[.*\]\s*->\s*$',  # "[1/2/3] -> "
+        r'>\s*$',            # Generic ">"
+        r':\s*$',            # Generic ":"
+    ]
+    
+    start_time = time.time()
+    buffer = ""
+    
+    while time.time() - start_time < timeout:
+        if process.poll() is not None:
+            return False
+        
+        try:
+            chunk = process.stdout.read(1)
+            if not chunk:
+                time.sleep(0.05)
+                continue
+            
+            char = chunk.decode('utf-8', errors='replace')
+            buffer += char
+            print(char, end='', flush=True)
+            
+            # Keep only last 200 chars for pattern matching
+            if len(buffer) > 200:
+                buffer = buffer[-200:]
+            
+            # Check if any prompt pattern matches
+            for pattern in prompt_patterns:
+                if re.search(pattern, buffer, re.IGNORECASE):
+                    log_info(f"Prompt detected: {pattern}")
+                    return True
+                    
+        except Exception as e:
+            log_warn(f"Error reading prompt: {e}")
+            time.sleep(0.05)
+    
+    log_warn(f"Prompt wait timeout ({timeout}s)")
+    return False
+
 def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
-    """Strategy 1: Standard mode dengan stdin pipe"""
+    """Strategy 1: Standard mode dengan prompt detection"""
     global _current_process
     
-    log_info("Trying Strategy 1: Standard stdin pipe")
+    log_info("Trying Strategy 1: Standard stdin pipe with prompt detection")
     
     resolved_cmd = resolve_command(command)
     cmd_list = [resolved_cmd] + args
@@ -143,6 +192,7 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
     env = os.environ.copy()
     if sys.platform == 'win32':
         env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONUNBUFFERED'] = '1'
     
     _current_process = subprocess.Popen(
         cmd_list,
@@ -151,16 +201,36 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         shell=use_shell,
-        env=env
+        env=env,
+        bufsize=0  # Unbuffered
     )
+    
+    input_lines = inputs.strip().split('\n')
+    input_index = [0]  # Mutable container for closure
     
     def send_input():
         try:
-            time.sleep(0.5)
-            _current_process.stdin.write(inputs.encode('utf-8'))
-            _current_process.stdin.flush()
+            for i, line in enumerate(input_lines):
+                # Wait for prompt before sending input
+                if not wait_for_prompt(_current_process, timeout=8.0):
+                    log_warn(f"No prompt detected before input {i+1}, sending anyway...")
+                    time.sleep(0.5)
+                
+                if _current_process.poll() is not None:
+                    log_info(f"Process ended before input {i+1}")
+                    break
+                
+                log_info(f"Sending input {i+1}/{len(input_lines)}: {line[:50]}")
+                _current_process.stdin.write((line + '\n').encode('utf-8'))
+                _current_process.stdin.flush()
+                time.sleep(0.2)
+                
+                input_index[0] = i + 1
             
-            # Keep stdin alive
+            # Wait a bit for final output
+            time.sleep(0.5)
+            
+            # Keep stdin alive until process ends
             while _current_process.poll() is None:
                 time.sleep(0.1)
             
@@ -168,6 +238,9 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
                 _current_process.stdin.close()
             except:
                 pass
+                
+        except BrokenPipeError:
+            log_info("Process closed stdin (normal for some bots)")
         except Exception as e:
             log_warn(f"Input thread error: {e}")
     
@@ -175,18 +248,29 @@ def run_with_script_strategy_1(input_file, command, args, cwd, inputs):
     input_thread.start()
     
     output = []
-    while True:
-        chunk = _current_process.stdout.read(1024)
-        if not chunk:
-            break
-        text = chunk.decode('utf-8', errors='replace')
-        print(text, end='', flush=True)
-        output.append(text)
+    try:
+        while True:
+            chunk = _current_process.stdout.read(1024)
+            if not chunk:
+                break
+            text = chunk.decode('utf-8', errors='replace')
+            # Don't print here - already printed in wait_for_prompt
+            output.append(text)
+    except Exception as e:
+        log_warn(f"Output read error: {e}")
     
     returncode = _current_process.wait()
+    input_thread.join(timeout=2)
     _current_process = None
     
-    return returncode, ''.join(output)
+    full_output = ''.join(output)
+    
+    # Check for WinError 6 in output
+    if 'winerror 6' in full_output.lower() or 'handle is invalid' in full_output.lower():
+        log_warn("Detected WinError 6 in output, strategy failed")
+        raise Exception("WinError 6: The handle is invalid")
+    
+    return returncode, full_output
 
 def run_with_script_strategy_2(input_file, command, args, cwd, inputs):
     """Strategy 2: Temp file mode (untuk handle error Windows)"""
@@ -209,6 +293,7 @@ def run_with_script_strategy_2(input_file, command, args, cwd, inputs):
         env = os.environ.copy()
         if sys.platform == 'win32':
             env['PYTHONIOENCODING'] = 'utf-8'
+            env['PYTHONUNBUFFERED'] = '1'
         
         # Redirect stdin from file instead of pipe
         with open(temp_input, 'r', encoding='utf-8') as input_f:
@@ -363,6 +448,12 @@ def run_with_script(input_file, command, args, cwd):
                 
                 # Check if output contains error
                 error_type = detect_error_type(output)
+                
+                if error_type == 'stdin_handle_error':
+                    log_warn(f"Strategy {i} hit WinError 6, trying next strategy...")
+                    if i < len(strategies):
+                        time.sleep(1)
+                        continue
                 
                 if error_type == 'unknown' or returncode == 0:
                     log_info(f"Strategy {i} succeeded with exit code {returncode}")
