@@ -6,21 +6,15 @@ namespace Orchestrator;
 
 public static class CodespaceManager
 {
-    // Kita hanya mengizinkan 1 codespace runner per repo
     private const string CODESPACE_DISPLAY_NAME = "automation-hub-runner";
-    private const string MACHINE_TYPE = "standardLinux16gb"; // 4-core, 16GB RAM
+    private const string MACHINE_TYPE = "standardLinux16gb";
     private const int SSH_TIMEOUT_MS = 30000;
-    private const int CREATE_TIMEOUT_MS = 600000; // 10 menit
+    private const int CREATE_TIMEOUT_MS = 600000;
 
-    // Path di root project
     private static readonly string ConfigRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "config"));
     private static readonly string ProjectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string MasterProxyFile = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
 
-    /// <summary>
-    /// Inti: Memastikan 1 codespace sehat berjalan menggunakan token saat ini.
-    /// Akan reuse, delete+recreate, atau create baru.
-    /// </summary>
     public static async Task<string> EnsureHealthyCodespace(TokenEntry token)
     {
         AnsiConsole.MarkupLine("\n[cyan]Inspecting existing codespaces...[/]");
@@ -34,7 +28,6 @@ public static class CodespaceManager
             {
                 AnsiConsole.MarkupLine($"[green]✓ Found existing runner:[/][dim] {existing.Name} (State: {existing.State})[/]");
 
-                // 1. Jika state "Available", cek SSH
                 if (existing.State == "Available")
                 {
                     if (await CheckSshHealth(token, existing.Name))
@@ -50,7 +43,6 @@ public static class CodespaceManager
                     AnsiConsole.MarkupLine($"[yellow]  Codespace state is '{existing.State}', not 'Available'. Deleting...[/]");
                 }
 
-                // 2. Jika tidak sehat atau state jelek, hapus
                 await DeleteCodespace(token, existing.Name);
             }
             else
@@ -58,14 +50,12 @@ public static class CodespaceManager
                 AnsiConsole.MarkupLine("[yellow]No existing runner found.[/]");
             }
             
-            // 3. Hapus codespace lain (jika ada) yang mungkin stuck
             foreach (var cs in all.Where(cs => cs.Name != existing?.Name && cs.DisplayName == CODESPACE_DISPLAY_NAME))
             {
                 AnsiConsole.MarkupLine($"[yellow]Deleting STUCK codespace: {cs.Name} (State: {cs.State})[/]");
                 await DeleteCodespace(token, cs.Name);
             }
 
-            // 4. Buat baru
             AnsiConsole.MarkupLine($"[cyan]Creating new '{CODESPACE_DISPLAY_NAME}' ({MACHINE_TYPE})...[/]");
             AnsiConsole.MarkupLine("[dim]This may take several minutes...[/]");
             
@@ -87,25 +77,18 @@ public static class CodespaceManager
             {
                  AnsiConsole.MarkupLine("[red]Ini kemungkinan besar masalah kuota. Coba rotasi token.[/]");
             }
-            throw; // Lemparkan ke loop utama untuk rotasi token
+            throw;
         }
     }
 
-    /// <summary>
-    /// Upload semua file konfigurasi yang dibutuhkan oleh deploy_bots.py
-    /// </summary>
     public static async Task UploadConfigs(TokenEntry token, string codespaceName)
     {
         AnsiConsole.MarkupLine("\n[cyan]Uploading configs to codespace...[/]");
         string remoteDir = $"/workspaces/{token.Repo}/config";
 
-        // 1. Upload bots_config.json
         await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "bots_config.json"), $"{remoteDir}/bots_config.json");
-        // 2. Upload apilist.txt
         await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "apilist.txt"), $"{remoteDir}/apilist.txt");
-        // 3. Upload paths.txt
         await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "paths.txt"), $"{remoteDir}/paths.txt");
-        // 4. Upload proxy.txt (yang sudah di-generate lokal)
         await UploadFile(token, codespaceName, MasterProxyFile, $"{remoteDir}/proxy.txt");
     }
 
@@ -122,15 +105,11 @@ public static class CodespaceManager
         AnsiConsole.MarkupLine("[green]Done[/]");
     }
 
-    /// <summary>
-    /// Menjalankan auto-start.sh di remote secara non-blocking (nohup)
-    /// </summary>
     public static async Task TriggerStartupScript(TokenEntry token, string codespaceName)
     {
         AnsiConsole.MarkupLine("\n[cyan]Triggering remote startup script (auto-start.sh)...[/]");
         string remoteScript = $"/workspaces/{token.Repo}/auto-start.sh";
         
-        // Gunakan 'nohup ... &' untuk detachment
         string cmd = $"\"nohup bash {remoteScript} > /tmp/startup.log 2>&1 &\"";
         string args = $"codespace ssh -c {codespaceName} -- {cmd}";
 
@@ -154,7 +133,7 @@ public static class CodespaceManager
         }
     }
 
-    private static async Task<bool> CheckSshHealth(TokenEntry token, string codespaceName)
+    public static async Task<bool> CheckSshHealth(TokenEntry token, string codespaceName) // UBAH JADI PUBLIC
     {
         try
         {
@@ -181,7 +160,6 @@ public static class CodespaceManager
         return (existing, allCodespaces);
     }
     
-    // Helper class untuk parsing JSON
     private class CodespaceInfo
     {
         [JsonPropertyName("name")]
