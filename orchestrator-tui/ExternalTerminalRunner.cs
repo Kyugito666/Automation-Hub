@@ -3,6 +3,8 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
 using Spectre.Console;
+using System.Text;
+using System.Linq;
 
 namespace Orchestrator;
 
@@ -31,10 +33,14 @@ public static class ExternalTerminalRunner
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 var batchPath = Path.Combine(botPath, "_run_bot.bat");
-                using (var writer = new StreamWriter(batchPath, false, System.Text.Encoding.UTF8))
+                
+                // CRITICAL FIX: UTF-8 WITHOUT BOM
+                var utf8WithoutBom = new UTF8Encoding(false);
+                
+                using (var writer = new StreamWriter(batchPath, false, utf8WithoutBom))
                 {
                     writer.WriteLine("@echo off");
-                    writer.WriteLine("chcp 65001 >nul");
+                    writer.WriteLine("chcp 65001 >nul 2>&1");
                     writer.WriteLine($"cd /d \"{botPath}\"");
                     writer.WriteLine("echo ========================================");
                     writer.WriteLine($"echo Running: {Path.GetFileName(botPath)}");
@@ -46,20 +52,41 @@ public static class ExternalTerminalRunner
                         writer.WriteLine($"echo Using auto-input from: {Path.GetFileName(inputFile)}");
                         writer.WriteLine();
                         
-                        // Convert JSON to text input
                         var inputTextFile = ConvertJsonToTextInput(inputFile, botPath);
                         if (!string.IsNullOrEmpty(inputTextFile))
                         {
-                            writer.WriteLine($"\"{executor}\" {args} < \"{inputTextFile}\"");
+                            // FIX: Use node directly for npm start (bypass npm.cmd issues)
+                            if (executor.Contains("npm") && args == "start")
+                            {
+                                writer.WriteLine($"node index.js < \"{inputTextFile}\"");
+                            }
+                            else
+                            {
+                                writer.WriteLine($"\"{executor}\" {args} < \"{inputTextFile}\"");
+                            }
+                        }
+                        else
+                        {
+                            if (executor.Contains("npm") && args == "start")
+                            {
+                                writer.WriteLine("node index.js");
+                            }
+                            else
+                            {
+                                writer.WriteLine($"\"{executor}\" {args}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (executor.Contains("npm") && args == "start")
+                        {
+                            writer.WriteLine("node index.js");
                         }
                         else
                         {
                             writer.WriteLine($"\"{executor}\" {args}");
                         }
-                    }
-                    else
-                    {
-                        writer.WriteLine($"\"{executor}\" {args}");
                     }
                     
                     writer.WriteLine();
@@ -69,12 +96,14 @@ public static class ExternalTerminalRunner
                     writer.WriteLine("pause >nul");
                 }
                 
+                AnsiConsole.MarkupLine($"[dim]Created script: {Path.GetFileName(batchPath)}[/]");
                 return batchPath;
             }
             else
             {
                 var shellPath = Path.Combine(botPath, "_run_bot.sh");
-                using (var writer = new StreamWriter(shellPath, false, System.Text.Encoding.UTF8))
+                
+                using (var writer = new StreamWriter(shellPath, false, new UTF8Encoding(false)))
                 {
                     writer.WriteLine("#!/bin/bash");
                     writer.WriteLine($"cd \"{botPath}\"");
@@ -91,16 +120,37 @@ public static class ExternalTerminalRunner
                         var inputTextFile = ConvertJsonToTextInput(inputFile, botPath);
                         if (!string.IsNullOrEmpty(inputTextFile))
                         {
-                            writer.WriteLine($"\"{executor}\" {args} < \"{inputTextFile}\"");
+                            if (executor.Contains("npm") && args == "start")
+                            {
+                                writer.WriteLine($"node index.js < \"{inputTextFile}\"");
+                            }
+                            else
+                            {
+                                writer.WriteLine($"\"{executor}\" {args} < \"{inputTextFile}\"");
+                            }
+                        }
+                        else
+                        {
+                            if (executor.Contains("npm") && args == "start")
+                            {
+                                writer.WriteLine("node index.js");
+                            }
+                            else
+                            {
+                                writer.WriteLine($"\"{executor}\" {args}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (executor.Contains("npm") && args == "start")
+                        {
+                            writer.WriteLine("node index.js");
                         }
                         else
                         {
                             writer.WriteLine($"\"{executor}\" {args}");
                         }
-                    }
-                    else
-                    {
-                        writer.WriteLine($"\"{executor}\" {args}");
                     }
                     
                     writer.WriteLine();
@@ -111,6 +161,7 @@ public static class ExternalTerminalRunner
                 }
                 
                 File.SetUnixFileMode(shellPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                AnsiConsole.MarkupLine($"[dim]Created script: {Path.GetFileName(shellPath)}[/]");
                 return shellPath;
             }
         }
@@ -133,7 +184,9 @@ public static class ExternalTerminalRunner
             var textFile = Path.Combine(botPath, "_auto_input.txt");
             var lines = data.Where(x => !x.Key.StartsWith("_")).Select(x => x.Value);
             
-            File.WriteAllLines(textFile, lines, System.Text.Encoding.UTF8);
+            // CRITICAL FIX: UTF-8 WITHOUT BOM
+            var utf8WithoutBom = new UTF8Encoding(false);
+            File.WriteAllLines(textFile, lines, utf8WithoutBom);
             
             AnsiConsole.MarkupLine($"[dim]Created input file: {Path.GetFileName(textFile)} ({lines.Count()} lines)[/]");
             return textFile;
