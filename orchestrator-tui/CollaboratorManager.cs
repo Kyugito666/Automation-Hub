@@ -13,7 +13,7 @@ public static class CollaboratorManager
     private const int RETRY_DELAY_MS = 30000;
     private const int TIMEOUT_SEC = 30;
 
-    public static async Task ValidateAllTokens()
+    public static async Task ValidateAllTokens(CancellationToken cancellationToken = default)
     {
         AnsiConsole.MarkupLine("[bold cyan]--- 1. Validasi Token & Username ---[/]");
         var tokens = TokenManager.GetAllTokenEntries();
@@ -41,6 +41,8 @@ public static class CollaboratorManager
 
                 foreach (var entry in tokens)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    
                     var tokenDisplay = TokenManager.MaskToken(entry.Token);
                     task.Description = $"[green]Cek:[/] {tokenDisplay}";
 
@@ -62,10 +64,12 @@ public static class CollaboratorManager
                     bool success = false;
                     for (int retry = 0; retry < MAX_RETRY && !success; retry++)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        
                         try
                         {
                             using var client = CreateHttpClientWithTimeout(entry);
-                            var response = await client.GetAsync("https://api.github.com/user");
+                            var response = await client.GetAsync("https://api.github.com/user", cancellationToken);
 
                             if (response.IsSuccessStatusCode)
                             {
@@ -103,6 +107,7 @@ public static class CollaboratorManager
                                     break;
                                 }
                                 await Task.Delay(1500);
+                                // JANGAN break, lanjut retry
                             }
                             else
                             {
@@ -131,13 +136,17 @@ public static class CollaboratorManager
                             {
                                 AnsiConsole.MarkupLine($"[yellow]🔁 Network error (retry {retry + 1}/{MAX_RETRY})[/]");
                                 
-                                if (isProxyError && !TokenManager.RotateProxyForToken(entry))
+                                if (isProxyError)
                                 {
-                                    AnsiConsole.MarkupLine($"[red]✗ No more proxies[/]");
-                                    break;
+                                    if (!TokenManager.RotateProxyForToken(entry))
+                                    {
+                                        AnsiConsole.MarkupLine($"[red]✗ No more proxies[/]");
+                                        break;
+                                    }
                                 }
                                 
-                                await Task.Delay(retry < MAX_RETRY - 1 ? RETRY_DELAY_MS : 1000);
+                                await Task.Delay(retry < MAX_RETRY - 1 ? RETRY_DELAY_MS : 1000, cancellationToken);
+                                // JANGAN break, lanjut retry
                             }
                             else
                             {
@@ -145,16 +154,19 @@ public static class CollaboratorManager
                                 break;
                             }
                         }
-                        catch (TaskCanceledException)
+                        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
                         {
                             AnsiConsole.MarkupLine($"[yellow]🔁 Timeout (retry {retry + 1}/{MAX_RETRY})[/]");
                             
-                            if (!TokenManager.RotateProxyForToken(entry))
-                            {
-                                break;
-                            }
+                            TokenManager.RotateProxyForToken(entry);
                             
-                            await Task.Delay(RETRY_DELAY_MS);
+                            await Task.Delay(RETRY_DELAY_MS, cancellationToken);
+                            // JANGAN break, lanjut retry
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            AnsiConsole.MarkupLine("[yellow]⏹️  Dibatalkan user[/]");
+                            throw;
                         }
                         catch (Exception ex)
                         {
@@ -169,7 +181,7 @@ public static class CollaboratorManager
                     }
 
                     task.Increment(1);
-                    await Task.Delay(300);
+                    await Task.Delay(300, cancellationToken);
                 }
             });
 
@@ -201,7 +213,7 @@ public static class CollaboratorManager
         return client;
     }
 
-    public static async Task InviteCollaborators()
+    public static async Task InviteCollaborators(CancellationToken cancellationToken = default)
     {
         AnsiConsole.MarkupLine("[bold cyan]--- 2. Undang Kolaborator ---[/]");
         var tokens = TokenManager.GetAllTokenEntries();
@@ -259,6 +271,8 @@ public static class CollaboratorManager
 
                 foreach (var username in usersToInvite)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    
                     task.Description = $"[green]Undang:[/] [yellow]@{username}[/]";
                     
                     string checkUrl = $"https://api.github.com/repos/{owner}/{repo}/collaborators/{username}";
@@ -311,7 +325,7 @@ public static class CollaboratorManager
         AnsiConsole.MarkupLine($"[green]✓ Selesai.[/] Terkirim: {success}, Sudah: {alreadyInvited}, Gagal: {failed}");
     }
 
-    public static async Task AcceptInvitations()
+    public static async Task AcceptInvitations(CancellationToken cancellationToken = default)
     {
         AnsiConsole.MarkupLine("[bold cyan]--- 3. Terima Undangan ---[/]");
         var tokens = TokenManager.GetAllTokenEntries();
@@ -341,6 +355,8 @@ public static class CollaboratorManager
 
                 foreach (var entry in tokens)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    
                     var tokenDisplay = TokenManager.MaskToken(entry.Token);
                     task.Description = $"[green]Cek:[/] {entry.Username ?? tokenDisplay}";
 
