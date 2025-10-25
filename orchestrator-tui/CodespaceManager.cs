@@ -2,22 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
 
-namespace OrchestratorV2;
-
-public class CodespaceInfo
-{
-    [JsonPropertyName("name")]
-    public string Name { get; set; } = "";
-
-    [JsonPropertyName("displayName")]
-    public string DisplayName { get; set; } = "";
-
-    [JsonPropertyName("state")]
-    public string State { get; set; } = "";
-
-    [JsonPropertyName("machineName")]
-    public string MachineName { get; set; } = "";
-}
+namespace Orchestrator;
 
 public static class CodespaceManager
 {
@@ -32,13 +17,21 @@ public static class CodespaceManager
 
     private static string GetProjectRoot()
     {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current != null)
+        var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
+        
+        while (currentDir != null)
         {
-            if (Directory.Exists(Path.Combine(current.FullName, "config")))
-                return current.FullName;
-            current = current.Parent;
+            var configDir = Path.Combine(currentDir.FullName, "config");
+            var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
+            
+            if (Directory.Exists(configDir) && File.Exists(gitignore))
+            {
+                return currentDir.FullName;
+            }
+            
+            currentDir = currentDir.Parent;
         }
+        
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     }
 
@@ -46,14 +39,14 @@ public static class CodespaceManager
     {
         AnsiConsole.MarkupLine("\n[cyan]Inspecting existing codespaces...[/]");
         string repoFullName = $"{token.Owner}/{token.Repo}";
-
+        
         try
         {
             var (existing, all) = await FindExistingCodespace(token);
 
             if (existing != null)
             {
-                AnsiConsole.MarkupLine($"[green]✓ Found existing runner:[/] {existing.Name} (State: {existing.State})");
+                AnsiConsole.MarkupLine($"[green]✓ Found existing runner:[/][dim] {existing.Name} (State: {existing.State})[/]");
 
                 if (existing.State == "Available")
                 {
@@ -62,7 +55,7 @@ public static class CodespaceManager
                         AnsiConsole.MarkupLine("[green]  ✓ Health check PASSED. Reusing this codespace.[/]");
                         return existing.Name;
                     }
-
+                    
                     AnsiConsole.MarkupLine("[red]  ✗ Health check FAILED. Deleting unhealthy codespace...[/]");
                 }
                 else
@@ -76,7 +69,7 @@ public static class CodespaceManager
             {
                 AnsiConsole.MarkupLine("[yellow]No existing runner found.[/]");
             }
-
+            
             foreach (var cs in all.Where(cs => cs.Name != existing?.Name && cs.DisplayName == CODESPACE_DISPLAY_NAME))
             {
                 AnsiConsole.MarkupLine($"[yellow]Deleting STUCK codespace: {cs.Name} (State: {cs.State})[/]");
@@ -85,24 +78,24 @@ public static class CodespaceManager
 
             AnsiConsole.MarkupLine($"[cyan]Creating new '{CODESPACE_DISPLAY_NAME}' ({MACHINE_TYPE})...[/]");
             AnsiConsole.MarkupLine("[dim]This may take several minutes...[/]");
-
+            
             string args = $"codespace create -r {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
             var newName = await ShellHelper.RunGhCommand(token, args, CREATE_TIMEOUT_MS);
-
+            
             if (string.IsNullOrWhiteSpace(newName))
             {
                 throw new Exception("Failed to create codespace (no name returned)");
             }
-
+            
             AnsiConsole.MarkupLine($"[green]✓ Created: {newName}[/]");
             return newName;
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]FATAL: Failed to ensure codespace: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]FATAL: Gagal memastikan codespace: {ex.Message}[/]");
             if (ex.Message.Contains("403") || ex.Message.Contains("quota"))
             {
-                AnsiConsole.MarkupLine("[red]This is likely a quota issue. Try token rotation.[/]");
+                 AnsiConsole.MarkupLine("[red]Ini kemungkinan besar masalah kuota. Coba rotasi token.[/]");
             }
             throw;
         }
@@ -136,13 +129,13 @@ public static class CodespaceManager
     {
         AnsiConsole.MarkupLine("\n[cyan]Triggering remote startup script (auto-start.sh)...[/]");
         string remoteScript = $"/workspaces/{token.Repo}/auto-start.sh";
-
+        
         string cmd = $"\"nohup bash {remoteScript} > /tmp/startup.log 2>&1 &\"";
         string args = $"codespace ssh -c {codespaceName} -- {cmd}";
 
         await ShellHelper.RunGhCommand(token, args);
         AnsiConsole.MarkupLine("[green]✓ Startup script triggered (detached).[/]");
-        AnsiConsole.MarkupLine("[dim]   Use 'gh codespace ssh' to monitor 'tmux ls' or 'tail -f /tmp/startup.log'[/]");
+        AnsiConsole.MarkupLine("[dim]   Gunakan 'gh codespace ssh' untuk memantau 'tmux ls' atau 'tail -f /tmp/startup.log'[/]");
     }
 
     public static async Task DeleteCodespace(TokenEntry token, string codespaceName)
@@ -181,8 +174,21 @@ public static class CodespaceManager
         string jsonResult = await ShellHelper.RunGhCommand(token, args);
 
         var allCodespaces = JsonSerializer.Deserialize<List<CodespaceInfo>>(jsonResult) ?? new List<CodespaceInfo>();
-        var existing = allCodespaces.FirstOrDefault(cs => cs.DisplayName == CODESPACE_DISPLAY_NAME);
 
+        var existing = allCodespaces.FirstOrDefault(cs => cs.DisplayName == CODESPACE_DISPLAY_NAME);
+        
         return (existing, allCodespaces);
+    }
+    
+    private class CodespaceInfo
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = "";
+        [JsonPropertyName("displayName")]
+        public string DisplayName { get; set; } = "";
+        [JsonPropertyName("state")]
+        public string State { get; set; } = "";
+        [JsonPropertyName("machineName")]
+        public string MachineName { get; set; } = "";
     }
 }
