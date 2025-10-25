@@ -11,9 +11,9 @@ namespace Orchestrator;
 
 public static class ExternalTerminalRunner
 {
-    public static void RunBotInExternalTerminal(string botPath, string executor, string args, out string transcriptFile)
+    public static string RunBotInExternalTerminal(string botPath, string executor, string args)
     {
-        transcriptFile = Path.Combine(botPath, "_session_transcript.txt");
+        var transcriptFile = Path.Combine(botPath, "_session_transcript.txt");
         
         var scriptPath = CreateRunnerScript(botPath, executor, args, transcriptFile);
         
