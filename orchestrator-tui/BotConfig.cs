@@ -6,7 +6,8 @@ namespace Orchestrator;
 
 public class BotConfig
 {
-    private const string ConfigFile = "../config/bots_config.json";
+    // Path relatif dari executable TUI
+    private static readonly string ConfigFile = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "config", "bots_config.json"));
 
     [JsonPropertyName("bots_and_tools")]
     public List<BotEntry> BotsAndTools { get; set; } = new();
@@ -18,11 +19,24 @@ public class BotConfig
             AnsiConsole.MarkupLine($"[red]Error: File konfig '{ConfigFile}' tidak ditemukan.[/]");
             return null;
         }
-        var json = File.ReadAllText(ConfigFile);
-        return JsonSerializer.Deserialize<BotConfig>(json, new JsonSerializerOptions
+        try
         {
-            PropertyNameCaseInsensitive = true
-        });
+            var json = File.ReadAllText(ConfigFile);
+            return JsonSerializer.Deserialize<BotConfig>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+        }
+        catch (JsonException ex)
+        {
+             AnsiConsole.MarkupLine($"[red]Error parsing {ConfigFile}: {ex.Message}[/]");
+             return null;
+        }
+         catch (Exception ex)
+        {
+             AnsiConsole.MarkupLine($"[red]Error reading {ConfigFile}: {ex.Message}[/]");
+             return null;
+        }
     }
 }
 
@@ -43,6 +57,8 @@ public class BotEntry
     [JsonPropertyName("type")]
     public string Type { get; set; } = string.Empty;
     
+    // Properti ini tidak lagi relevan karena eksekusi di remote
+    // Tapi biarkan saja untuk kompatibilitas jika masih dipakai di Debug Local
     [JsonIgnore]
     public bool IsBot => Path.Contains("/privatekey/") || Path.Contains("/token/");
 }
