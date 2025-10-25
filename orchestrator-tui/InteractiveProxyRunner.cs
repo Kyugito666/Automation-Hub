@@ -3,8 +3,6 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
 using System;
 using System.Text.Json;
 using System.Linq;
@@ -58,20 +56,19 @@ public static class InteractiveProxyRunner
                     .AddChoices(new[]
                     {
                         "1. Launch in separate terminal (manual interaction)",
-                        "2. Try auto-answer anyway (may fail/hang)",
-                        "3. Skip this bot"
+                        "2. Skip this bot"
                     }));
             
             if (choice.StartsWith("1"))
             {
-                await RunInExternalTerminal(bot, answerFile: null, cancellationToken);
+                await RunInExternalTerminal(bot, inputFile: null, cancellationToken);
                 if (!cancellationToken.IsCancellationRequested)
                 {
                     await PromptAndTriggerRemote(bot, answerFile, cancellationToken);
                 }
                 return;
             }
-            else if (choice.StartsWith("3"))
+            else
             {
                 AnsiConsole.MarkupLine("[yellow]Bot skipped.[/]");
                 return;
@@ -86,7 +83,7 @@ public static class InteractiveProxyRunner
         else
         {
             AnsiConsole.MarkupLine("[yellow]Mode: MANUAL (No answer file)[/]");
-            await RunInExternalTerminal(bot, answerFile: null, cancellationToken);
+            await RunInExternalTerminal(bot, inputFile: null, cancellationToken);
         }
 
         if (cancellationToken.IsCancellationRequested)
@@ -125,7 +122,7 @@ public static class InteractiveProxyRunner
         }
     }
 
-    private static async Task RunInExternalTerminal(BotEntry bot, string? answerFile, CancellationToken cancellationToken)
+    private static async Task RunInExternalTerminal(BotEntry bot, string? inputFile, CancellationToken cancellationToken)
     {
         var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
         if (!Directory.Exists(botPath))
@@ -146,11 +143,11 @@ public static class InteractiveProxyRunner
             return;
         }
 
-        if (!string.IsNullOrEmpty(answerFile) && File.Exists(answerFile))
+        if (!string.IsNullOrEmpty(inputFile) && File.Exists(inputFile))
         {
             try
             {
-                var json = File.ReadAllText(answerFile);
+                var json = File.ReadAllText(inputFile);
                 var answers = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
                 
                 if (answers != null)
@@ -169,18 +166,15 @@ public static class InteractiveProxyRunner
             catch (Exception ex)
             {
                 AnsiConsole.MarkupLine($"[yellow]Warning: Could not parse answers: {ex.Message}[/]");
-                answerFile = null;
+                inputFile = null;
             }
         }
 
         AnsiConsole.MarkupLine("\n[cyan]Opening bot in external terminal...[/]");
-        AnsiConsole.MarkupLine("[dim]Interact with the bot in the new window[/]");
-
-        ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args, answerFile);
-
-        AnsiConsole.MarkupLine("[green]✓ Bot terminal opened[/]");
-        AnsiConsole.MarkupLine("[dim]Press Enter when bot execution is complete...[/]");
         
+        ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args, inputFile);
+
+        AnsiConsole.MarkupLine("[dim]Press Enter when bot execution is complete...[/]");
         await WaitForEnterAsync(cancellationToken);
         
         AnsiConsole.MarkupLine("[green]Continuing to next step...[/]");
@@ -207,19 +201,13 @@ public static class InteractiveProxyRunner
             {
                 var json = File.ReadAllText(answerFile);
                 var allData = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
-                
                 capturedInputs = allData.Where(x => !x.Key.StartsWith("_")).ToDictionary(x => x.Key, x => x.Value);
-                
-                AnsiConsole.MarkupLine($"[dim]Sending {capturedInputs.Count} inputs to remote trigger...[/]");
-            }
-            else
-            {
-                AnsiConsole.MarkupLine("[yellow]Warning: Answer file not found, sending empty inputs[/]");
+                AnsiConsole.MarkupLine($"[dim]Sending {capturedInputs.Count} inputs to remote...[/]");
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Failed to read answer file, sending empty inputs: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]Failed to read answers: {ex.Message}[/]");
         }
 
         AnsiConsole.MarkupLine("[cyan]Triggering remote job...[/]");
@@ -239,9 +227,8 @@ public static class InteractiveProxyRunner
                 if (key.Key == ConsoleKey.Y) { AnsiConsole.WriteLine("y"); return true; }
                 if (key.Key == ConsoleKey.N) { AnsiConsole.WriteLine("n"); return false; }
                 if (key.Key == ConsoleKey.Enter) { AnsiConsole.WriteLine(defaultValue ? "y" : "n"); return defaultValue; }
-                AnsiConsole.Markup($"\n{prompt} [[y/n]] ({ (defaultValue ? "Y" : "y") }/{(defaultValue ? "n" : "N")}): ");
             }
-            try { await Task.Delay(50, cancellationToken); } catch (TaskCanceledException) { throw new OperationCanceledException(); }
+            await Task.Delay(50, cancellationToken);
         }
     }
 
