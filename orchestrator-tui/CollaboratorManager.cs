@@ -81,7 +81,7 @@ public static class CollaboratorManager
                             }
                             else if (response.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
                             {
-                                AnsiConsole.MarkupLine($"[red]✗[/] Proxy 407. Retry {retry + 1}/{MAX_PROXY_RETRY}");
+                                AnsiConsole.MarkupLine($"[yellow]🔁 Proxy 407 (retry {retry + 1}/{MAX_PROXY_RETRY})[/]");
                                 if (!TokenManager.RotateProxyForToken(entry))
                                 {
                                     break;
@@ -90,23 +90,39 @@ public static class CollaboratorManager
                             }
                             else
                             {
-                                var error = await response.Content.ReadAsStringAsync();
                                 AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {response.StatusCode}");
                                 break;
                             }
                         }
-                        catch (HttpRequestException httpEx) when (httpEx.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
+                        catch (HttpRequestException httpEx)
                         {
-                             AnsiConsole.MarkupLine($"[red]✗[/] Proxy 407. Retry {retry + 1}/{MAX_PROXY_RETRY}");
-                             if (!TokenManager.RotateProxyForToken(entry))
-                             {
-                                 break;
-                             }
-                             await Task.Delay(1000);
+                            // Cek semua jenis error proxy (407, timeout, connection refused)
+                            bool isProxyError = httpEx.Message.Contains("407") || 
+                                               httpEx.Message.Contains("proxy", StringComparison.OrdinalIgnoreCase) ||
+                                               httpEx.Message.Contains("tunnel", StringComparison.OrdinalIgnoreCase) ||
+                                               httpEx.InnerException is System.Net.Sockets.SocketException;
+                            
+                            if (isProxyError)
+                            {
+                                AnsiConsole.MarkupLine($"[yellow]🔁 Proxy error (retry {retry + 1}/{MAX_PROXY_RETRY})[/]");
+                                if (!TokenManager.RotateProxyForToken(entry))
+                                {
+                                    AnsiConsole.MarkupLine($"[red]✗ No more proxies available[/]");
+                                    break;
+                                }
+                                await Task.Delay(1500);
+                                continue;
+                            }
+                            else
+                            {
+                                // Bukan proxy error, langsung break
+                                AnsiConsole.MarkupLine($"[red]✗[/] {tokenDisplay}: {httpEx.Message.Split('\n').FirstOrDefault()}");
+                                break;
+                            }
                         }
-                        catch (HttpRequestException httpEx) when (httpEx.InnerException is System.Net.Sockets.SocketException)
+                        catch (TaskCanceledException)
                         {
-                            AnsiConsole.MarkupLine($"[red]✗[/] Proxy timeout. Retry {retry + 1}/{MAX_PROXY_RETRY}");
+                            AnsiConsole.MarkupLine($"[yellow]🔁 Timeout (retry {retry + 1}/{MAX_PROXY_RETRY})[/]");
                             if (!TokenManager.RotateProxyForToken(entry))
                             {
                                 break;
