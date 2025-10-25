@@ -78,3 +78,11 @@ desktop.ini
 # --- File yang TIDAK DIPAKAI lagi ---
 # .bot-inputs/
 # .encryption-key
+# ... (Semua isi .gitignore lu yang lama) ...
+
+# --- Environment & Secrets ---
+# (Meskipun config utama di-commit, .env lokal JANGAN)
+.env
+.env.*
+*.env
+config/apikeys.txt # <-- TAMBAHKAN BARIS INI
