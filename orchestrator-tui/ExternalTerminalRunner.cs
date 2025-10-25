@@ -1,191 +1,298 @@
-using Spectre.Console;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Collections.Generic;
 using System;
-using System.Text.Json;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
+using Spectre.Console;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Linq;
 
 namespace Orchestrator;
 
-public static class InteractiveProxyRunner
+public static class ExternalTerminalRunner
 {
-    private const string BOT_ANSWERS_DIR = "../.bot-inputs";
-
-    public static async Task CaptureAndTriggerBot(BotEntry bot, CancellationToken cancellationToken = default)
+    public static string RunBotInExternalTerminal(string botPath, string executor, string args)
     {
-        AnsiConsole.MarkupLine($"[bold cyan]=== Auto-Capture Mode: {bot.Name} ===[/]");
-        AnsiConsole.MarkupLine("[yellow]Step 1: Run bot locally (session will be recorded automatically)[/]\n");
-
-        var transcriptFile = await RunInExternalTerminal(bot, cancellationToken);
-
-        if (cancellationToken.IsCancellationRequested)
+        var transcriptFile = Path.Combine(botPath, "_session_transcript.txt");
+        
+        var scriptPath = CreateRunnerScript(botPath, executor, args, transcriptFile);
+        
+        if (string.IsNullOrEmpty(scriptPath))
         {
-            AnsiConsole.MarkupLine("[yellow]Local run cancelled, skipping remote trigger.[/]");
+            AnsiConsole.MarkupLine("[red]Failed to create runner script[/]");
             return;
         }
 
-        // Auto-parse transcript
-        AnsiConsole.MarkupLine("\n[cyan]Analyzing recorded session...[/]");
-        var capturedInputs = ExternalTerminalRunner.ParseTranscript(transcriptFile);
-
-        // Save to answer file
-        var answerFile = Path.Combine(BOT_ANSWERS_DIR, $"{SanitizeBotName(bot.Name)}.json");
-        
-        if (capturedInputs.Any())
-        {
-            try
-            {
-                Directory.CreateDirectory(BOT_ANSWERS_DIR);
-                var json = JsonSerializer.Serialize(capturedInputs, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(answerFile, json);
-                AnsiConsole.MarkupLine($"[green]✓ Answer file created: {Path.GetFileName(answerFile)}[/]");
-            }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"[red]Failed to save answer file: {ex.Message}[/]");
-            }
-        }
-        else
-        {
-            AnsiConsole.MarkupLine("[yellow]⚠ No inputs detected in transcript[/]");
-            AnsiConsole.MarkupLine("[dim]Possible causes:[/]");
-            AnsiConsole.MarkupLine("[dim]- Bot ran too fast (no input prompts)[/]");
-            AnsiConsole.MarkupLine("[dim]- Transcript format not recognized[/]");
-            AnsiConsole.MarkupLine($"[dim]- Check raw transcript: {Path.GetFileName(transcriptFile)}[/]");
-            
-            var shouldEdit = AnsiConsole.Confirm("Manually create answer file before remote trigger?", false);
-            if (shouldEdit)
-            {
-                AnsiConsole.MarkupLine($"[yellow]Create file at: {answerFile}[/]");
-                AnsiConsole.MarkupLine("[dim]Format: {{ \"input_1\": \"value1\", \"input_2\": \"value2\" }}[/]");
-                AnsiConsole.MarkupLine("[dim]Press Enter when ready...[/]");
-                await WaitForEnterAsync(cancellationToken);
-                
-                // Re-load after manual edit
-                if (File.Exists(answerFile))
-                {
-                    try
-                    {
-                        var json = File.ReadAllText(answerFile);
-                        capturedInputs = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
-                        AnsiConsole.MarkupLine($"[green]✓ Loaded {capturedInputs.Count} inputs from manual file[/]");
-                    }
-                    catch (Exception ex)
-                    {
-                        AnsiConsole.MarkupLine($"[red]Failed to parse answer file: {ex.Message}[/]");
-                    }
-                }
-            }
-        }
-
-        await PromptAndTriggerRemote(bot, capturedInputs, cancellationToken);
-    }
-
-    private static async Task<string> RunInExternalTerminal(BotEntry bot, CancellationToken cancellationToken)
-    {
-        var transcriptFile = string.Empty;
-        
-        var botPath = Path.GetFullPath(Path.Combine("..", bot.Path));
-        if (!Directory.Exists(botPath))
-        {
-            AnsiConsole.MarkupLine($"[red]Bot path not found: {botPath}[/]");
-            return transcriptFile;
-        }
-
-        AnsiConsole.MarkupLine($"[cyan]Preparing bot: {bot.Name}[/]");
-        
-        await BotRunner.InstallDependencies(botPath, bot.Type);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var (executor, args) = BotRunner.GetRunCommand(botPath, bot.Type);
-        if (string.IsNullOrEmpty(executor))
-        {
-            AnsiConsole.MarkupLine($"[red]No run command found for {bot.Name}[/]");
-            return transcriptFile;
-        }
-
-        AnsiConsole.MarkupLine("\n[cyan]Opening bot in external terminal with recording...[/]");
-        transcriptFile = ExternalTerminalRunner.RunBotInExternalTerminal(botPath, executor, args);
-
-        AnsiConsole.MarkupLine("[yellow]Interact with the bot normally.[/]");
-        AnsiConsole.MarkupLine("[dim]All your inputs are being recorded automatically.[/]");
-        AnsiConsole.MarkupLine("\n[dim]Press Enter when bot execution is complete...[/]");
-        
-        await WaitForEnterAsync(cancellationToken);
-        AnsiConsole.MarkupLine("[green]✓ Local testing complete[/]");
+        LaunchInTerminal(scriptPath, botPath);
+        AnsiConsole.MarkupLine("[green]✓ Bot launched with session recording[/]");
+        AnsiConsole.MarkupLine($"[dim]Transcript will be saved to: {Path.GetFileName(transcriptFile)}[/]");
         
         return transcriptFile;
     }
 
-    private static async Task PromptAndTriggerRemote(BotEntry bot, Dictionary<string, string> capturedInputs, CancellationToken cancellationToken)
+    private static string? CreateRunnerScript(string botPath, string executor, string args, string transcriptFile)
     {
-        AnsiConsole.MarkupLine("\n[bold yellow]Step 2: Trigger remote execution on GitHub Actions?[/]");
-        
-        if (capturedInputs.Any())
+        try
         {
-            AnsiConsole.MarkupLine($"[green]✓ {capturedInputs.Count} inputs ready for automation[/]");
-        }
-        else
-        {
-            AnsiConsole.MarkupLine("[yellow]⚠ No inputs captured[/]");
-            AnsiConsole.MarkupLine("[red]WARNING: Remote bot will run without auto-input (may hang)[/]");
-        }
-
-        bool proceed = await ConfirmAsync("\nTrigger remote execution?", true, cancellationToken);
-
-        if (cancellationToken.IsCancellationRequested) return;
-
-        if (!proceed)
-        {
-            AnsiConsole.MarkupLine("[yellow]Remote trigger skipped.[/]");
-            return;
-        }
-
-        AnsiConsole.MarkupLine("[cyan]Triggering GitHub Actions workflow...[/]");
-        await GitHubDispatcher.TriggerBotWithInputs(bot, capturedInputs);
-        AnsiConsole.MarkupLine("\n[bold green]✅ Bot triggered remotely![/]");
-        
-        if (capturedInputs.Any())
-        {
-            AnsiConsole.MarkupLine($"[dim]Sent {capturedInputs.Count} inputs for automation[/]");
-        }
-    }
-
-    private static async Task<bool> ConfirmAsync(string prompt, bool defaultValue, CancellationToken cancellationToken)
-    {
-        AnsiConsole.Markup($"{prompt} [[y/n]] ({ (defaultValue ? "Y" : "y") }/{(defaultValue ? "n" : "N")}): ");
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (Console.KeyAvailable)
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                var key = Console.ReadKey(intercept: true);
-                if (key.Key == ConsoleKey.Y) { AnsiConsole.WriteLine("y"); return true; }
-                if (key.Key == ConsoleKey.N) { AnsiConsole.WriteLine("n"); return false; }
-                if (key.Key == ConsoleKey.Enter) { AnsiConsole.WriteLine(defaultValue ? "y" : "n"); return defaultValue; }
+                return CreateWindowsPowerShellScript(botPath, executor, args, transcriptFile);
             }
-            await Task.Delay(50, cancellationToken);
+            else
+            {
+                return CreateLinuxScript(botPath, executor, args, transcriptFile);
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error creating script: {ex.Message}[/]");
+            return null;
         }
     }
 
-    private static async Task WaitForEnterAsync(CancellationToken cancellationToken)
+    private static string CreateWindowsPowerShellScript(string botPath, string executor, string args, string transcriptFile)
     {
-        while (!Console.KeyAvailable)
+        var ps1Path = Path.Combine(botPath, "_run_bot.ps1");
+        var utf8WithoutBom = new UTF8Encoding(false);
+        
+        using (var writer = new StreamWriter(ps1Path, false, utf8WithoutBom))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            await Task.Delay(100, cancellationToken);
+            writer.WriteLine("# Bot Runner with Session Recording");
+            writer.WriteLine("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8");
+            writer.WriteLine("[Console]::InputEncoding = [System.Text.Encoding]::UTF8");
+            writer.WriteLine("$OutputEncoding = [System.Text.Encoding]::UTF8");
+            writer.WriteLine();
+            writer.WriteLine($"Set-Location -Path \"{botPath}\"");
+            writer.WriteLine();
+            
+            // Start transcript recording
+            writer.WriteLine($"$transcriptPath = \"{transcriptFile}\"");
+            writer.WriteLine("if (Test-Path $transcriptPath) { Remove-Item $transcriptPath -Force }");
+            writer.WriteLine("Start-Transcript -Path $transcriptPath -Force | Out-Null");
+            writer.WriteLine();
+            
+            writer.WriteLine("Write-Host \"========================================\" -ForegroundColor Cyan");
+            writer.WriteLine($"Write-Host \"Running: {Path.GetFileName(botPath)}\" -ForegroundColor White");
+            writer.WriteLine("Write-Host \"MODE: RECORDING SESSION\" -ForegroundColor Yellow");
+            writer.WriteLine("Write-Host \"========================================\" -ForegroundColor Cyan");
+            writer.WriteLine("Write-Host \"All your inputs will be captured automatically\" -ForegroundColor Green");
+            writer.WriteLine("Write-Host \"\" ");
+            writer.WriteLine();
+
+            // Determine actual command
+            string executablePath = executor;
+            bool useNpmStart = executor.Contains("npm") && args == "start";
+            
+            if (useNpmStart)
+            {
+                executablePath = "node";
+                args = "index.js";
+            }
+
+            // Run bot with recording
+            writer.WriteLine("try {");
+            writer.WriteLine($"    & \"{executablePath}\" {args}");
+            writer.WriteLine("    $exitCode = $LASTEXITCODE");
+            writer.WriteLine("} catch {");
+            writer.WriteLine("    Write-Host \"Error: $_\" -ForegroundColor Red");
+            writer.WriteLine("    $exitCode = 1");
+            writer.WriteLine("}");
+            
+            writer.WriteLine();
+            writer.WriteLine("Stop-Transcript | Out-Null");
+            writer.WriteLine();
+            writer.WriteLine("Write-Host \"\" ");
+            writer.WriteLine("Write-Host \"========================================\" -ForegroundColor Cyan");
+            writer.WriteLine("Write-Host \"Bot finished (Exit Code: $exitCode)\" -ForegroundColor $(if ($exitCode -eq 0) { 'Green' } else { 'Red' })");
+            writer.WriteLine("Write-Host \"Session recorded to: $transcriptPath\" -ForegroundColor Green");
+            writer.WriteLine("Write-Host \"========================================\" -ForegroundColor Cyan");
+            writer.WriteLine("Write-Host \"Press any key to close...\" -ForegroundColor Gray");
+            writer.WriteLine("[void][System.Console]::ReadKey($true)");
         }
-        while (Console.KeyAvailable) Console.ReadKey(intercept: true);
+        
+        AnsiConsole.MarkupLine($"[dim]Created recording script: {Path.GetFileName(ps1Path)}[/]");
+        return ps1Path;
     }
 
-    private static string SanitizeBotName(string name)
+    private static string CreateLinuxScript(string botPath, string executor, string args, string transcriptFile)
     {
-        foreach (char c in Path.GetInvalidFileNameChars())
+        var shellPath = Path.Combine(botPath, "_run_bot.sh");
+        var utf8WithoutBom = new UTF8Encoding(false);
+        
+        using (var writer = new StreamWriter(shellPath, false, utf8WithoutBom))
         {
-            name = name.Replace(c, '_');
+            writer.WriteLine("#!/bin/bash");
+            writer.WriteLine($"cd \"{botPath}\"");
+            writer.WriteLine("echo \"========================================\"");
+            writer.WriteLine($"echo \"Running: {Path.GetFileName(botPath)}\"");
+            writer.WriteLine("echo \"MODE: RECORDING SESSION\"");
+            writer.WriteLine("echo \"========================================\"");
+            writer.WriteLine("echo \"All your inputs will be captured automatically\"");
+            writer.WriteLine("echo \"\"");
+            writer.WriteLine();
+
+            bool useNpmStart = executor.Contains("npm") && args == "start";
+            string actualExecutor = useNpmStart ? "node" : executor;
+            string actualArgs = useNpmStart ? "index.js" : args;
+
+            // Use script command for recording
+            writer.WriteLine($"script -q -c '\"{actualExecutor}\" {actualArgs}' \"{transcriptFile}\"");
+            
+            writer.WriteLine();
+            writer.WriteLine("echo \"\"");
+            writer.WriteLine("echo \"========================================\"");
+            writer.WriteLine($"echo \"Session recorded to: {Path.GetFileName(transcriptFile)}\"");
+            writer.WriteLine("echo \"========================================\"");
+            writer.WriteLine("echo \"Press Enter to close...\"");
+            writer.WriteLine("read");
         }
-        return name.Replace(" ", "_").Replace("-", "_");
+        
+        File.SetUnixFileMode(shellPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        AnsiConsole.MarkupLine($"[dim]Created recording script: {Path.GetFileName(shellPath)}[/]");
+        return shellPath;
+    }
+
+    private static void LaunchInTerminal(string scriptPath, string workingDir)
+    {
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = $"-ExecutionPolicy Bypass -NoProfile -File \"{scriptPath}\"",
+                    UseShellExecute = true,
+                    WorkingDirectory = workingDir,
+                    CreateNoWindow = false
+                });
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                var terminal = "gnome-terminal";
+                if (!IsCommandAvailable("gnome-terminal"))
+                {
+                    terminal = IsCommandAvailable("xterm") ? "xterm" : "x-terminal-emulator";
+                }
+                
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = terminal,
+                    Arguments = $"-- bash -c '{scriptPath}; exec bash'",
+                    UseShellExecute = true,
+                    WorkingDirectory = workingDir
+                });
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "osascript",
+                    Arguments = $"-e 'tell application \"Terminal\" to do script \"{scriptPath}\"'",
+                    UseShellExecute = true,
+                    WorkingDirectory = workingDir
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Failed to launch terminal: {ex.Message}[/]");
+        }
+    }
+
+    public static Dictionary<string, string> ParseTranscript(string transcriptFile)
+    {
+        var inputs = new Dictionary<string, string>();
+        
+        if (!File.Exists(transcriptFile))
+        {
+            AnsiConsole.MarkupLine($"[yellow]Transcript file not found: {transcriptFile}[/]");
+            return inputs;
+        }
+
+        try
+        {
+            var lines = File.ReadAllLines(transcriptFile);
+            var promptPattern = new Regex(@"(?:pilih|select|enter|input|choose|->|:)\s*(.+?)$", RegexOptions.IgnoreCase);
+            
+            string? lastPrompt = null;
+            int inputCounter = 1;
+            
+            foreach (var line in lines)
+            {
+                var cleanLine = line.Trim();
+                
+                // Skip empty lines and PS header/footer
+                if (string.IsNullOrWhiteSpace(cleanLine) || 
+                    cleanLine.StartsWith("****") || 
+                    cleanLine.Contains("Transcript started") ||
+                    cleanLine.Contains("Transcript stopped"))
+                {
+                    continue;
+                }
+                
+                // Detect prompt
+                var match = promptPattern.Match(cleanLine);
+                if (match.Success || cleanLine.Contains("?") || cleanLine.EndsWith(":") || cleanLine.Contains("->"))
+                {
+                    lastPrompt = cleanLine;
+                    continue;
+                }
+                
+                // Detect input (short lines after prompt, numeric, or y/n)
+                if (lastPrompt != null && 
+                    (cleanLine.Length <= 10 || 
+                     Regex.IsMatch(cleanLine, @"^\d+$") || 
+                     Regex.IsMatch(cleanLine, @"^[yn]$", RegexOptions.IgnoreCase)))
+                {
+                    var key = $"input_{inputCounter}";
+                    inputs[key] = cleanLine;
+                    inputCounter++;
+                    lastPrompt = null;
+                }
+            }
+            
+            AnsiConsole.MarkupLine($"[green]✓ Parsed {inputs.Count} inputs from transcript[/]");
+            
+            if (inputs.Any())
+            {
+                AnsiConsole.MarkupLine("[cyan]Captured inputs:[/]");
+                foreach (var kv in inputs.Take(5))
+                {
+                    AnsiConsole.MarkupLine($"  [dim]{kv.Key}:[/] [yellow]{kv.Value}[/]");
+                }
+                if (inputs.Count > 5)
+                {
+                    AnsiConsole.MarkupLine($"  [dim]... and {inputs.Count - 5} more[/]");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error parsing transcript: {ex.Message}[/]");
+        }
+        
+        return inputs;
+    }
+
+    private static bool IsCommandAvailable(string command)
+    {
+        try
+        {
+            var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "where" : "which",
+                Arguments = command,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            process?.WaitForExit();
+            return process?.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
