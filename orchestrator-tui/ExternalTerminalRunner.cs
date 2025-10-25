@@ -45,7 +45,7 @@ public static class ExternalTerminalRunner
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                return CreateWindowsScript(botPath, executor, args, inputFile, recordMode);
+                return CreateWindowsPowerShellScript(botPath, executor, args, inputFile, recordMode);
             }
             else
             {
@@ -59,110 +59,126 @@ public static class ExternalTerminalRunner
         }
     }
 
-    private static string CreateWindowsScript(string botPath, string executor, string args, string? inputFile, bool recordMode)
+    private static string CreateWindowsPowerShellScript(string botPath, string executor, string args, string? inputFile, bool recordMode)
     {
-        var batchPath = Path.Combine(botPath, "_run_bot.bat");
+        var ps1Path = Path.Combine(botPath, "_run_bot.ps1");
         var utf8WithoutBom = new UTF8Encoding(false);
         
-        using (var writer = new StreamWriter(batchPath, false, utf8WithoutBom))
+        using (var writer = new StreamWriter(ps1Path, false, utf8WithoutBom))
         {
-            writer.WriteLine("@echo off");
-            writer.WriteLine("chcp 65001 >nul 2>&1");
-            writer.WriteLine($"cd /d \"{botPath}\"");
-            writer.WriteLine("echo ========================================");
-            writer.WriteLine($"echo Running: {Path.GetFileName(botPath)}");
-            
-            if (recordMode)
-            {
-                writer.WriteLine("echo MODE: RECORDING INPUTS");
-            }
-            else if (inputFile != null)
-            {
-                writer.WriteLine("echo MODE: AUTO-INPUT");
-            }
-            else
-            {
-                writer.WriteLine("echo MODE: MANUAL");
-            }
-            
-            writer.WriteLine("echo ========================================");
+            writer.WriteLine("# PowerShell Bot Runner - UTF-8 Support");
+            writer.WriteLine("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8");
+            writer.WriteLine("[Console]::InputEncoding = [System.Text.Encoding]::UTF8");
+            writer.WriteLine("$OutputEncoding = [System.Text.Encoding]::UTF8");
             writer.WriteLine();
-
+            writer.WriteLine($"Set-Location -Path \"{botPath}\"");
+            writer.WriteLine("Write-Host \"========================================\" -ForegroundColor Cyan");
+            writer.WriteLine($"Write-Host \"Running: {Path.GetFileName(botPath)}\" -ForegroundColor White");
+            
             if (recordMode)
             {
-                // WINDOWS LIMITATION: Tidak bisa capture stdin di batch native
-                // Workaround: Gunakan PowerShell atau external tool
-                writer.WriteLine("echo WARNING: Windows batch cannot capture stdin natively");
-                writer.WriteLine("echo Please use manual mode, then create answer file manually");
-                writer.WriteLine("echo OR use Linux/WSL for automatic input capture");
-                writer.WriteLine();
-                
-                // Run bot normal (manual)
-                if (executor.Contains("npm") && args == "start")
-                {
-                    writer.WriteLine("node index.js");
-                }
-                else
-                {
-                    writer.WriteLine($"\"{executor}\" {args}");
-                }
+                writer.WriteLine("Write-Host \"MODE: RECORDING INPUTS\" -ForegroundColor Yellow");
+                writer.WriteLine("Write-Host \"========================================\" -ForegroundColor Cyan");
+                writer.WriteLine("Write-Host \"\" ");
+                writer.WriteLine("Write-Host \"WARNING: PowerShell cannot capture stdin natively\" -ForegroundColor Red");
+                writer.WriteLine("Write-Host \"Please create answer file manually after testing\" -ForegroundColor Yellow");
+                writer.WriteLine($"Write-Host \"Target: {Path.Combine("..", ".bot-inputs", $"{SanitizeBotName(Path.GetFileName(botPath))}.json")}\" -ForegroundColor Gray");
+                writer.WriteLine("Write-Host \"\" ");
             }
             else if (!string.IsNullOrEmpty(inputFile) && File.Exists(inputFile))
             {
+                writer.WriteLine("Write-Host \"MODE: AUTO-INPUT\" -ForegroundColor Green");
+            }
+            else
+            {
+                writer.WriteLine("Write-Host \"MODE: MANUAL\" -ForegroundColor White");
+            }
+            
+            writer.WriteLine("Write-Host \"========================================\" -ForegroundColor Cyan");
+            writer.WriteLine("Write-Host \"\" ");
+            writer.WriteLine();
+
+            // Build command
+            string executablePath = executor;
+            bool useNpmStart = executor.Contains("npm") && args == "start";
+            
+            if (useNpmStart)
+            {
+                executablePath = "node";
+                args = "index.js";
+            }
+
+            if (recordMode)
+            {
+                // Record mode: Run tanpa input redirect
+                writer.WriteLine("try {");
+                writer.WriteLine($"    & \"{executablePath}\" {args}");
+                writer.WriteLine("    $exitCode = $LASTEXITCODE");
+                writer.WriteLine("} catch {");
+                writer.WriteLine("    Write-Host \"Error: $_\" -ForegroundColor Red");
+                writer.WriteLine("    $exitCode = 1");
+                writer.WriteLine("}");
+            }
+            else if (!string.IsNullOrEmpty(inputFile) && File.Exists(inputFile))
+            {
+                // Auto-input mode
                 var inputTextFile = ConvertJsonToTextInput(inputFile, botPath);
+                
                 if (!string.IsNullOrEmpty(inputTextFile))
                 {
-                    if (executor.Contains("npm") && args == "start")
-                    {
-                        writer.WriteLine($"node index.js < \"{inputTextFile}\"");
-                    }
-                    else
-                    {
-                        writer.WriteLine($"\"{executor}\" {args} < \"{inputTextFile}\"");
-                    }
+                    writer.WriteLine("try {");
+                    writer.WriteLine($"    Get-Content \"{inputTextFile}\" | & \"{executablePath}\" {args}");
+                    writer.WriteLine("    $exitCode = $LASTEXITCODE");
+                    writer.WriteLine("} catch {");
+                    writer.WriteLine("    Write-Host \"Error: $_\" -ForegroundColor Red");
+                    writer.WriteLine("    $exitCode = 1");
+                    writer.WriteLine("}");
                 }
                 else
                 {
-                    if (executor.Contains("npm") && args == "start")
-                    {
-                        writer.WriteLine("node index.js");
-                    }
-                    else
-                    {
-                        writer.WriteLine($"\"{executor}\" {args}");
-                    }
+                    // Fallback ke manual
+                    writer.WriteLine("Write-Host \"Warning: Could not process input file, running manually\" -ForegroundColor Yellow");
+                    writer.WriteLine("try {");
+                    writer.WriteLine($"    & \"{executablePath}\" {args}");
+                    writer.WriteLine("    $exitCode = $LASTEXITCODE");
+                    writer.WriteLine("} catch {");
+                    writer.WriteLine("    Write-Host \"Error: $_\" -ForegroundColor Red");
+                    writer.WriteLine("    $exitCode = 1");
+                    writer.WriteLine("}");
                 }
             }
             else
             {
-                if (executor.Contains("npm") && args == "start")
-                {
-                    writer.WriteLine("node index.js");
-                }
-                else
-                {
-                    writer.WriteLine($"\"{executor}\" {args}");
-                }
+                // Manual mode
+                writer.WriteLine("try {");
+                writer.WriteLine($"    & \"{executablePath}\" {args}");
+                writer.WriteLine("    $exitCode = $LASTEXITCODE");
+                writer.WriteLine("} catch {");
+                writer.WriteLine("    Write-Host \"Error: $_\" -ForegroundColor Red");
+                writer.WriteLine("    $exitCode = 1");
+                writer.WriteLine("}");
             }
             
             writer.WriteLine();
-            writer.WriteLine("echo.");
-            writer.WriteLine("echo ========================================");
-            writer.WriteLine("echo Bot finished.");
+            writer.WriteLine("Write-Host \"\" ");
+            writer.WriteLine("Write-Host \"========================================\" -ForegroundColor Cyan");
+            writer.WriteLine("Write-Host \"Bot finished (Exit Code: $exitCode)\" -ForegroundColor $(if ($exitCode -eq 0) { 'Green' } else { 'Red' })");
             
             if (recordMode)
             {
-                writer.WriteLine("echo.");
-                writer.WriteLine("echo Please create answer file manually at:");
-                writer.WriteLine($"echo   {Path.Combine("..", ".bot-inputs", $"{SanitizeBotName(Path.GetFileName(botPath))}.json")}");
+                writer.WriteLine("Write-Host \"\" ");
+                writer.WriteLine("Write-Host \"Next steps:\" -ForegroundColor Yellow");
+                writer.WriteLine($"Write-Host \"1. Create JSON file at: {Path.Combine("..", ".bot-inputs", $"{SanitizeBotName(Path.GetFileName(botPath))}.json")}\" -ForegroundColor Gray");
+                writer.WriteLine("Write-Host \"2. Format: { \\\"key1\\\": \\\"value1\\\", \\\"key2\\\": \\\"value2\\\" }\" -ForegroundColor Gray");
             }
             
-            writer.WriteLine("echo Press any key to close...");
-            writer.WriteLine("pause >nul");
+            writer.WriteLine("Write-Host \"========================================\" -ForegroundColor Cyan");
+            writer.WriteLine("Write-Host \"Press any key to close...\" -ForegroundColor Gray");
+            writer.WriteLine("[void][System.Console]::ReadKey($true)");
         }
         
-        AnsiConsole.MarkupLine($"[dim]Created script: {Path.GetFileName(batchPath)}[/]");
-        return batchPath;
+        AnsiConsole.MarkupLine($"[dim]Created PowerShell script: {Path.GetFileName(ps1Path)}[/]");
+        return ps1Path;
     }
 
     private static string CreateLinuxScript(string botPath, string executor, string args, string? inputFile, bool recordMode)
@@ -193,22 +209,16 @@ public static class ExternalTerminalRunner
             writer.WriteLine("echo \"========================================\"");
             writer.WriteLine();
 
+            bool useNpmStart = executor.Contains("npm") && args == "start";
+            string actualExecutor = useNpmStart ? "node" : executor;
+            string actualArgs = useNpmStart ? "index.js" : args;
+
             if (recordMode)
             {
-                // Linux: Use script command to record session
                 var recordFile = Path.Combine(botPath, "_input_record.log");
                 writer.WriteLine($"echo \"Recording session to: {Path.GetFileName(recordFile)}\"");
                 writer.WriteLine();
-                
-                if (executor.Contains("npm") && args == "start")
-                {
-                    writer.WriteLine($"script -q -c 'node index.js' \"{recordFile}\"");
-                }
-                else
-                {
-                    writer.WriteLine($"script -q -c '\"{executor}\" {args}' \"{recordFile}\"");
-                }
-                
+                writer.WriteLine($"script -q -c '\"{actualExecutor}\" {actualArgs}' \"{recordFile}\"");
                 writer.WriteLine();
                 writer.WriteLine("echo \"\"");
                 writer.WriteLine("echo \"Session recorded. Convert to JSON manually.\"");
@@ -218,37 +228,16 @@ public static class ExternalTerminalRunner
                 var inputTextFile = ConvertJsonToTextInput(inputFile, botPath);
                 if (!string.IsNullOrEmpty(inputTextFile))
                 {
-                    if (executor.Contains("npm") && args == "start")
-                    {
-                        writer.WriteLine($"node index.js < \"{inputTextFile}\"");
-                    }
-                    else
-                    {
-                        writer.WriteLine($"\"{executor}\" {args} < \"{inputTextFile}\"");
-                    }
+                    writer.WriteLine($"\"{actualExecutor}\" {actualArgs} < \"{inputTextFile}\"");
                 }
                 else
                 {
-                    if (executor.Contains("npm") && args == "start")
-                    {
-                        writer.WriteLine("node index.js");
-                    }
-                    else
-                    {
-                        writer.WriteLine($"\"{executor}\" {args}");
-                    }
+                    writer.WriteLine($"\"{actualExecutor}\" {actualArgs}");
                 }
             }
             else
             {
-                if (executor.Contains("npm") && args == "start")
-                {
-                    writer.WriteLine("node index.js");
-                }
-                else
-                {
-                    writer.WriteLine($"\"{executor}\" {args}");
-                }
+                writer.WriteLine($"\"{actualExecutor}\" {actualArgs}");
             }
             
             writer.WriteLine();
@@ -259,7 +248,7 @@ public static class ExternalTerminalRunner
         }
         
         File.SetUnixFileMode(shellPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        AnsiConsole.MarkupLine($"[dim]Created script: {Path.GetFileName(shellPath)}[/]");
+        AnsiConsole.MarkupLine($"[dim]Created shell script: {Path.GetFileName(shellPath)}[/]");
         return shellPath;
     }
 
@@ -294,12 +283,14 @@ public static class ExternalTerminalRunner
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
+                // Launch PowerShell window
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c start \"Bot Runner\" cmd /k \"{scriptPath}\"",
+                    FileName = "powershell.exe",
+                    Arguments = $"-ExecutionPolicy Bypass -NoProfile -File \"{scriptPath}\"",
                     UseShellExecute = true,
-                    WorkingDirectory = workingDir
+                    WorkingDirectory = workingDir,
+                    CreateNoWindow = false
                 });
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
