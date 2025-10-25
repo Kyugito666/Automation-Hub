@@ -11,9 +11,29 @@ public static class CodespaceManager
     private const int SSH_TIMEOUT_MS = 30000;
     private const int CREATE_TIMEOUT_MS = 600000;
 
-    private static readonly string ConfigRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "config"));
-    private static readonly string ProjectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    private static readonly string ProjectRoot = GetProjectRoot();
+    private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
     private static readonly string MasterProxyFile = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
+
+    private static string GetProjectRoot()
+    {
+        var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
+        
+        while (currentDir != null)
+        {
+            var configDir = Path.Combine(currentDir.FullName, "config");
+            var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
+            
+            if (Directory.Exists(configDir) && File.Exists(gitignore))
+            {
+                return currentDir.FullName;
+            }
+            
+            currentDir = currentDir.Parent;
+        }
+        
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    }
 
     public static async Task<string> EnsureHealthyCodespace(TokenEntry token)
     {
@@ -133,7 +153,7 @@ public static class CodespaceManager
         }
     }
 
-    public static async Task<bool> CheckSshHealth(TokenEntry token, string codespaceName) // UBAH JADI PUBLIC
+    public static async Task<bool> CheckSshHealth(TokenEntry token, string codespaceName)
     {
         try
         {
