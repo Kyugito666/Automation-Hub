@@ -175,24 +175,44 @@ public static class TokenManager
 
     private static void LoadProxyList()
     {
+        string proxyFile = ProxyListPath;
+        
+        // Prioritas 1: success_proxy.txt (proxy yang sudah ditest)
         if (File.Exists(ProxyListPath))
         {
             _proxyList = File.ReadAllLines(ProxyListPath)
                 .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith("#"))
                 .ToList();
             
-            AnsiConsole.MarkupLine($"[dim]Proxies: {_proxyList.Count}[/]");
-            
-            var fileAge = DateTime.Now - File.GetLastWriteTime(ProxyListPath);
-            if (fileAge.TotalHours > 12)
+            if (_proxyList.Any())
             {
-                AnsiConsole.MarkupLine($"[yellow]⚠️  proxy.txt: {fileAge.TotalHours:F1}h (coba refresh)[/]");
+                AnsiConsole.MarkupLine($"[green]✓ {_proxyList.Count} tested proxies (success_proxy.txt)[/]");
+                
+                var fileAge = DateTime.Now - File.GetLastWriteTime(ProxyListPath);
+                if (fileAge.TotalHours > 12)
+                {
+                    AnsiConsole.MarkupLine($"[yellow]⚠️  Proxy age: {fileAge.TotalHours:F1}h (coba refresh via ProxySync)[/]");
+                }
+                return;
             }
         }
-        else
+        
+        // Prioritas 2: proxy.txt (fallback - proxy mentah belum ditest)
+        if (File.Exists(ProxyListPathFallback))
         {
-            AnsiConsole.MarkupLine($"[yellow]⚠️  {ProxyListPath} tidak ada. No proxy mode.[/]");
+            _proxyList = File.ReadAllLines(ProxyListPathFallback)
+                .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith("#"))
+                .ToList();
+            
+            if (_proxyList.Any())
+            {
+                AnsiConsole.MarkupLine($"[yellow]⚠️  {_proxyList.Count} UNTESTED proxies (proxy.txt)[/]");
+                AnsiConsole.MarkupLine($"[yellow]    Sebaiknya jalankan ProxySync menu [3] untuk test proxy![/]");
+                return;
+            }
         }
+        
+        AnsiConsole.MarkupLine($"[red]⚠️  No proxy files found. Running WITHOUT proxy.[/]");
     }
 
     private static void AssignProxiesAndUsernames()
