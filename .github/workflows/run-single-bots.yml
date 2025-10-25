@@ -24,9 +24,8 @@ on:
         required: false
         default: '340'
         type: string
-      # === INPUT BARU ===
       bot_inputs:
-        description: 'JSON string input untuk bot'
+        description: 'JSON string input untuk bot (format: {"input_1":"y","input_2":"2"})'
         required: false
         default: '{}'
         type: string
@@ -56,14 +55,27 @@ jobs:
           cd bot
           ls -la
 
-      # === STEP BARU ===
-      - name: Create Bot Input File
+      - name: Parse & Create Input File
         working-directory: bot
         run: |
-          echo "Membuat bot_input.json..."
-          echo "${{ github.event.inputs.bot_inputs }}" > bot_input.json
-          echo "File bot_input.json dibuat:"
-          cat bot_input.json
+          echo "Creating auto-answer input file..."
+          
+          # Parse JSON input dari Orchestrator
+          INPUT_JSON='${{ github.event.inputs.bot_inputs }}'
+          
+          # Convert JSON ke newline-separated text file
+          echo "$INPUT_JSON" | jq -r 'to_entries | sort_by(.key) | .[].value' > bot_answers.txt
+          
+          echo "=== Auto-Answer File Created ==="
+          cat bot_answers.txt
+          echo "================================"
+          
+          LINE_COUNT=$(wc -l < bot_answers.txt)
+          if [ "$LINE_COUNT" -eq 0 ]; then
+            echo "WARNING: No answers provided. Bot may hang if interactive."
+          else
+            echo "Loaded $LINE_COUNT answers for auto-injection"
+          fi
       
       - name: Install Python Dependencies
         if: github.event.inputs.bot_type == 'python'
@@ -81,30 +93,50 @@ jobs:
             npm install --silent
           fi
 
-      - name: Run Bot (Python)
+      - name: Run Bot (Python) with Auto-Answer
         if: github.event.inputs.bot_type == 'python'
         working-directory: bot
         run: |
+          RUN_FILE=""
           if [ -f "run.py" ]; then
-            timeout ${{ github.event.inputs.duration_minutes }}m python run.py || echo "Bot finished/timeout"
+            RUN_FILE="run.py"
           elif [ -f "main.py" ]; then
-            timeout ${{ github.event.inputs.duration_minutes }}m python main.py || echo "Bot finished/timeout"
+            RUN_FILE="main.py"
           else
             echo "ERROR: No run.py or main.py found"
             exit 1
           fi
+          
+          # Jika ada answer file, inject via stdin
+          if [ -s "bot_answers.txt" ]; then
+            echo "Running with auto-answers..."
+            timeout ${{ github.event.inputs.duration_minutes }}m python "$RUN_FILE" < bot_answers.txt || echo "Bot finished/timeout"
+          else
+            echo "Running without answers (may hang)..."
+            timeout ${{ github.event.inputs.duration_minutes }}m python "$RUN_FILE" || echo "Bot finished/timeout"
+          fi
 
-      - name: Run Bot (JavaScript)
+      - name: Run Bot (JavaScript) with Auto-Answer
         if: github.event.inputs.bot_type == 'javascript'
         working-directory: bot
         run: |
+          RUN_FILE=""
           if [ -f "index.js" ]; then
-            timeout ${{ github.event.inputs.duration_minutes }}m node index.js || echo "Bot finished/timeout"
+            RUN_FILE="index.js"
           elif [ -f "main.js" ]; then
-            timeout ${{ github.event.inputs.duration_minutes }}m node main.js || echo "Bot finished/timeout"
+            RUN_FILE="main.js"
           else
             echo "ERROR: No index.js or main.js found"
             exit 1
+          fi
+          
+          # Jika ada answer file, inject via stdin
+          if [ -s "bot_answers.txt" ]; then
+            echo "Running with auto-answers..."
+            timeout ${{ github.event.inputs.duration_minutes }}m node "$RUN_FILE" < bot_answers.txt || echo "Bot finished/timeout"
+          else
+            echo "Running without answers (may hang)..."
+            timeout ${{ github.event.inputs.duration_minutes }}m node "$RUN_FILE" || echo "Bot finished/timeout"
           fi
 
       - name: Upload Logs (On Failure)
