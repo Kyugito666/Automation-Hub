@@ -127,27 +127,7 @@ public static class TokenManager
         if (!File.Exists(TokensPath))
         {
             AnsiConsole.MarkupLine($"[red]❌ {TokensPath} tidak ada![/]");
-            AnsiConsole.MarkupLine("[yellow]Format:[/]");
-            AnsiConsole.MarkupLine("[dim]Line 1: owner[/]");
-            AnsiConsole.MarkupLine("[dim]Line 2: repo[/]");
-            AnsiConsole.MarkupLine("[dim]Line 3: token1,token2[/]");
-            
-            try
-            {
-                Directory.CreateDirectory(ConfigRoot);
-                File.WriteAllLines(TokensPath, new[]
-                {
-                    "YourGitHubUsername",
-                    "automation-hub",
-                    "ghp_Token1,ghp_Token2"
-                });
-                AnsiConsole.MarkupLine($"[green]✓ Template: {TokensPath}[/]");
-            }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"[red]❌ {ex.Message}[/]");
-            }
-            return;
+            Environment.Exit(1);
         }
 
         var lines = File.ReadAllLines(TokensPath);
@@ -155,7 +135,7 @@ public static class TokenManager
         if (lines.Length < 3)
         {
             AnsiConsole.MarkupLine($"[red]❌ Format salah ({lines.Length} baris, butuh 3)[/]");
-            return;
+            Environment.Exit(1);
         }
 
         var owner = lines[0].Trim();
@@ -164,13 +144,13 @@ public static class TokenManager
         if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo))
         {
             AnsiConsole.MarkupLine("[red]❌ Owner/Repo kosong![/]");
-            return;
+            Environment.Exit(1);
         }
         
         if (string.IsNullOrWhiteSpace(lines[2]))
         {
             AnsiConsole.MarkupLine("[red]❌ Tokens kosong![/]");
-            return;
+            Environment.Exit(1);
         }
         
         var tokens = lines[2].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -178,7 +158,7 @@ public static class TokenManager
         if (tokens.Length == 0)
         {
             AnsiConsole.MarkupLine("[red]❌ Tidak ada token valid![/]");
-            return;
+            Environment.Exit(1);
         }
         
         _tokens = tokens.Select(t => new TokenEntry 
@@ -204,12 +184,6 @@ public static class TokenManager
             if (_proxyList.Any())
             {
                 AnsiConsole.MarkupLine($"[green]✓ {_proxyList.Count} tested proxies (success_proxy.txt)[/]");
-                
-                var fileAge = DateTime.Now - File.GetLastWriteTime(ProxyListPath);
-                if (fileAge.TotalHours > 12)
-                {
-                    AnsiConsole.MarkupLine($"[yellow]⚠️  Proxy age: {fileAge.TotalHours:F1}h (coba refresh via ProxySync)[/]");
-                }
                 return;
             }
         }
@@ -223,7 +197,6 @@ public static class TokenManager
             if (_proxyList.Any())
             {
                 AnsiConsole.MarkupLine($"[yellow]⚠️  {_proxyList.Count} UNTESTED proxies (proxy.txt)[/]");
-                AnsiConsole.MarkupLine($"[yellow]    Sebaiknya jalankan ProxySync menu [3] untuk test proxy![/]");
                 return;
             }
         }
