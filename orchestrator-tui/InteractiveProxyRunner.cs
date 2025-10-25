@@ -239,6 +239,9 @@ public static class InteractiveProxyRunner
             AnsiConsole.MarkupLine("[red]Remote bot may hang without answers[/]");
         }
 
+        // NEW: Pack secrets
+        string? secretsBase64 = SecretPacker.PromptForSecrets(bot);
+
         bool proceed = await ConfirmAsync("\nTrigger remote?", true, cancellationToken);
         if (cancellationToken.IsCancellationRequested) return;
 
@@ -249,7 +252,7 @@ public static class InteractiveProxyRunner
         }
 
         AnsiConsole.MarkupLine("[cyan]Triggering workflow...[/]");
-        await GitHubDispatcher.TriggerBotWithInputs(bot, inputs);
+        await GitHubDispatcher.TriggerBotWithSecrets(bot, inputs, secretsBase64);
         AnsiConsole.MarkupLine("\n[bold green]✅ Triggered![/]");
     }
 
