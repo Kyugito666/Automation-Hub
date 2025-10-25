@@ -7,22 +7,25 @@ namespace Orchestrator;
 
 public static class TokenManager
 {
+    private const int MAX_PROXY_RETRY = 3;
+    
     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
     
     private static readonly string TokensPath = Path.Combine(ConfigRoot, "github_tokens.txt");
-    private static readonly string ProxyListPath = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
+    private static readonly string ProxyListPath = Path.Combine(ProjectRoot, "proxysync", "success_proxy.txt");
+    private static readonly string ProxyListPathFallback = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
     
     private static readonly string StatePath = Path.Combine(ProjectRoot, ".token-state.json");
     private static readonly string TokenCachePath = Path.Combine(ProjectRoot, ".token-cache.json");
     
-    // TAMBAH INI: Track proxy yang sudah dicoba per token
     private static Dictionary<string, HashSet<string>> _triedProxies = new();
+    private static Dictionary<string, int> _proxyRetryCount = new();
 
     private static List<TokenEntry> _tokens = new();
     private static List<string> _proxyList = new();
     private static TokenState _state = new();
-    private static Dictionary<string, string> _tokenCache = new(); 
+    private static Dictionary<string, string> _tokenCache = new();
 
     private static string GetProjectRoot()
     {
@@ -52,24 +55,25 @@ public static class TokenManager
         LoadTokens();
         LoadProxyList();
         LoadState();
-        LoadTokenCache(); 
+        LoadTokenCache();
         AssignProxiesAndUsernames();
     }
 
     public static void ReloadAllConfigs()
     {
-        AnsiConsole.MarkupLine("[bold yellow]Reloading all configuration files...[/]");
+        AnsiConsole.MarkupLine("[bold yellow]♻️  Reloading configs...[/]");
         _tokens.Clear();
         _proxyList.Clear();
         _tokenCache.Clear();
-        _triedProxies.Clear(); // TAMBAH INI
+        _triedProxies.Clear();
+        _proxyRetryCount.Clear();
         _state = new TokenState();
         
         Initialize();
-        AnsiConsole.MarkupLine("[bold green]✓ Konfigurasi berhasil di-refresh.[/]");
+        AnsiConsole.MarkupLine("[bold green]✓ Refresh selesai.[/]");
     }
 
-    private static void LoadTokenCache() 
+    private static void LoadTokenCache()
     {
         if (!File.Exists(TokenCachePath)) return;
         try
@@ -77,16 +81,16 @@ public static class TokenManager
             var json = File.ReadAllText(TokenCachePath);
             _tokenCache = JsonSerializer.Deserialize<Dictionary<string, string>>(json) 
                           ?? new Dictionary<string, string>();
-            AnsiConsole.MarkupLine($"[dim]Loaded {_tokenCache.Count} usernames from cache[/]");
+            AnsiConsole.MarkupLine($"[dim]Cache: {_tokenCache.Count} usernames[/]");
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[yellow]Warning: Gagal memuat token cache: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[yellow]⚠️  Cache error: {ex.Message}[/]");
             _tokenCache = new Dictionary<string, string>();
         }
     }
 
-    public static void SaveTokenCache(Dictionary<string, string> cache) 
+    public static void SaveTokenCache(Dictionary<string, string> cache)
     {
         try
         {
@@ -96,7 +100,7 @@ public static class TokenManager
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error saving token cache: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]❌ Cache save error: {ex.Message}[/]");
         }
     }
 
@@ -104,11 +108,11 @@ public static class TokenManager
     {
         if (!File.Exists(TokensPath))
         {
-            AnsiConsole.MarkupLine($"[red]ERROR: {TokensPath} tidak ditemukan![/]");
-            AnsiConsole.MarkupLine("[yellow]Buat file dengan format:[/]");
-            AnsiConsole.MarkupLine("[dim]Line 1: owner (misal: Kyugito666)[/]");
-            AnsiConsole.MarkupLine("[dim]Line 2: repo (misal: automation-hub)[/]");
-            AnsiConsole.MarkupLine("[dim]Line 3: token1,token2,token3[/]");
+            AnsiConsole.MarkupLine($"[red]❌ {TokensPath} tidak ada![/]");
+            AnsiConsole.MarkupLine("[yellow]Format:[/]");
+            AnsiConsole.MarkupLine("[dim]Line 1: owner[/]");
+            AnsiConsole.MarkupLine("[dim]Line 2: repo[/]");
+            AnsiConsole.MarkupLine("[dim]Line 3: token1,token2[/]");
             
             try
             {
@@ -117,14 +121,13 @@ public static class TokenManager
                 {
                     "YourGitHubUsername",
                     "automation-hub",
-                    "ghp_YourToken1,ghp_YourToken2"
+                    "ghp_Token1,ghp_Token2"
                 });
-                AnsiConsole.MarkupLine($"[green]✓ Template file dibuat di: {TokensPath}[/]");
-                AnsiConsole.MarkupLine("[yellow]Silakan edit file tersebut dengan data Anda![/]");
+                AnsiConsole.MarkupLine($"[green]✓ Template: {TokensPath}[/]");
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]Gagal membuat template: {ex.Message}[/]");
+                AnsiConsole.MarkupLine($"[red]❌ {ex.Message}[/]");
             }
             return;
         }
@@ -133,8 +136,7 @@ public static class TokenManager
         
         if (lines.Length < 3)
         {
-            AnsiConsole.MarkupLine("[red]ERROR: github_tokens.txt format salah![/]");
-            AnsiConsole.MarkupLine($"[yellow]File hanya punya {lines.Length} baris, butuh minimal 3[/]");
+            AnsiConsole.MarkupLine($"[red]❌ Format salah ({lines.Length} baris, butuh 3)[/]");
             return;
         }
 
@@ -143,13 +145,13 @@ public static class TokenManager
         
         if (string.IsNullOrEmpty(owner) || string.IsNullOrEmpty(repo))
         {
-            AnsiConsole.MarkupLine("[red]ERROR: Owner atau Repo kosong![/]");
+            AnsiConsole.MarkupLine("[red]❌ Owner/Repo kosong![/]");
             return;
         }
         
         if (string.IsNullOrWhiteSpace(lines[2]))
         {
-            AnsiConsole.MarkupLine("[red]ERROR: Baris 3 (tokens) kosong![/]");
+            AnsiConsole.MarkupLine("[red]❌ Tokens kosong![/]");
             return;
         }
         
@@ -157,7 +159,7 @@ public static class TokenManager
         
         if (tokens.Length == 0)
         {
-            AnsiConsole.MarkupLine("[red]ERROR: Tidak ada token valid di baris 3![/]");
+            AnsiConsole.MarkupLine("[red]❌ Tidak ada token valid![/]");
             return;
         }
         
@@ -168,7 +170,7 @@ public static class TokenManager
             Repo = repo
         }).ToList();
         
-        AnsiConsole.MarkupLine($"[green]✓ Loaded {_tokens.Count} tokens for {owner}/{repo}[/]");
+        AnsiConsole.MarkupLine($"[green]✓ {_tokens.Count} tokens ({owner}/{repo})[/]");
     }
 
     private static void LoadProxyList()
@@ -179,22 +181,21 @@ public static class TokenManager
                 .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith("#"))
                 .ToList();
             
-            AnsiConsole.MarkupLine($"[dim]Loaded {_proxyList.Count} proxies from ProxySync[/]");
+            AnsiConsole.MarkupLine($"[dim]Proxies: {_proxyList.Count}[/]");
             
             var fileAge = DateTime.Now - File.GetLastWriteTime(ProxyListPath);
             if (fileAge.TotalHours > 12)
             {
-                AnsiConsole.MarkupLine($"[yellow]⚠ Warning: proxy.txt berumur {fileAge.TotalHours:F1} jam.[/]");
-                AnsiConsole.MarkupLine($"[yellow]   Proxy gratis biasanya expire < 24 jam. Pertimbangkan re-run ProxySync.[/]");
+                AnsiConsole.MarkupLine($"[yellow]⚠️  proxy.txt: {fileAge.TotalHours:F1}h (coba refresh)[/]");
             }
         }
         else
         {
-            AnsiConsole.MarkupLine($"[yellow]Warning: {ProxyListPath} not found. Running without proxies.[/]");
+            AnsiConsole.MarkupLine($"[yellow]⚠️  {ProxyListPath} tidak ada. No proxy mode.[/]");
         }
     }
 
-    private static void AssignProxiesAndUsernames() 
+    private static void AssignProxiesAndUsernames()
     {
         if (!_tokens.Any()) return;
 
@@ -213,43 +214,38 @@ public static class TokenManager
         }
     }
 
-    // TAMBAH METHOD BARU: Rotate proxy untuk token tertentu
     public static bool RotateProxyForToken(TokenEntry token)
     {
         if (!_proxyList.Any())
         {
-            AnsiConsole.MarkupLine("[yellow]Tidak ada proxy tersedia untuk rotasi.[/]");
+            AnsiConsole.MarkupLine("[yellow]⚠️  No proxies for rotation.[/]");
             return false;
         }
 
-        // Init tracking jika belum ada
         if (!_triedProxies.ContainsKey(token.Token))
         {
             _triedProxies[token.Token] = new HashSet<string>();
         }
 
-        // Tandai proxy lama sebagai sudah dicoba
         if (!string.IsNullOrEmpty(token.Proxy))
         {
             _triedProxies[token.Token].Add(token.Proxy);
         }
 
-        // Cari proxy yang belum dicoba
         var availableProxies = _proxyList.Where(p => !_triedProxies[token.Token].Contains(p)).ToList();
 
         if (!availableProxies.Any())
         {
-            AnsiConsole.MarkupLine("[red]Semua proxy sudah dicoba untuk token ini. Reset...[/]");
+            AnsiConsole.MarkupLine("[red]⚠️  All proxies tried. Reset...[/]");
             _triedProxies[token.Token].Clear();
             availableProxies = _proxyList.ToList();
         }
 
-        // Pilih proxy random
         var random = new Random();
         var newProxy = availableProxies[random.Next(availableProxies.Count)];
         token.Proxy = newProxy;
 
-        AnsiConsole.MarkupLine($"[yellow]🔁 Rotasi Proxy:[/] {MaskProxy(newProxy)}");
+        AnsiConsole.MarkupLine($"[yellow]🔁 Proxy rotated:[/] {MaskProxy(newProxy)}");
         return true;
     }
 
@@ -265,7 +261,7 @@ public static class TokenManager
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error loading state: {ex.Message}. Resetting state.[/]");
+            AnsiConsole.MarkupLine($"[red]❌ State error: {ex.Message}[/]");
             _state = new TokenState();
         }
         
@@ -275,10 +271,7 @@ public static class TokenManager
         }
     }
 
-    public static TokenState GetState()
-    {
-        return _state;
-    }
+    public static TokenState GetState() => _state;
 
     public static void SaveState(TokenState state)
     {
@@ -291,7 +284,7 @@ public static class TokenManager
     {
         if (!_tokens.Any())
         {
-            throw new Exception("No tokens configured in github_tokens.txt");
+            throw new Exception("No tokens in github_tokens.txt");
         }
         
         if (_state.CurrentIndex >= _tokens.Count)
@@ -302,21 +295,15 @@ public static class TokenManager
         return _tokens[_state.CurrentIndex];
     }
     
-    public static List<TokenEntry> GetAllTokenEntries()
-    {
-        return _tokens;
-    }
+    public static List<TokenEntry> GetAllTokenEntries() => _tokens;
     
-    public static Dictionary<string, string> GetUsernameCache()
-    {
-        return _tokenCache;
-    }
+    public static Dictionary<string, string> GetUsernameCache() => _tokenCache;
 
     public static TokenEntry SwitchToNextToken()
     {
         if (!_tokens.Any() || _tokens.Count == 1)
         {
-            AnsiConsole.MarkupLine("[yellow]Hanya 1 token tersedia, tidak bisa rotasi.[/]");
+            AnsiConsole.MarkupLine("[yellow]⚠️  Hanya 1 token, tidak bisa rotasi.[/]");
             return GetCurrentToken();
         }
 
@@ -324,7 +311,7 @@ public static class TokenManager
         SaveState(_state);
 
         var current = _tokens[_state.CurrentIndex];
-        AnsiConsole.MarkupLine($"[bold yellow]🔁 Token Rotated[/]: Now using Token #{_state.CurrentIndex + 1} (@{current.Username ?? "???"})");
+        AnsiConsole.MarkupLine($"[bold yellow]🔁 Token #{_state.CurrentIndex + 1}[/]: @{current.Username ?? "???"}");
         
         _state.ActiveCodespaceName = null;
         
@@ -348,13 +335,13 @@ public static class TokenManager
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]Invalid proxy format: {token.Proxy}. Error: {ex.Message}[/]");
+                AnsiConsole.MarkupLine($"[red]❌ Invalid proxy: {ex.Message}[/]");
             }
         }
 
         var client = new HttpClient(handler);
         client.DefaultRequestHeaders.Add("Authorization", $"Bearer {token.Token}");
-        client.DefaultRequestHeaders.Add("User-Agent", "Automation-Hub-Orchestrator/3.0");
+        client.DefaultRequestHeaders.Add("User-Agent", "Automation-Hub-Orchestrator/3.1");
         client.DefaultRequestHeaders.Add("Accept", "application/vnd.github+json");
         
         return client;
@@ -376,7 +363,7 @@ public static class TokenManager
         }
         catch
         {
-            return "invalid-proxy-format";
+            return "invalid-format";
         }
     }
 
@@ -384,18 +371,18 @@ public static class TokenManager
     {
         if (!_tokens.Any()) 
         {
-            AnsiConsole.MarkupLine("[red]No tokens loaded![/]");
+            AnsiConsole.MarkupLine("[red]❌ No tokens![/]");
             return;
         }
 
-        AnsiConsole.MarkupLine($"[bold cyan]Owner:[/][yellow] {_tokens.FirstOrDefault()?.Owner ?? "N/A"}[/]");
-        AnsiConsole.MarkupLine($"[bold cyan]Repo:[/][yellow] {_tokens.FirstOrDefault()?.Repo ?? "N/A"}[/]");
-        AnsiConsole.MarkupLine($"[bold cyan]Active Codespace:[/][yellow] {_state.ActiveCodespaceName ?? "N/A"}[/]");
+        AnsiConsole.MarkupLine($"[bold cyan]Owner:[/] [yellow]{_tokens.FirstOrDefault()?.Owner ?? "N/A"}[/]");
+        AnsiConsole.MarkupLine($"[bold cyan]Repo:[/] [yellow]{_tokens.FirstOrDefault()?.Repo ?? "N/A"}[/]");
+        AnsiConsole.MarkupLine($"[bold cyan]Codespace:[/] [yellow]{_state.ActiveCodespaceName ?? "N/A"}[/]");
 
-        var table = new Table().Title("GitHub Tokens Status").Expand();
-        table.AddColumn("Index");
+        var table = new Table().Title("Tokens & Proxies").Expand();
+        table.AddColumn("#");
         table.AddColumn("Token");
-        table.AddColumn("Username"); 
+        table.AddColumn("Username");
         table.AddColumn("Proxy");
         table.AddColumn("Active");
 
@@ -409,7 +396,7 @@ public static class TokenManager
             table.AddRow(
                 (i + 1).ToString(),
                 tokenDisplay,
-                token.Username ?? "[grey]???[/]", 
+                token.Username ?? "[grey]???[/]",
                 proxyDisplay,
                 isActive
             );
@@ -422,7 +409,7 @@ public class TokenEntry
 {
     public string Token { get; set; } = string.Empty;
     public string? Proxy { get; set; }
-    public string? Username { get; set; } 
+    public string? Username { get; set; }
     public string Owner { get; set; } = string.Empty;
     public string Repo { get; set; } = string.Empty;
 }
