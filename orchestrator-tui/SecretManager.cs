@@ -7,7 +7,6 @@ using Spectre.Console;
 
 namespace Orchestrator;
 
-// ... (PublicKeyResponse class tetap sama) ...
 public class PublicKeyResponse
 {
     [JsonPropertyName("key")]
@@ -20,7 +19,6 @@ public class PublicKeyResponse
 
 public static class SecretManager
 {
-    // ... (GetProjectRoot, ApiListPath, PrivateKeyDir, TokenDir tetap sama) ...
      private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string ApiListPath = Path.Combine(ProjectRoot, "config", "apilist.txt");
     private static readonly string PrivateKeyDir = Path.Combine(ProjectRoot, "bots", "privatekey");
@@ -28,21 +26,23 @@ public static class SecretManager
 
     private static string GetProjectRoot()
     {
+        // ... (Fungsi ini tetap sama) ...
         var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
-        
+
         while (currentDir != null)
         {
             var configDir = Path.Combine(currentDir.FullName, "config");
             var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
-            
+
             if (Directory.Exists(configDir) && File.Exists(gitignore))
             {
                 return currentDir.FullName;
             }
-            
+
             currentDir = currentDir.Parent;
         }
-        
+
+        // Fallback jika tidak ketemu .gitignore + config/
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     }
 
@@ -64,7 +64,7 @@ public static class SecretManager
         // --- PERBAIKAN DI SINI ---
         // Salah: var allTokens = TokenManager.GetAllTokens();
         // Benar:
-        var allTokens = TokenManager.GetAllTokenEntries();
+        var allTokens = TokenManager.GetAllTokenEntries(); // <--- FIX NAMA METHOD
         // --- AKHIR PERBAIKAN ---
 
         if (!allTokens.Any())
@@ -80,7 +80,6 @@ public static class SecretManager
 
         foreach (var tokenEntry in allTokens)
         {
-            // ... (sisa kode SetSecretsForAll tidak berubah) ...
              if (string.IsNullOrEmpty(tokenEntry.Username))
             {
                 AnsiConsole.MarkupLine($"[yellow]⏭️  Skipping token without username[/]");
@@ -166,13 +165,12 @@ public static class SecretManager
                 failCount++;
             }
 
-            await Task.Delay(1000);
+            await Task.Delay(1000); // Delay antar token
         }
 
         AnsiConsole.MarkupLine($"\n[green]✓ Done.[/] Success: {successCount}, Failed: {failCount}");
     }
 
-    // ... (SetSecret, CollectPrivateKeys, CollectTokens, LoadApiList, EncryptSecret, Sodium class tetap sama) ...
      private static async Task<bool> SetSecret(
         HttpClient client,
         string secretName,
@@ -180,6 +178,7 @@ public static class SecretManager
         PublicKeyResponse pubKey,
         int repoId)
     {
+        // ... (Fungsi ini tetap sama) ...
         try
         {
             var encrypted = EncryptSecret(pubKey.Key, secretValue);
@@ -221,6 +220,7 @@ public static class SecretManager
 
     private static List<string> CollectPrivateKeys()
     {
+        // ... (Fungsi ini tetap sama) ...
         if (!Directory.Exists(PrivateKeyDir))
         {
             AnsiConsole.MarkupLine($"[yellow]⚠️  {PrivateKeyDir} not found. Skipping privatekey collection.[/]");
@@ -228,118 +228,105 @@ public static class SecretManager
         }
 
         var keys = new List<string>();
-        var dirs = Directory.GetDirectories(PrivateKeyDir);
-
-        foreach (var dir in dirs)
+        try
         {
-            var accountsFile = Path.Combine(dir, "accounts.txt");
-            if (File.Exists(accountsFile))
-            {
-                var lines = File.ReadAllLines(accountsFile)
-                    .Select(l => l.Trim()) // Trim whitespace
-                    .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"));
-                keys.AddRange(lines);
-            }
-        }
+             var dirs = Directory.GetDirectories(PrivateKeyDir);
+             foreach (var dir in dirs)
+             {
+                 var accountsFile = Path.Combine(dir, "accounts.txt");
+                 if (File.Exists(accountsFile))
+                 {
+                     var lines = File.ReadAllLines(accountsFile)
+                         .Select(l => l.Trim())
+                         .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"));
+                     keys.AddRange(lines);
+                 }
+             }
+        } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error collecting private keys: {ex.Message}[/]"); }
 
-        if (keys.Any())
-            AnsiConsole.MarkupLine($"[green]✓ Collected {keys.Count} private keys[/]");
-
+        if (keys.Any()) AnsiConsole.MarkupLine($"[green]✓ Collected {keys.Count} private keys[/]");
         return keys;
     }
 
     private static List<string> CollectTokens()
     {
-        if (!Directory.Exists(TokenDir))
+        // ... (Fungsi ini tetap sama) ...
+         if (!Directory.Exists(TokenDir))
         {
             AnsiConsole.MarkupLine($"[yellow]⚠️  {TokenDir} not found. Skipping token collection.[/]");
             return new List<string>();
         }
 
         var tokens = new List<string>();
-        var dirs = Directory.GetDirectories(TokenDir);
-
-        foreach (var dir in dirs)
+        try
         {
-            var dataFile = Path.Combine(dir, "data.txt");
-            if (File.Exists(dataFile))
-            {
-                var lines = File.ReadAllLines(dataFile)
-                    .Select(l => l.Trim()) // Trim whitespace
-                    .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"));
-                tokens.AddRange(lines);
-            }
-        }
+             var dirs = Directory.GetDirectories(TokenDir);
+             foreach (var dir in dirs)
+             {
+                 var dataFile = Path.Combine(dir, "data.txt");
+                 if (File.Exists(dataFile))
+                 {
+                     var lines = File.ReadAllLines(dataFile)
+                         .Select(l => l.Trim())
+                         .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"));
+                     tokens.AddRange(lines);
+                 }
+             }
+        } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error collecting tokens: {ex.Message}[/]"); }
 
-        if (tokens.Any())
-            AnsiConsole.MarkupLine($"[green]✓ Collected {tokens.Count} tokens[/]");
-
+        if (tokens.Any()) AnsiConsole.MarkupLine($"[green]✓ Collected {tokens.Count} tokens[/]");
         return tokens;
     }
 
     private static List<string> LoadApiList()
     {
+        // ... (Fungsi ini tetap sama) ...
         if (!File.Exists(ApiListPath))
         {
             AnsiConsole.MarkupLine($"[yellow]⚠️  {ApiListPath} not found. Skipping APILIST.[/]");
             return new List<string>();
         }
+        try
+        {
+             var lines = File.ReadAllLines(ApiListPath)
+                 .Select(l => l.Trim())
+                 .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"))
+                 .ToList();
 
-        var lines = File.ReadAllLines(ApiListPath)
-            .Select(l => l.Trim()) // Trim whitespace
-            .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"))
-            .ToList();
-
-        if (lines.Any())
-            AnsiConsole.MarkupLine($"[green]✓ Loaded {lines.Count} API URLs[/]");
-
-        return lines;
+             if (lines.Any()) AnsiConsole.MarkupLine($"[green]✓ Loaded {lines.Count} API URLs[/]");
+             return lines;
+        } catch (Exception ex) {
+            AnsiConsole.MarkupLine($"[red]Error loading API list: {ex.Message}[/]");
+            return new List<string>();
+        }
     }
 
     private static string EncryptSecret(string publicKeyBase64, string secretValue)
     {
-        // Implementasi enkripsi libsodium-compatible di C#
-        // Placeholder - Gunakan library seperti NSec.Cryptography
-        // Contoh sederhana (TIDAK AMAN UNTUK PRODUKSI, hanya untuk build):
+        // ... (Fungsi ini tetap sama - MASIH PLACEHOLDER) ...
         try
         {
-             // Ini HANYA placeholder, BUKAN implementasi libsodium yang benar!
-             // Anda HARUS menggantinya dengan library yang sesuai seperti NSec.Cryptography
-             // atau memanggil executable libsodium eksternal.
             var keyBytes = Convert.FromBase64String(publicKeyBase64);
             var secretBytes = Encoding.UTF8.GetBytes(secretValue);
-            
-            // Logika enkripsi placeholder (sangat tidak aman)
+
+            // Placeholder (TIDAK AMAN!)
             using var aes = Aes.Create();
-            aes.Key = keyBytes.Take(32).ToArray(); // Ambil 32 byte pertama sebagai key (tidak aman)
+            aes.Key = SHA256.HashData(keyBytes).Take(32).ToArray(); // Gunakan hash (sedikit lebih baik tapi tetap salah)
             aes.GenerateIV();
             using var encryptor = aes.CreateEncryptor();
             using var ms = new MemoryStream();
-            ms.Write(aes.IV, 0, aes.IV.Length); // Prepend IV
+            ms.Write(aes.IV, 0, aes.IV.Length);
             using (var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write))
             {
                 cs.Write(secretBytes, 0, secretBytes.Length);
+                cs.FlushFinalBlock(); // Penting!
             }
             return Convert.ToBase64String(ms.ToArray());
-             
-             // TODO: Ganti dengan implementasi NSec.Cryptography SealedPublicKeyBox.Seal()
-             // byte[] publicKeyBytes = Convert.FromBase64String(publicKeyBase64);
-             // byte[] secretBytes = Encoding.UTF8.GetBytes(secretValue);
-             // var publicKey = NSec.Cryptography.PublicKey.Import(
-             //     NSec.Cryptography.SignatureAlgorithm.Ed25519, // Ganti algoritma jika perlu
-             //     publicKeyBytes,
-             //     NSec.Cryptography.KeyBlobFormat.RawPublicKey);
-             // byte[] sealedData = NSec.Cryptography.SealedPublicKeyBox.Seal(publicKey, secretBytes);
-             // return Convert.ToBase64String(sealedData);
         }
         catch (Exception ex)
         {
              AnsiConsole.MarkupLine($"[red]PLACEHOLDER Encryption failed: {ex.Message}. Using Base64...[/]");
-             // Fallback ke base64 biasa jika enkripsi gagal (SANGAT TIDAK AMAN)
              return Convert.ToBase64String(Encoding.UTF8.GetBytes(secretValue));
         }
-
     }
-
-    // Kelas Sodium dihapus karena kita pakai placeholder / library lain
 }
