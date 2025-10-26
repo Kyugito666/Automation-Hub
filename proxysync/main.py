@@ -4,7 +4,7 @@ import shutil
 import time
 import re
 import sys
-import json # <-- Pastikan 'json' di-import
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import ui  # Mengimpor semua fungsi UI dari file ui.py
@@ -26,12 +26,8 @@ WEBSHARE_AUTH_URL = "https://proxy.webshare.io/api/v2/proxy/ipauthorization/"
 WEBSHARE_SUB_URL = "https://proxy.webshare.io/api/v2/subscription/"
 WEBSHARE_CONFIG_URL = "https://proxy.webshare.io/api/v2/proxy/config/"
 WEBSHARE_PROFILE_URL = "https://proxy.webshare.io/api/v2/profile/"
-# === PERUBAHAN DOWNLOAD v3 (FINAL) ===
-# URL Base SEKARANG pakai 'username' literal
 WEBSHARE_DOWNLOAD_URL_BASE = "https://proxy.webshare.io/api/v2/proxy/list/download/{token}/-/any/username/direct/-/"
-# Format URL juga pakai 'username' literal
 WEBSHARE_DOWNLOAD_URL_FORMAT = WEBSHARE_DOWNLOAD_URL_BASE + "?plan_id={plan_id}"
-# === AKHIR PERUBAHAN DOWNLOAD v3 (FINAL) ===
 IP_CHECK_SERVICE_URL = "https://api.ipify.org?format=json"
 
 # --- Konfigurasi Tes Proxy ---
@@ -78,16 +74,13 @@ def get_current_public_ip():
     except requests.RequestException as e: ui.console.print(f"   -> [bold red]ERROR Gagal cek IP: {e}[/bold red]", file=sys.stderr); return None
 
 def get_account_email(session: requests.Session) -> str:
-    """Mengambil email akun Webshare (tanpa sensor)."""
     try:
         response = session.get(WEBSHARE_PROFILE_URL, timeout=WEBSHARE_API_TIMEOUT)
         if response.status_code == 401: return "[bold red]API Key Invalid[/]"
         response.raise_for_status()
         data = response.json(); email = data.get("email")
-        if email:
-            return email # <-- Langsung return email asli
-        else:
-            return "[yellow]Email N/A[/]"
+        if email: return email
+        else: return "[yellow]Email N/A[/]"
     except requests.exceptions.HTTPError as e: return f"[bold red]HTTP Err ({e.response.status_code})[/]"
     except requests.RequestException: return "[bold red]Koneksi Err[/]"
     except Exception: return "[bold red]Parsing Err[/]"
@@ -185,29 +178,16 @@ def run_webshare_ip_sync():
             except Exception as e: ui.console.print(f"   -> [bold red]!!! ERROR Hapus/Tambah. Lanjut akun berikutnya.[/bold red]")
     ui.console.print("\n[bold green]✅ Sinkronisasi IP selesai.[/bold green]")
 
-# --- LOGIKA WEBSHARE PROXY DOWNLOAD ---
 def get_webshare_download_url(session: requests.Session, plan_id: str):
     ui.console.print("   -> Get URL download (via /config/)...")
     params = {"plan_id": plan_id}
     try:
         response = session.get(WEBSHARE_CONFIG_URL, params=params, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
-        data = response.json()
-        # username = data.get("username") # <-- TIDAK DIPAKAI LAGI
-        token = data.get("proxy_list_download_token")
-        # if not username or not token: # Cek token saja
-        if not token:
-             ui.console.print("   -> [bold red]ERROR: 'proxy_list_download_token' N/A.[/bold red]"); return None
-
-        # === PERUBAHAN DOWNLOAD v3 (FINAL) ===
-        # Format URL pakai 'username' literal, HANYA butuh token & plan_id
-        download_url = WEBSHARE_DOWNLOAD_URL_FORMAT.format(
-            token=token,
-            # username=username, # <-- Dihapus
-            plan_id=plan_id
-        )
-        # === AKHIR PERUBAHAN DOWNLOAD v3 (FINAL) ===
-
+        data = response.json(); token = data.get("proxy_list_download_token")
+        if not token: ui.console.print("   -> [bold red]ERROR: 'proxy_list_download_token' N/A.[/bold red]"); return None
+        # Format URL pakai 'username' literal
+        download_url = WEBSHARE_DOWNLOAD_URL_FORMAT.format(token=token, plan_id=plan_id)
         ui.console.print(f"   -> [green]OK URL download.[/green]"); return download_url
     except requests.exceptions.HTTPError as e: ui.console.print(f"   -> [bold red]ERROR Config: {e.response.text}[/bold red]"); return None
     except requests.RequestException as e: ui.console.print(f"   -> [bold red]ERROR Koneksi (config): {e}[/bold red]"); return None
@@ -242,7 +222,7 @@ def download_proxies_from_api():
             try:
                 plan_id = get_target_plan_id(session)
                 if not plan_id: ui.console.print(f"   -> [bold red]Akun skip.[/bold red]"); continue
-                download_url = get_webshare_download_url(session, plan_id) # Panggil fungsi yang sudah di-fix
+                download_url = get_webshare_download_url(session, plan_id)
                 if download_url: all_download_targets.append((download_url, api_key))
                 else: ui.console.print("   -> [yellow]Gagal URL. Skip.[/yellow]")
             except Exception as e: ui.console.print(f"   -> [bold red]!!! FATAL: {e}[/bold red]")
@@ -263,40 +243,119 @@ def download_proxies_from_api():
         ui.console.print(f"\n[bold green]✅ {len(all_downloaded_proxies)} proksi ke '{PROXYLIST_SOURCE_FILE}'[/bold green]")
     except IOError as e: ui.console.print(f"\n[bold red]Gagal tulis '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
 
-# --- SISA FUNGSI (Konversi, Tes, Distribusi, Main) ---
+
+# === PERUBAHAN KONVERSI v2 ===
 def convert_proxylist_to_http():
-    if not os.path.exists(PROXYLIST_SOURCE_FILE): ui.console.print(f"[bold red]'{PROXYLIST_SOURCE_FILE}' N/A.[/bold red]"); return
+    """Konversi proxy dari proxylist.txt ke format http dan simpan ke proxy.txt."""
+    if not os.path.exists(PROXYLIST_SOURCE_FILE):
+        ui.console.print(f"[bold red]Error: '{PROXYLIST_SOURCE_FILE}' tidak ditemukan.[/bold red]")
+        return
+
     try:
-        with open(PROXYLIST_SOURCE_FILE, "r") as f: lines = f.readlines()
-    except Exception as e: ui.console.print(f"[bold red]Gagal baca '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]"); return
-    cleaned_proxies = [line.strip() for line in lines if line.strip()]
-    if not cleaned_proxies: ui.console.print(f"[yellow]'{PROXYLIST_SOURCE_FILE}' kosong.[/yellow]"); return
-    ui.console.print(f"Konversi {len(cleaned_proxies)} proksi...")
-    converted_proxies = []; skipped_count = 0
-    for p in cleaned_proxies:
-        p = p.strip();
-        if not p: continue
-        if p.startswith("http://") or p.startswith("https://"): converted_proxies.append(p); continue
-        parts = p.split(':')
-        if len(parts) == 2:
-            if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", parts[0]) and parts[1].isdigit(): converted_proxies.append(f"http://{parts[0]}:{parts[1]}")
-            elif '.' in parts[0] and parts[1].isdigit(): converted_proxies.append(f"http://{parts[0]}:{parts[1]}")
-            else: skipped_count += 1
-        elif len(parts) == 4 and '@' not in parts[0] and '@' not in parts[1]:
-             if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", parts[2]) and parts[3].isdigit(): converted_proxies.append(f"http://{parts[0]}:{parts[1]}@{parts[2]}:{parts[3]}")
-             elif '.' in parts[2] and parts[3].isdigit(): converted_proxies.append(f"http://{parts[0]}:{parts[1]}@{parts[2]}:{parts[3]}")
-             else: skipped_count += 1
-        elif len(parts) >= 3 and '@' in p: converted_proxies.append(f"http://{p}")
-        else: skipped_count += 1
-    if skipped_count > 0: ui.console.print(f"[yellow]{skipped_count} baris skip (format?).[/yellow]")
-    if not converted_proxies: ui.console.print("[bold red]Hasil konversi kosong.[/bold red]"); return
+        with open(PROXYLIST_SOURCE_FILE, "r") as f:
+            lines = f.readlines()
+    except Exception as e:
+        ui.console.print(f"[bold red]Gagal membaca '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
+        return
+
+    # Bersihkan baris kosong dan komentar sebelum menghitung
+    cleaned_proxies_input = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+
+    if not cleaned_proxies_input:
+        ui.console.print(f"[yellow]'{PROXYLIST_SOURCE_FILE}' kosong atau hanya berisi komentar.[/yellow]")
+        return
+
+    ui.console.print(f"Mengonversi {len(cleaned_proxies_input)} proksi dari '{PROXYLIST_SOURCE_FILE}'...")
+
+    converted_proxies = []
+    skipped_count = 0
+    skipped_examples = [] # Untuk menampilkan contoh yang gagal
+
+    # Regex untuk host (bisa IP v4 atau domain)
+    host_pattern = r"((?:[0-9]{1,3}\.){3}[0-9]{1,3}|(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,})"
+    # Regex untuk port
+    port_pattern = r"[0-9]{1,5}"
+    # Regex untuk user & pass (bisa mengandung karakter apa saja KECUALI '@' dan ':')
+    # Modifikasi: Bolehkan ':' di password, tapi asumsi ':' terakhir sebelum port
+    user_pass_pattern = r"[^@:]+" # User
+    # pass_pattern = r"[^@]+" # Pass - revisi nanti
+
+    for p in cleaned_proxies_input:
+        p = p.strip()
+        if not p:
+            continue
+
+        # 1. Cek format http:// atau https://
+        if p.startswith("http://") or p.startswith("https://"):
+            converted_proxies.append(p)
+            continue
+
+        converted = None
+        # 2. Cek format user:pass@host:port (lebih prioritas karena ada '@')
+        #    Regex ini mencoba menangkap user:pass, host, dan port
+        match_user_pass_host_port = re.match(rf"^(?P<user_pass>.+)@(?P<host>{host_pattern}):(?P<port>{port_pattern})$", p)
+        if match_user_pass_host_port:
+            user_pass = match_user_pass_host_port.group("user_pass")
+            host = match_user_pass_host_port.group("host")
+            port = match_user_pass_host_port.group("port")
+            # Cek validitas port (harus antara 1-65535)
+            if 1 <= int(port) <= 65535:
+                converted = f"http://{user_pass}@{host}:{port}"
+            # Jika port tidak valid, akan diskip nanti
+
+        # 3. Jika tidak ada '@', coba split pakai ':'
+        if not converted:
+            parts = p.split(':')
+            if len(parts) == 4:
+                # Asumsi ip:port:user:pass
+                ip, port, user, password = parts
+                # Cek apakah bagian pertama adalah IP/Host dan kedua adalah port
+                if re.match(rf"^{host_pattern}$", ip) and re.match(rf"^{port_pattern}$", port):
+                    if 1 <= int(port) <= 65535:
+                        converted = f"http://{user}:{password}@{ip}:{port}"
+            elif len(parts) == 2:
+                # Asumsi ip:port
+                ip, port = parts
+                if re.match(rf"^{host_pattern}$", ip) and re.match(rf"^{port_pattern}$", port):
+                     if 1 <= int(port) <= 65535:
+                        converted = f"http://{ip}:{port}"
+
+        # 4. Jika berhasil dikonversi, tambahkan ke list
+        if converted:
+            converted_proxies.append(converted)
+        else:
+            skipped_count += 1
+            if len(skipped_examples) < 5: # Simpan 5 contoh pertama
+                skipped_examples.append(p)
+
+    # --- Laporan Hasil ---
+    if skipped_count > 0:
+        ui.console.print(f"[yellow]{skipped_count} baris dilewati karena format tidak dikenali/valid.[/yellow]")
+        if skipped_examples:
+            ui.console.print("[yellow]Contoh yang dilewati:[/yellow]")
+            for ex in skipped_examples:
+                ui.console.print(f"  - {ex}")
+
+    if not converted_proxies:
+        ui.console.print("[bold red]Tidak ada proksi yang berhasil dikonversi.[/bold red]")
+        return
+
+    # --- Tulis ke file proxy.txt ---
     try:
         with open(PROXY_SOURCE_FILE, "w") as f:
-            for proxy in converted_proxies: f.write(proxy + "\n")
-        open(PROXYLIST_SOURCE_FILE, "w").close()
-        ui.console.print(f"[bold green]✅ {len(converted_proxies)} proksi ke '{PROXY_SOURCE_FILE}'.[/bold green]")
-        ui.console.print(f"[bold cyan]'{PROXYLIST_SOURCE_FILE}' dikosongkan.[/bold cyan]")
-    except Exception as e: ui.console.print(f"[bold red]Gagal tulis: {e}[/bold red]")
+            for proxy in converted_proxies:
+                f.write(proxy + "\n")
+        
+        # Kosongkan proxylist.txt
+        open(PROXYLIST_SOURCE_FILE, "w").close() 
+        
+        ui.console.print(f"[bold green]✅ {len(converted_proxies)} proksi dikonversi dan disimpan ke '{PROXY_SOURCE_FILE}'.[/bold green]")
+        ui.console.print(f"[bold cyan]'{PROXYLIST_SOURCE_FILE}' telah dikosongkan.[/bold cyan]")
+
+    except Exception as e:
+        ui.console.print(f"[bold red]Gagal menulis ke file: {e}[/bold red]")
+# === AKHIR PERUBAHAN KONVERSI v2 ===
+
 
 def load_and_deduplicate_proxies(file_path):
     if not os.path.exists(file_path): return []
