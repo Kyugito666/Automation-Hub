@@ -163,24 +163,23 @@ def remove_ip(session: requests.Session, ip: str, plan_id: str):
     params = {"plan_id": plan_id} # plan_id sekarang WAJIB
     payload = {"ip_address": ip} 
     
+    # === PERBAIKAN BUG INTI v5 (FINAL) ===
     # Kita harus menambahkan header 'Content-Type' secara manual saat menggunakan 'data'
+    # Ini adalah cara paling 'direct' untuk maksa 'requests'
+    # mengirim body/payload di request DELETE.
     headers = {'Content-Type': 'application/json'}
+    payload_str = json.dumps(payload)
+    # === AKHIR PERBAIKAN BUG INTI v5 (FINAL) ===
         
     try:
-        
-        # === PERBAIKAN BUG INTI v5 (FINAL) ===
-        # Menggunakan 'data' (raw string) instead of 'json' (helper)
-        # Ini adalah cara paling 'direct' untuk maksa 'requests'
-        # mengirim body/payload di request DELETE.
         response = session.request(
             "DELETE", 
             WEBSHARE_AUTH_URL, 
-            data=json.dumps(payload), # <-- Diubah dari json=payload
-            headers=headers,          # <-- Ditambahkan
+            data=payload_str, # <-- Diubah dari json=payload
+            headers=headers,  # <-- Ditambahkan
             params=params, 
             timeout=WEBSHARE_API_TIMEOUT
         )
-        # === AKHIR PERBAIKAN BUG INTI v5 (FINAL) ===
 
         # API Webshare mengembalikan 204 (No Content) saat sukses delete
         if response.status_code == 204:
@@ -254,8 +253,8 @@ def run_webshare_ip_sync():
         with requests.Session() as session:
             session.headers.update({
                 "Authorization": f"Token {api_key}",
-                "Content-Type": "application/json",
                 "Accept": "application/json"
+                # Hapus Content-Type default, biarkan 'remove_ip' dan 'add_ip' menentukannya
             })
             
             try:
@@ -264,19 +263,21 @@ def run_webshare_ip_sync():
                 
                 # Jika GAGAL dapat plan_id, lewati akun ini
                 if not plan_id:
-                    ui.console.print(f"   -> [bold red]FATAL: Tidak bisa mendapatkan Plan ID dari /config/. Akun dilewati.[/bold red]")
+                    # get_target_plan_id sudah nge-print error-nya
+                    ui.console.print(f"   -> [bold red]Akun dilewati.[/bold red]")
                     continue
 
                 existing_ips = get_authorized_ips(session, plan_id) # plan_id sekarang WAJIB
 
-                # === LOGIKA BARU YANG LU MINTA (udah ada dari v4) ===
+                # === LOGIKA YANG LU MINTA ===
+                # Cek dulu apakah IP baru sudah ada
                 if new_ip in existing_ips:
                     ui.console.print(f"   -> [green]IP baru ({new_ip}) sudah terotorisasi. Tidak ada perubahan.[/green]")
                     continue # Lanjut ke akun berikutnya
-                # === AKHIR LOGIKA BARU ===
+                # === AKHIR LOGIKA ===
 
                 ui.console.print("\n4. Memeriksa IP lama untuk dihapus...")
-                # ips_to_delete sekarang berisi SEMUA IP yang ada (karena new_ip tidak ada di list)
+                # Jika IP baru tidak ada, kita HAPUS SEMUA IP LAMA
                 ips_to_delete = [ip for ip in existing_ips] 
                 if not ips_to_delete:
                     ui.console.print("   -> Tidak ada IP lama yang perlu dihapus.")
@@ -377,7 +378,8 @@ def download_proxies_from_api():
                 
                 # Jika GAGAL dapat plan_id, lewati akun ini
                 if not plan_id:
-                    ui.console.print(f"   -> [bold red]FATAL: Tidak bisa mendapatkan Plan ID dari /config/. Akun dilewati.[/bold red]")
+                    # get_target_plan_id sudah nge-print error-nya
+                    ui.console.print(f"   -> [bold red]Akun dilewati.[/bold red]")
                     continue
                 
                 download_url = get_webshare_download_url(session, plan_id) # plan_id sekarang WAJIB
