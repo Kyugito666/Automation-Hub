@@ -60,11 +60,7 @@ public static class ProxyManager
 
         try
         {
-// === PERBAIKAN PATH PYTHON ===
-            // Ganti path di bawah ini dengan hasil 'where python' lu
-            string pythonExecutablePath = @"C:\Users\ADIT\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\python.exe"; 
-            await ShellHelper.RunInteractive(pythonExecutablePath, $"\"{ProxySyncScript}\"", ProxySyncDir, null, cancellationToken);
-            // === AKHIR PERBAIKAN ===
+        await ShellHelper.RunInteractive("python", $"\"{ProxySyncScript}\"", ProxySyncDir, null, cancellationToken);
         }
         catch (OperationCanceledException)
         {
