@@ -44,7 +44,9 @@ public static class ProxyManager
         AnsiConsole.MarkupLine("\n[cyan]1. Menginstal dependensi ProxySync (pip)...[/]");
         try
         {
-            await ShellHelper.RunCommandAsync("pip", $"install --no-cache-dir -r \"{ProxySyncReqs}\"", ProxySyncDir);
+// === PERBAIKAN IMPORT ERROR ===
+            await ShellHelper.RunCommandAsync("pip", $"install --no-cache-dir --upgrade -r \"{ProxySyncReqs}\"", ProxySyncDir);
+            // === AKHIR PERBAIKAN ===
             AnsiConsole.MarkupLine("[green]   ✓ Dependensi ProxySync terinstal.[/]");
         }
         catch (Exception ex)
