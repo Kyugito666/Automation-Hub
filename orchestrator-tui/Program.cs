@@ -12,6 +12,7 @@ namespace Orchestrator;
 internal static class Program
 {
     private static CancellationTokenSource _mainCts = new CancellationTokenSource();
+
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromHours(3);
     private static readonly TimeSpan ErrorRetryDelay = TimeSpan.FromMinutes(5);
 
@@ -20,10 +21,10 @@ internal static class Program
         Console.CancelKeyPress += (sender, e) => {
             e.Cancel = true;
             if (!_mainCts.IsCancellationRequested) {
-                AnsiConsole.MarkupLine("\n[bold yellow]⚠️  Ctrl+C detected. Requesting graceful shutdown...[/bold yellow]");
+                AnsiConsole.MarkupLine("\n[bold yellow]Ctrl+C detected. Requesting shutdown...[/bold yellow]");
                 _mainCts.Cancel();
             } else { 
-                AnsiConsole.MarkupLine("[dim](Shutdown already in progress...)[/dim]"); 
+                AnsiConsole.MarkupLine("[grey](Shutdown already requested...)[/]"); 
             }
         };
 
@@ -36,216 +37,161 @@ internal static class Program
             }
         }
         catch (OperationCanceledException) { 
-            AnsiConsole.MarkupLine("\n[yellow]✓ Operation cancelled by user.[/yellow]"); 
+            AnsiConsole.MarkupLine("\n[yellow]Operation cancelled by user.[/yellow]"); 
         }
         catch (Exception ex) { 
-            AnsiConsole.MarkupLine($"\n[bold red]💥 FATAL ERROR:[/bold red]"); 
+            AnsiConsole.MarkupLine($"\n[bold red]FATAL ERROR in Main:[/bold red]"); 
             AnsiConsole.WriteException(ex); 
         }
         finally { 
-            AnsiConsole.MarkupLine("\n[cyan]👋 Orchestrator shutting down gracefully...[/cyan]"); 
+            AnsiConsole.MarkupLine("\n[cyan]Orchestrator shutting down.[/cyan]"); 
         }
-    }
-
-    private static void PrintMainHeader()
-    {
-        AnsiConsole.Clear();
-        var logo = new FigletText("Automation Hub").Centered().Color(Color.Cyan1);
-        AnsiConsole.Write(logo);
-        
-        var panel = new Panel(
-            Align.Center(
-                new Markup(
-                    "[bold cyan]Enterprise Codespace Orchestrator[/bold cyan]\n" +
-                    "[dim]Local Control • Remote Execution • Zero Maintenance[/dim]\n\n" +
-                    "[yellow]⚡[/yellow] Multi-Token Rotation  [yellow]⚡[/yellow] Auto Quota Management  [yellow]⚡[/yellow] Self-Healing\n" +
-                    "[dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]\n" +
-                    "[magenta]Created by Kyugito666[/magenta] • [green]Powered by Spectre.Console[/green]"
-                )
-            )
-        )
-        {
-            Border = BoxBorder.Double,
-            BorderStyle = new Style(Color.Cyan1),
-            Padding = new Padding(2, 1)
-        };
-        AnsiConsole.Write(panel);
-        AnsiConsole.WriteLine();
     }
 
     private static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            PrintMainHeader();
-            var rule = new Rule("[bold cyan]MAIN CONTROL PANEL[/bold cyan]")
-            {
-                Justification = Justify.Center,
-                Style = Style.Parse("cyan")
-            };
-            AnsiConsole.Write(rule);
-            AnsiConsole.WriteLine();
+            AnsiConsole.Clear();
+            AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
+            AnsiConsole.MarkupLine("[grey]Codespace Orchestrator - Local Control, Remote Execution[/grey]");
 
             var prompt = new SelectionPrompt<string>()
-                .Title("[bold yellow]╭─ Select Operation:[/bold yellow]")
-                .PageSize(10)
-                .MoreChoicesText("[dim](Move up/down to reveal more options)[/dim]")
-                .HighlightStyle(new Style(Color.Yellow, decoration: Decoration.Bold))
-                .AddChoices(new[] {
-                    "🚀 [REMOTE] Start/Manage Codespace Runner (Continuous Loop)",
-                    "🔧 [SETUP] Token & Collaborator Management",
-                    "📡 [LOCAL] Proxy Management (Run ProxySync)",
-                    "🐛 [DEBUG] Test Local Bot",
-                    "🔄 [SYSTEM] Refresh All Configs",
-                    "🚪 Exit Application"
-                });
-
+                    .Title("\n[bold cyan]MAIN MENU[/bold cyan]")
+                    .PageSize(10).WrapAround()
+                    .AddChoices(new[] {
+                        "1. Start/Manage Codespace Runner (Continuous Loop)",
+                        "2. Token & Collaborator Management",
+                        "3. Proxy Management (Run ProxySync)",
+                        "4. Test Local Bot",
+                        "5. Refresh All Configs",
+                        "0. Exit" });
+            
             var choice = AnsiConsole.Prompt(prompt);
-            var selection = choice.Split(']')[0].Trim('[', ' ');
+            var selection = choice.Split('.')[0];
 
             try {
                 switch (selection) {
-                    case "🚀 [REMOTE": 
+                    case "1": 
                         await RunOrchestratorLoopAsync(cancellationToken); 
                         break;
-                    case "🔧 [SETUP": 
+                    case "2": 
                         await ShowSetupMenuAsync(cancellationToken); 
                         break;
-                    case "📡 [LOCAL": 
+                    case "3": 
                         await ShowLocalMenuAsync(cancellationToken); 
                         break;
-                    case "🐛 [DEBUG": 
+                    case "4": 
                         await ShowDebugMenuAsync(cancellationToken); 
                         break;
-                    case "🔄 [SYSTEM": 
+                    case "5": 
                         TokenManager.ReloadAllConfigs(); 
-                        Pause("Press Enter to continue...", cancellationToken); 
+                        Pause("...", cancellationToken); 
                         break;
-                    case "🚪 Exit": 
+                    case "0": 
                         return;
                 }
             }
             catch (OperationCanceledException) { 
-                AnsiConsole.MarkupLine("\n[yellow]⚠️  Operation cancelled.[/yellow]"); 
-                Pause("Press Enter...", CancellationToken.None); 
+                AnsiConsole.MarkupLine("\n[yellow]Operation cancelled.[/yellow]"); 
+                Pause("...", CancellationToken.None); 
             }
             catch (Exception ex) { 
-                AnsiConsole.MarkupLine($"[red]❌ Error: {ex.Message}[/red]"); 
+                AnsiConsole.MarkupLine($"[red]Error: {ex.Message}[/red]"); 
                 AnsiConsole.WriteException(ex); 
-                Pause("Press Enter...", CancellationToken.None); 
+                Pause("...", CancellationToken.None); 
             }
         }
     }
 
     private static async Task ShowSetupMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
-            AnsiConsole.Clear();
-            var header = new FigletText("Setup").Centered().Color(Color.Yellow);
-            AnsiConsole.Write(header);
-            
-            var panel = new Panel("[bold]TOKEN & COLLABORATOR CONFIGURATION[/bold]")
-            {
-                Border = BoxBorder.Heavy,
-                BorderStyle = new Style(Color.Yellow),
-                Padding = new Padding(1, 0)
-            };
-            AnsiConsole.Write(panel);
-            AnsiConsole.WriteLine();
-
-            var prompt = new SelectionPrompt<string>()
-                .Title("[bold yellow]╭─ Setup Options:[/bold yellow]")
-                .PageSize(10)
-                .HighlightStyle(new Style(Color.Yellow, decoration: Decoration.Bold))
+             AnsiConsole.Clear(); 
+             AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
+             
+             var prompt = new SelectionPrompt<string>()
+                .Title("\n[bold yellow]TOKEN & COLLABORATOR SETUP[/bold yellow]")
+                .PageSize(10).WrapAround()
                 .AddChoices(new[] { 
-                    "✓ Validate Tokens & Get Usernames", 
-                    "📨 Invite Collaborators", 
-                    "✅ Accept Invitations", 
-                    "📊 Show Token/Proxy Status", 
-                    "⬅️  Back to Main Menu" 
+                    "1. Validate Tokens & Get Usernames", 
+                    "2. Invite Collaborators", 
+                    "3. Accept Invitations", 
+                    "4. Show Token/Proxy Status", 
+                    "0. Back to Main Menu" 
                 });
+             
+             var choice = AnsiConsole.Prompt(prompt);
+             var sel = choice.Split('.')[0]; 
+             if (sel == "0") return;
 
-            var choice = AnsiConsole.Prompt(prompt);
-            if (choice.StartsWith("⬅️")) return;
-
-            if (choice.StartsWith("✓"))
-                await CollaboratorManager.ValidateAllTokens(cancellationToken);
-            else if (choice.StartsWith("📨"))
-                await CollaboratorManager.InviteCollaborators(cancellationToken);
-            else if (choice.StartsWith("✅"))
-                await CollaboratorManager.AcceptInvitations(cancellationToken);
-            else if (choice.StartsWith("📊"))
-                await Task.Run(() => TokenManager.ShowStatus(), cancellationToken);
-            
-            Pause("Press Enter to continue...", cancellationToken);
+             switch (sel)
+             {
+                 case "1":
+                     await CollaboratorManager.ValidateAllTokens(cancellationToken);
+                     break;
+                 case "2":
+                     await CollaboratorManager.InviteCollaborators(cancellationToken);
+                     break;
+                 case "3":
+                     await CollaboratorManager.AcceptInvitations(cancellationToken);
+                     break;
+                 case "4":
+                     await Task.Run(() => TokenManager.ShowStatus(), cancellationToken);
+                     break;
+             }
+             Pause("Tekan Enter...", cancellationToken);
         }
-    }
+     }
 
     private static async Task ShowLocalMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
-            AnsiConsole.Clear();
-            var header = new FigletText("Proxy").Centered().Color(Color.Green);
-            AnsiConsole.Write(header);
-            
-            var panel = new Panel("[bold]LOCAL PROXY MANAGEMENT[/bold]")
-            {
-                Border = BoxBorder.Heavy,
-                BorderStyle = new Style(Color.Green),
-                Padding = new Padding(1, 0)
-            };
-            AnsiConsole.Write(panel);
-            AnsiConsole.WriteLine();
-
-            var prompt = new SelectionPrompt<string>()
-                .Title("[bold green]╭─ Proxy Options:[/bold green]")
-                .PageSize(10)
-                .HighlightStyle(new Style(Color.Green, decoration: Decoration.Bold))
+             AnsiConsole.Clear(); 
+             AnsiConsole.Write(new FigletText("Proxy").Centered().Color(Color.Green));
+             
+             var prompt = new SelectionPrompt<string>()
+                .Title("\n[bold green]LOCAL PROXY MANAGEMENT[/bold green]")
+                .PageSize(10).WrapAround()
                 .AddChoices(new[] { 
-                    "🔄 Run ProxySync (Download, Test, Generate proxy.txt)", 
-                    "⬅️  Back to Main Menu" 
+                    "1. Run ProxySync (Download, Test, Generate proxy.txt)", 
+                    "0. Back to Main Menu" 
                 });
-
-            var choice = AnsiConsole.Prompt(prompt);
-            if (choice.StartsWith("⬅️")) return;
-            if (choice.StartsWith("🔄")) await ProxyManager.DeployProxies(cancellationToken);
-            
-            Pause("Press Enter to continue...", cancellationToken);
+             
+             var choice = AnsiConsole.Prompt(prompt);
+             var sel = choice.Split('.')[0]; 
+             if (sel == "0") return;
+             
+             if (sel == "1") await ProxyManager.DeployProxies(cancellationToken);
+             
+             Pause("Tekan Enter...", cancellationToken);
         }
     }
 
     private static async Task ShowDebugMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
-            AnsiConsole.Clear();
-            var header = new FigletText("Debug").Centered().Color(Color.Grey);
-            AnsiConsole.Write(header);
+            AnsiConsole.Clear(); 
+            AnsiConsole.Write(new FigletText("Debug").Centered().Color(Color.Grey));
             
-            var panel = new Panel("[bold]DEBUG & LOCAL TESTING[/bold]")
-            {
-                Border = BoxBorder.Heavy,
-                BorderStyle = new Style(Color.Grey),
-                Padding = new Padding(1, 0)
-            };
-            AnsiConsole.Write(panel);
-            AnsiConsole.WriteLine();
-
             var prompt = new SelectionPrompt<string>()
-                .Title("[bold grey]╭─ Debug Options:[/bold grey]")
-                .PageSize(10)
-                .HighlightStyle(new Style(Color.Grey, decoration: Decoration.Bold))
+                .Title("\n[bold grey]DEBUG & LOCAL TESTING[/bold grey]")
+                .PageSize(10).WrapAround()
                 .AddChoices(new[] { 
-                    "▶️  Test Local Bot (Run Interactively)", 
-                    "⬇️  Update All Bots Locally", 
-                    "⬅️  Back to Main Menu" 
+                    "1. Test Local Bot (Run Interactively)", 
+                    "2. Update All Bots Locally", 
+                    "0. Back to Main Menu" 
                 });
-
+            
             var choice = AnsiConsole.Prompt(prompt);
-            if (choice.StartsWith("⬅️")) return;
-
-            if (choice.StartsWith("▶️"))
-                await TestLocalBotAsync(cancellationToken);
-            else if (choice.StartsWith("⬇️"))
-            {
-                await BotUpdater.UpdateAllBotsLocally();
-                Pause("Press Enter...", cancellationToken);
+            var sel = choice.Split('.')[0]; 
+            if (sel == "0") return;
+            
+            switch (sel) {
+                case "1": 
+                    await TestLocalBotAsync(cancellationToken); 
+                    break;
+                case "2": 
+                    await BotUpdater.UpdateAllBotsLocally(); 
+                    Pause("...", cancellationToken); 
+                    break;
             }
         }
     }
@@ -253,47 +199,45 @@ internal static class Program
     private static async Task TestLocalBotAsync(CancellationToken cancellationToken) {
         var config = BotConfig.Load();
         if (config == null || !config.BotsAndTools.Any()) { 
-            AnsiConsole.MarkupLine("[red]❌ No bots configured.[/red]"); 
-            Pause("Press Enter...", cancellationToken); 
+            AnsiConsole.MarkupLine("[red]No bots configured.[/red]"); 
+            Pause("...", cancellationToken); 
             return; 
         }
         
         var enabledBots = config.BotsAndTools.Where(b => b.Enabled).ToList();
         if (!enabledBots.Any()) { 
-            AnsiConsole.MarkupLine("[red]❌ No enabled bots.[/red]"); 
-            Pause("Press Enter...", cancellationToken); 
+            AnsiConsole.MarkupLine("[red]No enabled bots.[/red]"); 
+            Pause("...", cancellationToken); 
             return; 
         }
         
-        var backOption = new BotEntry { Name = "⬅️  Back", Path = "BACK" };
+        var backOption = new BotEntry { Name = "Back", Path = "BACK" };
         var choices = enabledBots.OrderBy(b => b.Name).ToList(); 
         choices.Add(backOption);
         
         var selectedBot = AnsiConsole.Prompt(
             new SelectionPrompt<BotEntry>()
-                .Title("[cyan]╭─ Select bot to test:[/cyan]")
+                .Title("[cyan]Pilih bot:[/cyan]")
                 .PageSize(15)
-                .MoreChoicesText("[dim](Scroll for more bots)[/dim]")
-                .HighlightStyle(new Style(Color.Cyan1, decoration: Decoration.Bold))
                 .UseConverter(b => b.Name)
                 .AddChoices(choices)
         );
         
         if (selectedBot == backOption) return;
         
-        AnsiConsole.MarkupLine($"\n[cyan]⚙️  Preparing {selectedBot.Name}...[/cyan]");
+        AnsiConsole.MarkupLine($"\n[cyan]Mempersiapkan {selectedBot.Name}...[/cyan]");
         
         string projectRoot = GetProjectRoot(); 
         string botPath = Path.Combine(projectRoot, selectedBot.Path);
         
         if (!Directory.Exists(botPath)) { 
-            AnsiConsole.MarkupLine($"[red]❌ Path not found: {botPath}[/red]"); 
-            Pause("Press Enter...", cancellationToken); 
+            AnsiConsole.MarkupLine($"[red]Path not found: {botPath}[/red]"); 
+            Pause("...", cancellationToken); 
             return; 
         }
         
         try { 
-            AnsiConsole.MarkupLine("[dim]   📦 Installing dependencies...[/dim]");
+            AnsiConsole.MarkupLine("[dim]   Menginstal dependensi lokal...[/dim]");
             
             if (selectedBot.Type == "python") { 
                 var reqFile = Path.Combine(botPath, "requirements.txt");
@@ -321,45 +265,34 @@ internal static class Program
                 }
             } 
             
-            AnsiConsole.MarkupLine("[green]   ✓ Dependencies installed.[/green]");
+            AnsiConsole.MarkupLine("[green]   Dependensi lokal OK.[/green]");
         } 
         catch (Exception ex) { 
-            AnsiConsole.MarkupLine($"[red]❌ Dependency installation failed: {ex.Message}[/red]"); 
-            Pause("Press Enter...", cancellationToken); 
+            AnsiConsole.MarkupLine($"[red]Dependency installation failed: {ex.Message}[/red]"); 
+            Pause("...", cancellationToken); 
             return; 
         }
         
         var (executor, args) = GetRunCommandLocal(botPath, selectedBot.Type);
         
         if (string.IsNullOrEmpty(executor)) { 
-            AnsiConsole.MarkupLine($"[red]❌ No valid entry point found for {selectedBot.Name}[/red]"); 
-            Pause("Press Enter...", cancellationToken); 
+            AnsiConsole.MarkupLine($"[red]No valid entry point found for {selectedBot.Name}[/red]"); 
+            Pause("...", cancellationToken); 
             return; 
         }
         
-        var runPanel = new Panel(
-            $"[green]▶️  Launching {selectedBot.Name}[/green]\n" +
-            $"[dim]Command: {executor} {args}[/dim]\n" +
-            $"[dim]Path: {botPath}[/dim]\n\n" +
-            $"[yellow]⚠️  Press Ctrl+C here to stop the bot[/yellow]"
-        )
-        {
-            Border = BoxBorder.Rounded,
-            BorderStyle = new Style(Color.Green),
-            Padding = new Padding(1)
-        };
-        
-        AnsiConsole.Write(runPanel);
+        AnsiConsole.MarkupLine($"\n[green]Menjalankan {selectedBot.Name}...[/green]");
+        AnsiConsole.MarkupLine("[yellow]   Tekan Ctrl+C di sini untuk stop.[/yellow]");
         
         try { 
             await ShellHelper.RunInteractive(executor, args, botPath, null, cancellationToken); 
         }
         catch (OperationCanceledException) { 
-            AnsiConsole.MarkupLine("\n[yellow]✓ Bot stopped by user.[/yellow]"); 
+            AnsiConsole.MarkupLine("\n[yellow]Bot stopped by user.[/yellow]"); 
         } 
         catch (Exception ex) { 
-            AnsiConsole.MarkupLine($"\n[red]❌ Bot crashed: {ex.Message}[/red]"); 
-            Pause("Press Enter...", CancellationToken.None); 
+            AnsiConsole.MarkupLine($"\n[red]Bot crashed: {ex.Message}[/red]"); 
+            Pause("...", CancellationToken.None); 
         }
     }
 
@@ -402,7 +335,7 @@ internal static class Program
             }
         }
         
-        AnsiConsole.MarkupLine($"[red]   ❌ No valid entry point found[/red]");
+        AnsiConsole.MarkupLine($"[red]   No valid entry point found[/red]");
         return (string.Empty, string.Empty);
     }
 
@@ -424,52 +357,27 @@ internal static class Program
         }
         
         var fallbackPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-        AnsiConsole.MarkupLine($"[yellow]⚠️  Project root not detected. Using fallback: {fallbackPath}[/yellow]");
+        AnsiConsole.MarkupLine($"[yellow]Warning: Project root not detected. Using fallback: {fallbackPath}[/yellow]");
         return fallbackPath;
     }
 
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) {
-        AnsiConsole.Clear();
-        
-        var startPanel = new Panel(
-            Align.Center(
-                new Markup(
-                    "[bold cyan]🚀 ORCHESTRATOR LOOP STARTING[/bold cyan]\n\n" +
-                    "[dim]Mode: Continuous Monitoring[/dim]\n" +
-                    "[dim]Keep-Alive Interval: 3 hours[/dim]\n" +
-                    "[dim]Auto Token Rotation: Enabled[/dim]\n\n" +
-                    "[yellow]Press Ctrl+C to stop gracefully[/yellow]"
-                )
-            )
-        )
-        {
-            Border = BoxBorder.Double,
-            BorderStyle = new Style(Color.Cyan1),
-            Padding = new Padding(2, 1)
-        };
-        
-        AnsiConsole.Write(startPanel);
-        await Task.Delay(2000);
+        AnsiConsole.MarkupLine("[bold cyan]Starting Orchestrator Loop...[/bold cyan]");
         
         while (!cancellationToken.IsCancellationRequested) {
             TokenEntry currentToken = TokenManager.GetCurrentToken(); 
             TokenState currentState = TokenManager.GetState(); 
             string? activeCodespace = currentState.ActiveCodespaceName;
             
-            var cycleRule = new Rule($"[yellow]🔄 Cycle with Token #{currentState.CurrentIndex + 1} (@{currentToken.Username ?? "???"})[/yellow]")
-            {
-                Justification = Justify.Left,
-                Style = Style.Parse("yellow")
-            };
-            AnsiConsole.Write(cycleRule);
+            AnsiConsole.Write(new Rule($"[yellow]Token #{currentState.CurrentIndex + 1} (@{currentToken.Username ?? "???"})[/yellow]").LeftJustified());
             
             try { 
-                AnsiConsole.MarkupLine("\n[cyan]📊 Checking billing quota...[/cyan]");
+                AnsiConsole.MarkupLine("Checking billing..."); 
                 var billingInfo = await BillingManager.GetBillingInfo(currentToken); 
                 BillingManager.DisplayBilling(billingInfo, currentToken.Username ?? "???");
                 
                 if (!billingInfo.IsQuotaOk) { 
-                    AnsiConsole.MarkupLine("\n[red]⚠️  Quota insufficient. Initiating token rotation...[/red]"); 
+                    AnsiConsole.MarkupLine("[red]Quota insufficient. Rotating...[/red]"); 
                     
                     if (!string.IsNullOrEmpty(activeCodespace)) { 
                         await CodespaceManager.DeleteCodespace(currentToken, activeCodespace); 
@@ -482,92 +390,64 @@ internal static class Program
                     continue; 
                 }
                 
-                AnsiConsole.MarkupLine("\n[cyan]🔧 Ensuring codespace health...[/cyan]");
+                AnsiConsole.MarkupLine("Ensuring codespace..."); 
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken);
                 
                 if (currentState.ActiveCodespaceName != activeCodespace) { 
                     currentState.ActiveCodespaceName = activeCodespace; 
                     TokenManager.SaveState(currentState); 
                     
-                    AnsiConsole.MarkupLine($"[green]✓ Active codespace: {activeCodespace}[/green]");
-                    AnsiConsole.MarkupLine("\n[cyan]📤 Uploading configurations...[/cyan]");
+                    AnsiConsole.MarkupLine($"[green]Active CS: {activeCodespace}[/green]");
+                    AnsiConsole.MarkupLine("New/Recreated CS detected..."); 
                     
                     await CodespaceManager.UploadConfigs(currentToken, activeCodespace); 
                     await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace); 
                     
-                    AnsiConsole.MarkupLine("[green]✓ Initial startup complete.[/green]"); 
+                    AnsiConsole.MarkupLine("[green]Initial startup complete.[/green]"); 
                 } 
                 else { 
-                    AnsiConsole.MarkupLine("[green]✓ Codespace is healthy.[/green]"); 
+                    AnsiConsole.MarkupLine("[green]Codespace healthy.[/green]"); 
                 }
                 
-                var sleepPanel = new Panel(
-                    $"[dim]😴 Entering keep-alive sleep mode...[/dim]\n" +
-                    $"[cyan]Duration: {KeepAliveInterval.TotalMinutes} minutes[/cyan]\n" +
-                    $"[dim]Next check at: {DateTime.Now.Add(KeepAliveInterval):yyyy-MM-dd HH:mm:ss}[/dim]"
-                )
-                {
-                    Border = BoxBorder.Rounded,
-                    BorderStyle = new Style(Color.Cyan1),
-                    Padding = new Padding(1)
-                };
-                
-                AnsiConsole.Write(sleepPanel);
+                AnsiConsole.MarkupLine($"Sleeping for Keep-Alive ({KeepAliveInterval.TotalMinutes} min)..."); 
                 await Task.Delay(KeepAliveInterval, cancellationToken);
                 
                 currentState = TokenManager.GetState(); 
                 activeCodespace = currentState.ActiveCodespaceName; 
                 
                 if (string.IsNullOrEmpty(activeCodespace)) { 
-                    AnsiConsole.MarkupLine("\n[yellow]⚠️  No active codespace in state. Will recreate next cycle.[/yellow]"); 
+                    AnsiConsole.MarkupLine("[yellow]No active codespace in state. Will recreate next cycle.[/yellow]"); 
                     continue; 
                 }
                 
-                AnsiConsole.MarkupLine("\n[cyan]🏥 Keep-Alive: Checking SSH health...[/cyan]");
+                AnsiConsole.MarkupLine("Keep-Alive: Checking SSH..."); 
                 
                 if (!await CodespaceManager.CheckSshHealth(currentToken, activeCodespace)) { 
-                    AnsiConsole.MarkupLine("[red]❌ Keep-Alive: SSH check FAILED![/red]"); 
+                    AnsiConsole.MarkupLine("[red]Keep-Alive: SSH check FAILED![/red]"); 
                     currentState.ActiveCodespaceName = null; 
                     TokenManager.SaveState(currentState); 
-                    AnsiConsole.MarkupLine("[yellow]⚠️  Will recreate codespace in next cycle.[/yellow]"); 
+                    AnsiConsole.MarkupLine("[yellow]Will recreate next cycle.[/yellow]"); 
                 } 
                 else { 
-                    AnsiConsole.MarkupLine("[green]✓ Keep-Alive: SSH check PASSED.[/green]"); 
+                    AnsiConsole.MarkupLine("[green]Keep-Alive: SSH check OK.[/green]"); 
                 }
             } 
             catch (OperationCanceledException) { 
-                AnsiConsole.MarkupLine("\n[yellow]⚠️  Loop cancelled by user.[/yellow]"); 
+                AnsiConsole.MarkupLine("[yellow]Loop cancelled by user.[/yellow]"); 
                 break; 
             } 
             catch (Exception ex) { 
-                AnsiConsole.MarkupLine($"\n[bold red]💥 ERROR in orchestrator loop:[/bold red]"); 
+                AnsiConsole.MarkupLine($"[bold red]ERROR loop:[/bold red]"); 
                 AnsiConsole.WriteException(ex); 
                 
-                var retryPanel = new Panel(
-                    $"[yellow]⚠️  Error encountered. Retrying in {ErrorRetryDelay.TotalMinutes} minutes...[/yellow]"
-                )
-                {
-                    Border = BoxBorder.Rounded,
-                    BorderStyle = new Style(Color.Yellow)
-                };
-                
-                AnsiConsole.Write(retryPanel);
+                AnsiConsole.MarkupLine($"[yellow]Retrying in {ErrorRetryDelay.TotalMinutes} minutes...[/yellow]");
                 await Task.Delay(ErrorRetryDelay, cancellationToken);
             }
         }
-        
-        AnsiConsole.MarkupLine("\n[cyan]✓ Orchestrator loop stopped.[/cyan]");
     }
 
     private static void Pause(string message, CancellationToken cancellationToken) {
-        var pausePanel = new Panel($"[dim]{message}[/dim]")
-        {
-            Border = BoxBorder.Rounded,
-            BorderStyle = new Style(Color.Grey),
-            Padding = new Padding(0, 0)
-        };
-        
-        AnsiConsole.Write(pausePanel);
+        AnsiConsole.MarkupLine($"\n[grey]{message} (Ctrl+C to cancel wait)[/]");
         
         try { 
             while (true) { 
@@ -582,7 +462,7 @@ internal static class Program
             while (Console.KeyAvailable) Console.ReadKey(intercept: true); 
         }
         catch (OperationCanceledException) { 
-            AnsiConsole.MarkupLine("[yellow]⚠️  Wait cancelled.[/yellow]"); 
+            AnsiConsole.MarkupLine("[yellow]Wait cancelled.[/yellow]"); 
             throw; 
         }
     }
