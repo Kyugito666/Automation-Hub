@@ -261,14 +261,12 @@ internal static class Program
             
             if (choice.StartsWith("⬅️")) return;
 
-            switch (choice[0]) {
-                case '▶':
-                    await TestLocalBotAsync(cancellationToken);
-                    break;
-                case '⬇':
-                    await BotUpdater.UpdateAllBotsLocally();
-                    Pause("Press Enter...", cancellationToken);
-                    break;
+            if (choice.StartsWith("▶️"))
+                await TestLocalBotAsync(cancellationToken);
+            else if (choice.StartsWith("⬇️"))
+            {
+                await BotUpdater.UpdateAllBotsLocally();
+                Pause("Press Enter...", cancellationToken);
             }
         }
     }
