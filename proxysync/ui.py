@@ -15,10 +15,12 @@ from rich.progress import (
     SpinnerColumn,
     TextColumn,
     TimeRemainingColumn,
+    MofNCompleteColumn,
 )
 from rich.live import Live
+from rich.layout import Layout
+from rich.box import ROUNDED, DOUBLE, HEAVY
 
-# Import questionary untuk arrow key navigation
 try:
     import questionary
     QUESTIONARY_AVAILABLE = True
@@ -28,70 +30,128 @@ except ImportError:
 console = Console()
 
 def print_header():
-    """Menampilkan header aplikasi."""
+    """Menampilkan header aplikasi dengan style profesional."""
     console.clear()
-    title = Text("ProxySync Pro - Accurate Test", style="bold green", justify="center")
-    credits = Text("Created by Kyugito666 & Gemini AI", style="bold magenta", justify="center")
-    header_table = Table.grid(expand=True)
-    header_table.add_row(title)
-    header_table.add_row(credits)
-    console.print(Panel(header_table, border_style="green"))
+    
+    # ASCII Art Logo
+    logo = """
+    ╔═══════════════════════════════════════════════════════════╗
+    ║   ██████╗ ██████╗  ██████╗ ██╗  ██╗██╗   ██╗            ║
+    ║   ██╔══██╗██╔══██╗██╔═══██╗╚██╗██╔╝╚██╗ ██╔╝            ║
+    ║   ██████╔╝██████╔╝██║   ██║ ╚███╔╝  ╚████╔╝             ║
+    ║   ██╔═══╝ ██╔══██╗██║   ██║ ██╔██╗   ╚██╔╝              ║
+    ║   ██║     ██║  ██║╚██████╔╝██╔╝ ██╗   ██║               ║
+    ║   ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝               ║
+    ║                                                           ║
+    ║        ███████╗██╗   ██╗███╗   ██╗ ██████╗               ║
+    ║        ██╔════╝╚██╗ ██╔╝████╗  ██║██╔════╝               ║
+    ║        ███████╗ ╚████╔╝ ██╔██╗ ██║██║                    ║
+    ║        ╚════██║  ╚██╔╝  ██║╚██╗██║██║                    ║
+    ║        ███████║   ██║   ██║ ╚████║╚██████╗               ║
+    ║        ╚══════╝   ╚═╝   ╚═╝  ╚═══╝ ╚═════╝               ║
+    ╚═══════════════════════════════════════════════════════════╝
+    """
+    
+    console.print(Text(logo, style="bold cyan", justify="center"))
+    
+    # Info panel
+    info_table = Table.grid(padding=(0, 2), expand=True)
+    info_table.add_column(justify="center", style="bold magenta")
+    info_table.add_column(justify="center", style="dim")
+    
+    info_table.add_row(
+        "ProxySync Professional",
+        "v3.0 Enterprise Edition"
+    )
+    info_table.add_row(
+        "🔧 Advanced Proxy Testing & Distribution System",
+        ""
+    )
+    info_table.add_row(
+        "👤 Created by Kyugito666",
+        "⚡ Powered by Rich & Questionary"
+    )
+    
+    console.print(Panel(
+        info_table,
+        border_style="bright_cyan",
+        box=DOUBLE,
+        padding=(1, 2)
+    ))
     console.print()
 
 def display_main_menu():
-    """Menampilkan menu utama interaktif dengan arrow key navigation."""
-    console.print(Align.center(Text("--- MAIN MENU ---", style="bold cyan")))
-    console.print()  # Spacing
+    """Menampilkan menu utama dengan style profesional."""
     
-    # Menu tanpa angka untuk display
+    # Menu title dengan border
+    menu_title = Text("MAIN CONTROL PANEL", style="bold bright_white on blue", justify="center")
+    console.print(Panel(
+        menu_title,
+        border_style="bright_blue",
+        box=HEAVY,
+        padding=(0, 20)
+    ))
+    console.print()
+    
     menu_display = [
-        "Sinkronisasi IP Otorisasi Webshare",
-        "Unduh Proksi dari Daftar API",
-        "Konversi 'proxylist.txt'",
-        "Jalankan Tes Akurat & Distribusi",
-        "Kelola Path Target",
-        "Keluar",
+        "🔐 Sinkronisasi IP Otorisasi Webshare",
+        "📥 Unduh Proksi dari Daftar API",
+        "🔄 Konversi Format Proxy List",
+        "🧪 Jalankan Tes Akurat & Distribusi",
+        "📁 Kelola Path Target Distribusi",
+        "🚪 Keluar dari Aplikasi",
     ]
     
     if QUESTIONARY_AVAILABLE:
-        # Gunakan questionary untuk arrow key navigation
         selected_option = questionary.select(
-            "Pilih opsi (gunakan ↑/↓, Enter untuk memilih):",
+            "╭─ Pilih operasi yang ingin dijalankan:",
             choices=menu_display,
             use_arrow_keys=True,
+            pointer="➤",
             style=questionary.Style([
-                ('qmark', 'fg:cyan bold'),
-                ('question', 'bold'),
-                ('answer', 'fg:green bold'),
-                ('pointer', 'fg:yellow bold'),
-                ('highlighted', 'fg:yellow bold'),
-                ('selected', 'fg:green'),
+                ('qmark', 'fg:#00ffff bold'),
+                ('question', 'fg:#ffffff bold'),
+                ('answer', 'fg:#00ff00 bold'),
+                ('pointer', 'fg:#ffff00 bold'),
+                ('highlighted', 'fg:#ffff00 bold underline'),
+                ('selected', 'fg:#00ff00'),
+                ('instruction', 'fg:#888888'),
             ])
         ).ask()
         
-        if selected_option is None:  # User pressed Ctrl+C
+        if selected_option is None:
             return "6"
         
-        # Map pilihan ke nomor
         option_map = {
-            "Sinkronisasi IP Otorisasi Webshare": "1",
-            "Unduh Proksi dari Daftar API": "2",
-            "Konversi 'proxylist.txt'": "3",
-            "Jalankan Tes Akurat & Distribusi": "4",
-            "Kelola Path Target": "5",
-            "Keluar": "6",
+            menu_display[0]: "1",
+            menu_display[1]: "2",
+            menu_display[2]: "3",
+            menu_display[3]: "4",
+            menu_display[4]: "5",
+            menu_display[5]: "6",
         }
         return option_map.get(selected_option, "6")
     else:
-        # Fallback ke mode text input jika questionary tidak tersedia
-        console.print("[yellow]⚠️  Install 'questionary' untuk arrow key navigation:[/yellow]")
-        console.print("[dim]   pip install questionary[/dim]\n")
+        console.print(Panel(
+            "[yellow]⚠️  Enhanced UI Tidak Tersedia[/yellow]\n"
+            "[dim]Install 'questionary' untuk arrow key navigation:[/dim]\n"
+            "[cyan]pip install questionary[/cyan]",
+            border_style="yellow",
+            box=ROUNDED
+        ))
+        console.print()
+        
+        menu_table = Table(box=ROUNDED, border_style="cyan", show_header=False, padding=(0, 1))
+        menu_table.add_column("No", style="bold yellow", width=6)
+        menu_table.add_column("Menu", style="white")
         
         for idx, option in enumerate(menu_display, 1):
-            console.print(f"[{idx}] {option}")
+            menu_table.add_row(f"[{idx}]", option)
+        
+        console.print(menu_table)
         
         choice = Prompt.ask(
-            "\n[bold yellow]Pilih opsi[/bold yellow]",
+            "\n╰─➤ [bold yellow]Masukkan pilihan[/bold yellow]",
             choices=["1", "2", "3", "4", "5", "6"],
             default="6"
         )
@@ -109,9 +169,8 @@ def fetch_from_api(url: str, api_key: str | None):
             response = requests.get(url, headers=headers, timeout=60) 
             if response.status_code == 429:
                 wait_time = 15 * (attempt + 1) 
-                console.print(f"[bold yellow]Rate limit. Tunggu {wait_time}d...[/bold yellow]")
+                console.print(f"[bold yellow]⏳ Rate limit terdeteksi. Menunggu {wait_time} detik...[/bold yellow]")
                 time.sleep(wait_time)
-                error_message = f"Rate limited (429) attempt {attempt + 1}"
                 continue 
             response.raise_for_status() 
             content = response.text.strip()
@@ -119,67 +178,163 @@ def fetch_from_api(url: str, api_key: str | None):
                 if '\n' in content or re.match(r"^\d{1,3}(\.\d{1,3}){3}:\d+", content.splitlines()[0]):
                     return url, content.splitlines(), None
                 else:
-                    error_message = "Respons tidak valid (bukan proxy list?)"
+                    error_message = "❌ Respons tidak valid (bukan proxy list)"
                     break 
             else:
-                error_message = "Respons kosong"
+                error_message = "❌ Respons kosong dari server"
                 break 
         except requests.exceptions.HTTPError as e:
-             error_message = f"{e.response.status_code} Error: {str(e)}"
+             error_message = f"❌ HTTP {e.response.status_code} Error"
              break 
         except requests.exceptions.RequestException as e:
-            error_message = f"Koneksi Gagal: {str(e)}"
+            error_message = f"❌ Koneksi gagal: {str(e)[:50]}"
             if attempt < max_retries - 1:
-                console.print(f"[yellow]Koneksi gagal, coba lagi 5d... ({attempt+1}/{max_retries})[/yellow]")
+                console.print(f"[yellow]🔄 Koneksi gagal, retry dalam 5 detik... ({attempt+1}/{max_retries})[/yellow]")
                 time.sleep(5) 
     return url, [], error_message
 
 def run_sequential_api_downloads(download_targets: list[tuple[str, str | None]]):
-    """Menjalankan unduhan API satu per satu."""
+    """Menjalankan unduhan API satu per satu dengan progress tracking."""
     all_proxies = []
-    progress = Progress( SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), console=console )
+    
+    progress = Progress(
+        SpinnerColumn(spinner_name="dots"),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=40),
+        MofNCompleteColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        console=console
+    )
+    
     total_targets = len(download_targets)
-    with Live(progress):
-        task = progress.add_task("[cyan]Mengunduh satu per satu...[/cyan]", total=total_targets)
-        for i, (url, api_key) in enumerate(download_targets):
-            progress.update(task, description=f"[cyan]Unduh ({i+1}/{total_targets})...[/cyan]")
+    
+    console.print(Panel(
+        f"[cyan]📡 Memulai download dari {total_targets} sumber API[/cyan]",
+        border_style="cyan",
+        box=ROUNDED
+    ))
+    console.print()
+    
+    with Live(progress, console=console, refresh_per_second=10):
+        task = progress.add_task("[cyan]📥 Mengunduh proxy list...", total=total_targets)
+        
+        for i, (url, api_key) in enumerate(download_targets, 1):
+            progress.update(task, description=f"[cyan]📥 Download {i}/{total_targets}")
             _, proxies, error = fetch_from_api(url, api_key) 
+            
             if error:
-                error_msg = str(error).splitlines()[0] 
-                console.print(f"[bold red]✖ GAGAL[/bold red] {url[:50]}... [dim]({error_msg})[/dim]")
+                error_msg = str(error).splitlines()[0][:60]
+                console.print(f"[red]✖[/red] [dim]{url[:45]}...[/dim] [red]{error_msg}[/red]")
             else:
-                console.print(f"[green]✔ Sukses[/green] {url[:50]}... ({len(proxies)} proksi)")
+                console.print(f"[green]✔[/green] [dim]{url[:45]}...[/dim] [green]({len(proxies)} proxies)[/green]")
                 all_proxies.extend(proxies)
+            
             progress.update(task, advance=1)
-            if i < total_targets - 1:
-                jeda = 5; console.print(f"[grey]   Jeda {jeda}d...[/]"); time.sleep(jeda) 
+            
+            if i < total_targets:
+                time.sleep(5)
+    
+    console.print()
     return all_proxies
 
 def run_concurrent_checks_display(proxies, check_function, max_workers, fail_file):
-    """Menampilkan progress bar dan laporan diagnostik."""
+    """Menampilkan progress bar profesional untuk testing proxy."""
     good_proxies, failed_proxies_with_reason = [], []
-    progress = Progress( SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console )
-    with Live(progress):
-        task = progress.add_task("[cyan]Tes Akurat...[/cyan]", total=len(proxies))
+    
+    console.print(Panel(
+        f"[cyan]🧪 Memulai testing akurat untuk {len(proxies)} proxies[/cyan]\n"
+        f"[dim]Workers: {max_workers} threads • Timeout: 25s per proxy[/dim]",
+        border_style="cyan",
+        box=ROUNDED
+    ))
+    console.print()
+    
+    progress = Progress(
+        SpinnerColumn(spinner_name="dots12"),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=50, style="cyan", complete_style="green"),
+        MofNCompleteColumn(),
+        TextColumn("•"),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        console=console
+    )
+    
+    with Live(progress, console=console, refresh_per_second=10):
+        task = progress.add_task("[cyan]🔍 Testing proxies via GitHub API...", total=len(proxies))
+        
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_proxy = {executor.submit(check_function, p): p for p in proxies}
+            
             for future in as_completed(future_to_proxy):
                 proxy, is_good, message = future.result()
-                if is_good: good_proxies.append(proxy)
-                else: failed_proxies_with_reason.append((proxy, message))
+                
+                if is_good:
+                    good_proxies.append(proxy)
+                else:
+                    failed_proxies_with_reason.append((proxy, message))
+                
                 progress.update(task, advance=1)
+    
+    console.print()
+    
+    # Results summary
+    summary_table = Table(box=HEAVY, border_style="bright_cyan", show_header=True, header_style="bold white on blue")
+    summary_table.add_column("Status", justify="center", width=15)
+    summary_table.add_column("Count", justify="center", width=10)
+    summary_table.add_column("Percentage", justify="center", width=15)
+    
+    total = len(proxies)
+    success_count = len(good_proxies)
+    fail_count = len(failed_proxies_with_reason)
+    success_pct = (success_count / total * 100) if total > 0 else 0
+    fail_pct = (fail_count / total * 100) if total > 0 else 0
+    
+    summary_table.add_row("[green]✓ PASSED[/green]", f"[bold green]{success_count}[/bold green]", f"[green]{success_pct:.1f}%[/green]")
+    summary_table.add_row("[red]✗ FAILED[/red]", f"[bold red]{fail_count}[/bold red]", f"[red]{fail_pct:.1f}%[/red]")
+    summary_table.add_row("[cyan]TOTAL[/cyan]", f"[bold]{total}[/bold]", "100%")
+    
+    console.print(Panel(summary_table, title="[bold]📊 Test Results Summary[/bold]", border_style="cyan", box=DOUBLE))
+    
     if failed_proxies_with_reason:
         with open(fail_file, "w") as f:
-            for p, _ in failed_proxies_with_reason: f.write(p + "\n")
-        console.print(f"\n[yellow]Simpan {len(failed_proxies_with_reason)} proksi gagal ke '{fail_file}'[/yellow]")
-        error_table = Table(title="Laporan Gagal (Contoh)")
-        error_table.add_column("Proksi", style="cyan"); error_table.add_column("Alasan", style="red")
+            for p, _ in failed_proxies_with_reason:
+                f.write(p + "\n")
+        
+        console.print(f"\n[yellow]💾 {fail_count} failed proxies saved to '{fail_file}'[/yellow]")
+        
+        # Error breakdown table
+        error_table = Table(
+            title="[bold red]❌ Failure Analysis (Top 10)[/bold red]",
+            box=ROUNDED,
+            border_style="red",
+            show_header=True,
+            header_style="bold white on red"
+        )
+        error_table.add_column("Proxy", style="cyan", width=40)
+        error_table.add_column("Reason", style="yellow")
+        
         for proxy, reason in failed_proxies_with_reason[:10]:
             proxy_display = proxy.split('@')[1] if '@' in proxy else proxy
+            if len(proxy_display) > 35:
+                proxy_display = proxy_display[:32] + "..."
             error_table.add_row(proxy_display, reason)
+        
+        console.print()
         console.print(error_table)
+    
     return good_proxies
 
 def manage_paths_menu_display():
-    console.print("[yellow]Fitur 'Kelola Path' belum ada.[/yellow]")
-    time.sleep(2)
+    """Placeholder untuk menu manage paths."""
+    console.print(Panel(
+        "[yellow]⚠️  Feature Coming Soon[/yellow]\n\n"
+        "[dim]Fitur 'Kelola Path Target' sedang dalam pengembangan.\n"
+        "Saat ini Anda dapat mengedit file '../config/paths.txt' secara manual.[/dim]",
+        title="[bold]🚧 Under Construction[/bold]",
+        border_style="yellow",
+        box=ROUNDED
+    ))
+    time.sleep(3)
