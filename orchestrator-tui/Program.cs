@@ -12,7 +12,6 @@ namespace Orchestrator;
 internal static class Program
 {
     private static CancellationTokenSource _mainCts = new CancellationTokenSource();
-
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromHours(3);
     private static readonly TimeSpan ErrorRetryDelay = TimeSpan.FromMinutes(5);
 
@@ -30,7 +29,6 @@ internal static class Program
 
         try {
             TokenManager.Initialize();
-            
             if (args.Length > 0 && args[0].ToLower() == "--run") {
                 await RunOrchestratorLoopAsync(_mainCts.Token);
             } else {
@@ -52,11 +50,7 @@ internal static class Program
     private static void PrintMainHeader()
     {
         AnsiConsole.Clear();
-        
-        var logo = new FigletText("Automation Hub")
-            .Centered()
-            .Color(Color.Cyan1);
-        
+        var logo = new FigletText("Automation Hub").Centered().Color(Color.Cyan1);
         AnsiConsole.Write(logo);
         
         var panel = new Panel(
@@ -75,7 +69,6 @@ internal static class Program
             BorderStyle = new Style(Color.Cyan1),
             Padding = new Padding(2, 1)
         };
-        
         AnsiConsole.Write(panel);
         AnsiConsole.WriteLine();
     }
@@ -85,7 +78,6 @@ internal static class Program
         while (!cancellationToken.IsCancellationRequested)
         {
             PrintMainHeader();
-
             var rule = new Rule("[bold cyan]MAIN CONTROL PANEL[/bold cyan]")
             {
                 Justification = Justify.Center,
@@ -148,10 +140,7 @@ internal static class Program
     private static async Task ShowSetupMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
             AnsiConsole.Clear();
-            
-            var header = new FigletText("Setup")
-                .Centered()
-                .Color(Color.Yellow);
+            var header = new FigletText("Setup").Centered().Color(Color.Yellow);
             AnsiConsole.Write(header);
             
             var panel = new Panel("[bold]TOKEN & COLLABORATOR CONFIGURATION[/bold]")
@@ -176,7 +165,6 @@ internal static class Program
                 });
 
             var choice = AnsiConsole.Prompt(prompt);
-            
             if (choice.StartsWith("⬅️")) return;
 
             if (choice.StartsWith("✓"))
@@ -195,10 +183,7 @@ internal static class Program
     private static async Task ShowLocalMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
             AnsiConsole.Clear();
-            
-            var header = new FigletText("Proxy")
-                .Centered()
-                .Color(Color.Green);
+            var header = new FigletText("Proxy").Centered().Color(Color.Green);
             AnsiConsole.Write(header);
             
             var panel = new Panel("[bold]LOCAL PROXY MANAGEMENT[/bold]")
@@ -220,9 +205,7 @@ internal static class Program
                 });
 
             var choice = AnsiConsole.Prompt(prompt);
-            
             if (choice.StartsWith("⬅️")) return;
-            
             if (choice.StartsWith("🔄")) await ProxyManager.DeployProxies(cancellationToken);
             
             Pause("Press Enter to continue...", cancellationToken);
@@ -232,10 +215,7 @@ internal static class Program
     private static async Task ShowDebugMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
             AnsiConsole.Clear();
-            
-            var header = new FigletText("Debug")
-                .Centered()
-                .Color(Color.Grey);
+            var header = new FigletText("Debug").Centered().Color(Color.Grey);
             AnsiConsole.Write(header);
             
             var panel = new Panel("[bold]DEBUG & LOCAL TESTING[/bold]")
@@ -258,7 +238,6 @@ internal static class Program
                 });
 
             var choice = AnsiConsole.Prompt(prompt);
-            
             if (choice.StartsWith("⬅️")) return;
 
             if (choice.StartsWith("▶️"))
@@ -295,7 +274,7 @@ internal static class Program
                 .Title("[cyan]╭─ Select bot to test:[/cyan]")
                 .PageSize(15)
                 .MoreChoicesText("[dim](Scroll for more bots)[/dim]")
-                .HighlightStyle(new Style(Color.Cyan, decoration: Decoration.Bold))
+                .HighlightStyle(new Style(Color.Cyan1, decoration: Decoration.Bold))
                 .UseConverter(b => b.Name)
                 .AddChoices(choices)
         );
