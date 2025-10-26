@@ -43,49 +43,53 @@ def display_main_menu():
     console.print(Align.center(menu_table))
     return Prompt.ask("Pilih opsi", choices=["1", "2", "3", "4", "5", "6"], default="6")
 
-# === PERUBAHAN DOWNLOAD v2 ===
+# === PERUBAHAN DOWNLOAD v3 ===
 def fetch_from_api(url: str, api_key: str | None):
     """Fungsi pembantu untuk mengunduh dari satu URL API dengan mekanisme backoff."""
     max_retries = 3
-    headers = {'Accept': 'text/plain'} # Header dasar untuk download
+    headers = {} # Header KOSONG di awal
     if api_key:
-        headers['Authorization'] = f"Token {api_key}" # Tambahkan Auth jika ada key
+        # HANYA tambahkan Authorization jika ada key
+        headers['Authorization'] = f"Token {api_key}" 
+    # Header 'Accept: text/plain' DIHAPUS
 
     for attempt in range(max_retries):
         try:
-            # Gunakan header yang sudah disiapkan
-            response = requests.get(url, headers=headers, timeout=60) # Timeout dinaikkan ke 60s
+            # Gunakan header yang sudah disiapkan (mungkin hanya berisi Auth)
+            response = requests.get(url, headers=headers, timeout=60) # Timeout 60s
             
-            # Cek Rate Limit dulu
             if response.status_code == 429:
-                 # PERPANJANG JEDA: 15s, 30s, 45s
                 wait_time = 15 * (attempt + 1) 
-                console.print(f"[bold yellow]Rate limit terdeteksi. Menunggu {wait_time} detik...[/bold yellow]")
+                console.print(f"[bold yellow]Rate limit. Tunggu {wait_time}d...[/bold yellow]")
                 time.sleep(wait_time)
-                error_message = f"Rate limited (429) on attempt {attempt + 1}"
-                continue # Coba lagi setelah jeda
+                error_message = f"Rate limited (429) attempt {attempt + 1}"
+                continue 
             
-            # Jika bukan 429, baru cek error lain atau sukses
+            # Cek error lain SETELAH rate limit
             response.raise_for_status() 
             content = response.text.strip()
             if content:
-                return url, content.splitlines(), None
+                # Periksa apakah konten terlihat seperti proxy list (bukan HTML error)
+                if '\n' in content or re.match(r"^\d{1,3}(\.\d{1,3}){3}:\d+", content.splitlines()[0]):
+                    return url, content.splitlines(), None
+                else:
+                    error_message = "Respons tidak valid (bukan proxy list?)"
+                    break # Jangan retry jika format aneh
             else:
-                error_message = "API tidak mengembalikan konten (respons kosong)"
-                break # Jangan retry jika respons kosong
+                error_message = "Respons kosong"
+                break 
 
         except requests.exceptions.HTTPError as e:
-            # Error HTTP selain 429 (misal 400 Bad Request, 401 Unauthorized, 5xx Server Error)
-            error_message = f"{e.response.status_code} Client/Server Error: {str(e)}"
-            break # Jangan retry untuk error ini, kemungkinan URL/Key salah
+             # Error 406 akan masuk ke sini juga
+            error_message = f"{e.response.status_code} Error: {str(e)}"
+            break 
 
         except requests.exceptions.RequestException as e:
-            # Error koneksi (timeout, DNS, etc.)
             error_message = f"Koneksi Gagal: {str(e)}"
             if attempt < max_retries - 1:
-                console.print(f"[yellow]Koneksi gagal, mencoba lagi dalam 5 detik... ({attempt+1}/{max_retries})[/yellow]")
-                time.sleep(5) # Jeda singkat untuk error koneksi
-            # Biarkan loop lanjut ke attempt berikutnya
+                console.print(f"[yellow]Koneksi gagal, coba lagi 5d... ({attempt+1}/{max_retries})[/yellow]")
+                time.sleep(5) 
+            # Loop lanjut
 
     # Jika loop selesai tanpa return sukses
     return url, [], error_message
@@ -104,30 +108,26 @@ def run_sequential_api_downloads(download_targets: list[tuple[str, str | None]])
     with Live(progress):
         task = progress.add_task("[cyan]Mengunduh satu per satu...[/cyan]", total=total_targets)
         for i, (url, api_key) in enumerate(download_targets):
-            progress.update(task, description=f"[cyan]Mengunduh ({i+1}/{total_targets})...[/cyan]")
+            progress.update(task, description=f"[cyan]Unduh ({i+1}/{total_targets})...[/cyan]")
             
-            # Panggil fetch_from_api dengan URL dan API key
             _, proxies, error = fetch_from_api(url, api_key) 
             
             if error:
-                error_msg = str(error).splitlines()[0] # Ambil baris pertama error
-                console.print(f"[bold red]✖ GAGAL[/bold red] dari {url[:50]}... [dim]({error_msg})[/dim]")
+                error_msg = str(error).splitlines()[0] 
+                console.print(f"[bold red]✖ GAGAL[/bold red] {url[:50]}... [dim]({error_msg})[/dim]")
             else:
-                console.print(f"[green]✔ Berhasil[/green] dari {url[:50]}... ({len(proxies)} proksi)")
+                console.print(f"[green]✔ Sukses[/green] {url[:50]}... ({len(proxies)} proksi)")
                 all_proxies.extend(proxies)
                 
             progress.update(task, advance=1)
             
-            # JEDA ANTAR REQUEST (di luar retry)
-            # Jika bukan request terakhir, beri jeda
             if i < total_targets - 1:
-                # PERPANJANG JEDA ANTAR AKUN
                 jeda = 5 
-                console.print(f"[grey]   Jeda {jeda} detik sebelum akun berikutnya...[/]")
+                console.print(f"[grey]   Jeda {jeda}d...[/]")
                 time.sleep(jeda) 
 
     return all_proxies
-# === AKHIR PERUBAHAN DOWNLOAD v2 ===
+# === AKHIR PERUBAHAN DOWNLOAD v3 ===
 
 
 def run_concurrent_checks_display(proxies, check_function, max_workers, fail_file):
@@ -142,25 +142,22 @@ def run_concurrent_checks_display(proxies, check_function, max_workers, fail_fil
         console=console,
     )
     with Live(progress):
-        task = progress.add_task("[cyan]Menjalankan Tes Akurat...[/cyan]", total=len(proxies))
+        task = progress.add_task("[cyan]Tes Akurat...[/cyan]", total=len(proxies))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_proxy = {executor.submit(check_function, p): p for p in proxies}
             for future in as_completed(future_to_proxy):
                 proxy, is_good, message = future.result()
-                if is_good:
-                    good_proxies.append(proxy)
-                else:
-                    failed_proxies_with_reason.append((proxy, message))
+                if is_good: good_proxies.append(proxy)
+                else: failed_proxies_with_reason.append((proxy, message))
                 progress.update(task, advance=1)
 
     if failed_proxies_with_reason:
         with open(fail_file, "w") as f:
             for p, _ in failed_proxies_with_reason: f.write(p + "\n")
-        console.print(f"\n[yellow]Menyimpan {len(failed_proxies_with_reason)} proksi gagal ke '{fail_file}'[/yellow]")
-
-        error_table = Table(title="Laporan Diagnostik Kegagalan (Contoh)")
-        error_table.add_column("Proksi (IP:Port)", style="cyan")
-        error_table.add_column("Alasan Kegagalan", style="red")
+        console.print(f"\n[yellow]Simpan {len(failed_proxies_with_reason)} proksi gagal ke '{fail_file}'[/yellow]")
+        error_table = Table(title="Laporan Gagal (Contoh)")
+        error_table.add_column("Proksi", style="cyan")
+        error_table.add_column("Alasan", style="red")
         for proxy, reason in failed_proxies_with_reason[:10]:
             proxy_display = proxy.split('@')[1] if '@' in proxy else proxy
             error_table.add_row(proxy_display, reason)
@@ -168,6 +165,5 @@ def run_concurrent_checks_display(proxies, check_function, max_workers, fail_fil
     return good_proxies
 
 def manage_paths_menu_display():
-    """UI untuk mengelola paths.txt."""
-    console.print("[yellow]Fitur 'Kelola Path' belum diimplementasikan.[/yellow]")
+    console.print("[yellow]Fitur 'Kelola Path' belum ada.[/yellow]")
     time.sleep(2)
