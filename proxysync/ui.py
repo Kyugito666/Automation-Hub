@@ -41,23 +41,24 @@ def print_header():
 def display_main_menu():
     """Menampilkan menu utama interaktif dengan arrow key navigation."""
     console.print(Align.center(Text("--- MAIN MENU ---", style="bold cyan")))
+    console.print()  # Spacing
     
-    menu_options = [
-        "[1] Sinkronisasi IP Otorisasi Webshare",
-        "[2] Unduh Proksi dari Daftar API",
-        "[3] Konversi 'proxylist.txt'",
-        "[4] Jalankan Tes Akurat & Distribusi",
-        "[5] Kelola Path Target",
-        "[6] Keluar",
+    # Menu tanpa angka untuk display
+    menu_display = [
+        "Sinkronisasi IP Otorisasi Webshare",
+        "Unduh Proksi dari Daftar API",
+        "Konversi 'proxylist.txt'",
+        "Jalankan Tes Akurat & Distribusi",
+        "Kelola Path Target",
+        "Keluar",
     ]
     
     if QUESTIONARY_AVAILABLE:
         # Gunakan questionary untuk arrow key navigation
-        selected_option_str = questionary.select(
+        selected_option = questionary.select(
             "Pilih opsi (gunakan ↑/↓, Enter untuk memilih):",
-            choices=menu_options,
+            choices=menu_display,
             use_arrow_keys=True,
-            use_shortcuts=True,
             style=questionary.Style([
                 ('qmark', 'fg:cyan bold'),
                 ('question', 'bold'),
@@ -68,21 +69,26 @@ def display_main_menu():
             ])
         ).ask()
         
-        if selected_option_str is None:  # User pressed Ctrl+C
+        if selected_option is None:  # User pressed Ctrl+C
             return "6"
         
-        # Ekstrak nomor dari pilihan
-        match = re.match(r"\[(\d+)\]", selected_option_str)
-        if match:
-            return match.group(1)
-        return "6"
+        # Map pilihan ke nomor
+        option_map = {
+            "Sinkronisasi IP Otorisasi Webshare": "1",
+            "Unduh Proksi dari Daftar API": "2",
+            "Konversi 'proxylist.txt'": "3",
+            "Jalankan Tes Akurat & Distribusi": "4",
+            "Kelola Path Target": "5",
+            "Keluar": "6",
+        }
+        return option_map.get(selected_option, "6")
     else:
         # Fallback ke mode text input jika questionary tidak tersedia
         console.print("[yellow]⚠️  Install 'questionary' untuk arrow key navigation:[/yellow]")
         console.print("[dim]   pip install questionary[/dim]\n")
         
-        for option in menu_options:
-            console.print(option)
+        for idx, option in enumerate(menu_display, 1):
+            console.print(f"[{idx}] {option}")
         
         choice = Prompt.ask(
             "\n[bold yellow]Pilih opsi[/bold yellow]",
