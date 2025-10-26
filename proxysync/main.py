@@ -37,6 +37,9 @@ GITHUB_API_TEST_URL = "https://api.github.com/zen" # <-- TETAP PAKAI INI
 API_DOWNLOAD_WORKERS = 1
 RETRY_COUNT = 2
 
+# === PERUBAHAN 1: Tambah konstanta timeout ===
+WEBSHARE_API_TIMEOUT = 30 # Timeout untuk API Webshare (naikkan dari 10)
+
 # --- Variabel Global untuk Token GitHub ---
 GITHUB_TEST_TOKEN = None
 
@@ -92,7 +95,8 @@ def get_current_public_ip():
     """Mengambil IP publik saat ini dari layanan eksternal."""
     ui.console.print("1. Mengambil IP publik saat ini...")
     try:
-        response = requests.get(IP_CHECK_SERVICE_URL, timeout=10)
+        # === PERUBAHAN 2: Terapkan timeout ===
+        response = requests.get(IP_CHECK_SERVICE_URL, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
         new_ip = response.json()["ip"]
         ui.console.print(f"   -> [bold green]IP publik baru: {new_ip}[/bold green]")
@@ -105,7 +109,8 @@ def get_target_plan_id(session: requests.Session):
     """Auto-discover Plan ID. Hanya mengembalikan jika TEPAT 1 plan aktif."""
     ui.console.print("2. Auto-discover Plan ID...")
     try:
-        response = session.get(WEBSHARE_SUB_URL, timeout=10)
+        # === PERUBAHAN 3: Terapkan timeout ===
+        response = session.get(WEBSHARE_SUB_URL, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
         
         data = response.json()
@@ -113,6 +118,7 @@ def get_target_plan_id(session: requests.Session):
         
         active_plans = [p for p in plans if p.get('status', '').lower() == 'active']
         
+        # === PERUBAHAN 4: Logika debugging ditambah di sini ===
         if len(active_plans) == 1:
             plan = active_plans[0]
             plan_id = str(plan.get('id'))
@@ -122,11 +128,29 @@ def get_target_plan_id(session: requests.Session):
         
         elif len(active_plans) == 0:
             ui.console.print("   -> [bold red]ERROR: Tidak ada subscription plan 'active' ditemukan.[/bold red]")
+            # --- TAMBAHAN DEBUGGING ---
+            if len(plans) > 0:
+                ui.console.print("      [yellow]Info: Plan yang ditemukan (tapi tidak aktif):[/yellow]")
+                for p in plans:
+                    plan_name = p.get('plan', {}).get('name', 'N/A')
+                    plan_status = p.get('status', 'N/A')
+                    ui.console.print(f"      - '{plan_name}' (Status: [bold yellow]{plan_status}[/bold yellow])")
+            else:
+                ui.console.print("      [yellow]Info: Akun ini tidak memiliki plan subscription sama sekali.[/yellow]")
+            # --- AKHIR TAMBAHAN ---
             return None
             
         else:
             ui.console.print(f"   -> [bold red]ERROR: Ditemukan {len(active_plans)} plan aktif. Ambiguitas.[/bold red]")
+            # --- TAMBAHAN DEBUGGING ---
+            ui.console.print("      [yellow]Info: Plan aktif yang ditemukan:[/yellow]")
+            for p in active_plans:
+                plan_name = p.get('plan', {}).get('name', 'N/A')
+                plan_id = str(p.get('id'))
+                ui.console.print(f"      - '{plan_name}' (ID: {plan_id})")
+            # --- AKHIR TAMBAHAN ---
             return None
+        # === AKHIR PERUBAHAN 4 ===
 
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
@@ -143,7 +167,8 @@ def get_authorized_ips(session: requests.Session, plan_id: str):
     ui.console.print("3. Mengambil IP terotorisasi yang ada...")
     params = {"plan_id": plan_id}
     try:
-        response = session.get(WEBSHARE_AUTH_URL, params=params)
+        # === PERUBAHAN 5: Terapkan timeout ===
+        response = session.get(WEBSHARE_AUTH_URL, params=params, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
         results = response.json().get("results", [])
         existing_ips = [item["ip_address"] for item in results]
@@ -163,7 +188,8 @@ def remove_ip(session: requests.Session, ip: str, plan_id: str):
     params = {"plan_id": plan_id}
     payload = {"ip_address": ip} 
     try:
-        response = session.delete(WEBSHARE_AUTH_URL, json=payload, params=params)
+        # === PERUBAHAN 6: Terapkan timeout ===
+        response = session.delete(WEBSHARE_AUTH_URL, json=payload, params=params, timeout=WEBSHARE_API_TIMEOUT)
         if response.status_code == 204:
             ui.console.print(f"   -> [green]Sukses hapus: {ip}[/green]")
         else:
@@ -177,7 +203,8 @@ def add_ip(session: requests.Session, ip: str, plan_id: str):
     params = {"plan_id": plan_id}
     payload = {"ip_address": ip}
     try:
-        response = session.post(WEBSHARE_AUTH_URL, json=payload, params=params)
+        # === PERUBAHAN 7: Terapkan timeout ===
+        response = session.post(WEBSHARE_AUTH_URL, json=payload, params=params, timeout=WEBSHARE_API_TIMEOUT)
         if response.status_code == 201:
             ui.console.print(f"   -> [green]Sukses tambah: {ip}[/green]")
         else:
@@ -250,7 +277,8 @@ def get_webshare_download_url(session: requests.Session, plan_id: str):
     ui.console.print("   -> Memanggil 'proxy/config/' untuk URL download...")
     params = {"plan_id": plan_id}
     try:
-        response = session.get(WEBSHARE_CONFIG_URL, params=params, timeout=10)
+        # === PERUBAHAN 8: Terapkan timeout ===
+        response = session.get(WEBSHARE_CONFIG_URL, params=params, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
         
         data = response.json()
