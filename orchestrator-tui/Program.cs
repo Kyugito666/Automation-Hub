@@ -173,7 +173,8 @@ internal static class Program
             
             var prompt = new SelectionPrompt<string>()
                 .Title("\nDEBUG & LOCAL TESTING")
-                .PageSize(10).WrapAround()
+                .PageSize(10)
+                .WrapAround(true)
                 .AddChoices(new[] { 
                     "1. Test Local Bot (Run Interactively)", 
                     "2. Update All Bots Locally", 
