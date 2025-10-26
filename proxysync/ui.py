@@ -30,92 +30,48 @@ except ImportError:
 console = Console()
 
 def print_header():
-    """Menampilkan header aplikasi dengan style profesional."""
+    """Menampilkan header aplikasi."""
     console.clear()
     
-    # ASCII Art Logo
-    logo = """
-    ╔═══════════════════════════════════════════════════════════╗
-    ║   ██████╗ ██████╗  ██████╗ ██╗  ██╗██╗   ██╗            ║
-    ║   ██╔══██╗██╔══██╗██╔═══██╗╚██╗██╔╝╚██╗ ██╔╝            ║
-    ║   ██████╔╝██████╔╝██║   ██║ ╚███╔╝  ╚████╔╝             ║
-    ║   ██╔═══╝ ██╔══██╗██║   ██║ ██╔██╗   ╚██╔╝              ║
-    ║   ██║     ██║  ██║╚██████╔╝██╔╝ ██╗   ██║               ║
-    ║   ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝               ║
-    ║                                                           ║
-    ║        ███████╗██╗   ██╗███╗   ██╗ ██████╗               ║
-    ║        ██╔════╝╚██╗ ██╔╝████╗  ██║██╔════╝               ║
-    ║        ███████╗ ╚████╔╝ ██╔██╗ ██║██║                    ║
-    ║        ╚════██║  ╚██╔╝  ██║╚██╗██║██║                    ║
-    ║        ███████║   ██║   ██║ ╚████║╚██████╗               ║
-    ║        ╚══════╝   ╚═╝   ╚═╝  ╚═══╝ ╚═════╝               ║
-    ╚═══════════════════════════════════════════════════════════╝
-    """
-    
-    console.print(Text(logo, style="bold cyan", justify="center"))
-    
-    # Info panel
-    info_table = Table.grid(padding=(0, 2), expand=True)
-    info_table.add_column(justify="center", style="bold magenta")
-    info_table.add_column(justify="center", style="dim")
-    
-    info_table.add_row(
-        "ProxySync Professional",
-        "v3.0 Enterprise Edition"
-    )
-    info_table.add_row(
-        "🔧 Advanced Proxy Testing & Distribution System",
-        ""
-    )
-    info_table.add_row(
-        "👤 Created by Kyugito666",
-        "⚡ Powered by Rich & Questionary"
-    )
-    
+    # Simple header tanpa ASCII art yang ribet
+    console.print()
     console.print(Panel(
-        info_table,
-        border_style="bright_cyan",
-        box=DOUBLE,
+        "[bold cyan]PROXYSYNC v3.0[/bold cyan]\n"
+        "[dim]Proxy Testing & Distribution System[/dim]",
+        border_style="cyan",
+        box=ROUNDED,
         padding=(1, 2)
     ))
     console.print()
 
 def display_main_menu():
-    """Menampilkan menu utama dengan style profesional."""
+    """Menampilkan menu utama."""
     
-    # Menu title dengan border
-    menu_title = Text("MAIN CONTROL PANEL", style="bold bright_white on blue", justify="center")
-    console.print(Panel(
-        menu_title,
-        border_style="bright_blue",
-        box=HEAVY,
-        padding=(0, 20)
-    ))
+    console.print("[bold cyan]MAIN MENU[/bold cyan]")
     console.print()
     
     menu_display = [
-        "🔐 Sinkronisasi IP Otorisasi Webshare",
-        "📥 Unduh Proksi dari Daftar API",
-        "🔄 Konversi Format Proxy List",
-        "🧪 Jalankan Tes Akurat & Distribusi",
-        "📁 Kelola Path Target Distribusi",
-        "🚪 Keluar dari Aplikasi",
+        "1. Sinkronisasi IP Otorisasi Webshare",
+        "2. Unduh Proksi dari Daftar API",
+        "3. Konversi Format Proxy List",
+        "4. Jalankan Tes Akurat & Distribusi",
+        "5. Kelola Path Target Distribusi",
+        "6. Keluar dari Aplikasi",
     ]
     
     if QUESTIONARY_AVAILABLE:
         selected_option = questionary.select(
-            "╭─ Pilih operasi yang ingin dijalankan:",
+            "Pilih operasi:",
             choices=menu_display,
             use_arrow_keys=True,
-            pointer="➤",
+            pointer=">",
             style=questionary.Style([
                 ('qmark', 'fg:#00ffff bold'),
                 ('question', 'fg:#ffffff bold'),
                 ('answer', 'fg:#00ff00 bold'),
                 ('pointer', 'fg:#ffff00 bold'),
-                ('highlighted', 'fg:#ffff00 bold underline'),
+                ('highlighted', 'fg:#ffff00 bold'),
                 ('selected', 'fg:#00ff00'),
-                ('instruction', 'fg:#888888'),
             ])
         ).ask()
         
@@ -133,8 +89,8 @@ def display_main_menu():
         return option_map.get(selected_option, "6")
     else:
         console.print(Panel(
-            "[yellow]⚠️  Enhanced UI Tidak Tersedia[/yellow]\n"
-            "[dim]Install 'questionary' untuk arrow key navigation:[/dim]\n"
+            "[yellow]Enhanced UI tidak tersedia[/yellow]\n"
+            "[dim]Install 'questionary' untuk navigasi arrow key:[/dim]\n"
             "[cyan]pip install questionary[/cyan]",
             border_style="yellow",
             box=ROUNDED
@@ -151,14 +107,14 @@ def display_main_menu():
         console.print(menu_table)
         
         choice = Prompt.ask(
-            "\n╰─➤ [bold yellow]Masukkan pilihan[/bold yellow]",
+            "\nMasukkan pilihan",
             choices=["1", "2", "3", "4", "5", "6"],
             default="6"
         )
         return choice
 
 def fetch_from_api(url: str, api_key: str | None):
-    """Fungsi pembantu untuk mengunduh dari satu URL API dengan mekanisme backoff."""
+    """Fungsi pembantu untuk mengunduh dari satu URL API."""
     max_retries = 3
     headers = {} 
     if api_key:
@@ -169,7 +125,7 @@ def fetch_from_api(url: str, api_key: str | None):
             response = requests.get(url, headers=headers, timeout=60) 
             if response.status_code == 429:
                 wait_time = 15 * (attempt + 1) 
-                console.print(f"[bold yellow]⏳ Rate limit terdeteksi. Menunggu {wait_time} detik...[/bold yellow]")
+                console.print(f"[yellow]Rate limit terdeteksi. Menunggu {wait_time} detik...[/yellow]")
                 time.sleep(wait_time)
                 continue 
             response.raise_for_status() 
@@ -178,18 +134,18 @@ def fetch_from_api(url: str, api_key: str | None):
                 if '\n' in content or re.match(r"^\d{1,3}(\.\d{1,3}){3}:\d+", content.splitlines()[0]):
                     return url, content.splitlines(), None
                 else:
-                    error_message = "❌ Respons tidak valid (bukan proxy list)"
+                    error_message = "Respons tidak valid (bukan proxy list)"
                     break 
             else:
-                error_message = "❌ Respons kosong dari server"
+                error_message = "Respons kosong dari server"
                 break 
         except requests.exceptions.HTTPError as e:
-             error_message = f"❌ HTTP {e.response.status_code} Error"
+             error_message = f"HTTP {e.response.status_code} Error"
              break 
         except requests.exceptions.RequestException as e:
-            error_message = f"❌ Koneksi gagal: {str(e)[:50]}"
+            error_message = f"Koneksi gagal: {str(e)[:50]}"
             if attempt < max_retries - 1:
-                console.print(f"[yellow]🔄 Koneksi gagal, retry dalam 5 detik... ({attempt+1}/{max_retries})[/yellow]")
+                console.print(f"[yellow]Koneksi gagal, retry dalam 5 detik... ({attempt+1}/{max_retries})[/yellow]")
                 time.sleep(5) 
     return url, [], error_message
 
@@ -209,25 +165,23 @@ def run_sequential_api_downloads(download_targets: list[tuple[str, str | None]])
     
     total_targets = len(download_targets)
     
-    console.print(Panel(
-        f"[cyan]📡 Memulai download dari {total_targets} sumber API[/cyan]",
-        border_style="cyan",
-        box=ROUNDED
-    ))
-    console.print()
+    console.print(f"[cyan]Memulai download dari {total_targets} sumber API[/cyan]\n")
     
     with Live(progress, console=console, refresh_per_second=10):
-        task = progress.add_task("[cyan]📥 Mengunduh proxy list...", total=total_targets)
+        task = progress.add_task("[cyan]Mengunduh proxy list...", total=total_targets)
         
         for i, (url, api_key) in enumerate(download_targets, 1):
-            progress.update(task, description=f"[cyan]📥 Download {i}/{total_targets}")
+            progress.update(task, description=f"[cyan]Download {i}/{total_targets}")
             _, proxies, error = fetch_from_api(url, api_key) 
             
+            # Tampilkan URL yang lebih pendek
+            url_display = url[:50] + "..." if len(url) > 50 else url
+            
             if error:
-                error_msg = str(error).splitlines()[0][:60]
-                console.print(f"[red]✖[/red] [dim]{url[:45]}...[/dim] [red]{error_msg}[/red]")
+                error_msg = str(error)[:40]
+                console.print(f"[red]FAIL[/red] {url_display} - {error_msg}")
             else:
-                console.print(f"[green]✔[/green] [dim]{url[:45]}...[/dim] [green]({len(proxies)} proxies)[/green]")
+                console.print(f"[green]OK[/green]   {url_display} - {len(proxies)} proxies")
                 all_proxies.extend(proxies)
             
             progress.update(task, advance=1)
@@ -239,19 +193,14 @@ def run_sequential_api_downloads(download_targets: list[tuple[str, str | None]])
     return all_proxies
 
 def run_concurrent_checks_display(proxies, check_function, max_workers, fail_file):
-    """Menampilkan progress bar profesional untuk testing proxy."""
+    """Menampilkan progress bar untuk testing proxy."""
     good_proxies, failed_proxies_with_reason = [], []
     
-    console.print(Panel(
-        f"[cyan]🧪 Memulai testing akurat untuk {len(proxies)} proxies[/cyan]\n"
-        f"[dim]Workers: {max_workers} threads • Timeout: 25s per proxy[/dim]",
-        border_style="cyan",
-        box=ROUNDED
-    ))
-    console.print()
+    console.print(f"[cyan]Memulai testing {len(proxies)} proxies[/cyan]")
+    console.print(f"[dim]Workers: {max_workers} threads | Timeout: 25s per proxy[/dim]\n")
     
     progress = Progress(
-        SpinnerColumn(spinner_name="dots12"),
+        SpinnerColumn(spinner_name="dots"),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(bar_width=50, style="cyan", complete_style="green"),
         MofNCompleteColumn(),
@@ -263,7 +212,7 @@ def run_concurrent_checks_display(proxies, check_function, max_workers, fail_fil
     )
     
     with Live(progress, console=console, refresh_per_second=10):
-        task = progress.add_task("[cyan]🔍 Testing proxies via GitHub API...", total=len(proxies))
+        task = progress.add_task("[cyan]Testing proxies via GitHub API...", total=len(proxies))
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_proxy = {executor.submit(check_function, p): p for p in proxies}
@@ -281,7 +230,7 @@ def run_concurrent_checks_display(proxies, check_function, max_workers, fail_fil
     console.print()
     
     # Results summary
-    summary_table = Table(box=HEAVY, border_style="bright_cyan", show_header=True, header_style="bold white on blue")
+    summary_table = Table(box=ROUNDED, border_style="cyan", show_header=True, header_style="bold white")
     summary_table.add_column("Status", justify="center", width=15)
     summary_table.add_column("Count", justify="center", width=10)
     summary_table.add_column("Percentage", justify="center", width=15)
@@ -292,48 +241,49 @@ def run_concurrent_checks_display(proxies, check_function, max_workers, fail_fil
     success_pct = (success_count / total * 100) if total > 0 else 0
     fail_pct = (fail_count / total * 100) if total > 0 else 0
     
-    summary_table.add_row("[green]✓ PASSED[/green]", f"[bold green]{success_count}[/bold green]", f"[green]{success_pct:.1f}%[/green]")
-    summary_table.add_row("[red]✗ FAILED[/red]", f"[bold red]{fail_count}[/bold red]", f"[red]{fail_pct:.1f}%[/red]")
-    summary_table.add_row("[cyan]TOTAL[/cyan]", f"[bold]{total}[/bold]", "100%")
+    summary_table.add_row("[green]PASSED[/green]", f"[green]{success_count}[/green]", f"[green]{success_pct:.1f}%[/green]")
+    summary_table.add_row("[red]FAILED[/red]", f"[red]{fail_count}[/red]", f"[red]{fail_pct:.1f}%[/red]")
+    summary_table.add_row("[cyan]TOTAL[/cyan]", f"{total}", "100%")
     
-    console.print(Panel(summary_table, title="[bold]📊 Test Results Summary[/bold]", border_style="cyan", box=DOUBLE))
+    console.print(Panel(summary_table, title="[bold]Test Results Summary[/bold]", border_style="cyan", box=ROUNDED))
     
     if failed_proxies_with_reason:
         with open(fail_file, "w") as f:
             for p, _ in failed_proxies_with_reason:
                 f.write(p + "\n")
         
-        console.print(f"\n[yellow]💾 {fail_count} failed proxies saved to '{fail_file}'[/yellow]")
+        console.print(f"\n[yellow]{fail_count} failed proxies saved to '{fail_file}'[/yellow]")
         
-        # Error breakdown table
-        error_table = Table(
-            title="[bold red]❌ Failure Analysis (Top 10)[/bold red]",
-            box=ROUNDED,
-            border_style="red",
-            show_header=True,
-            header_style="bold white on red"
-        )
-        error_table.add_column("Proxy", style="cyan", width=40)
-        error_table.add_column("Reason", style="yellow")
-        
-        for proxy, reason in failed_proxies_with_reason[:10]:
-            proxy_display = proxy.split('@')[1] if '@' in proxy else proxy
-            if len(proxy_display) > 35:
-                proxy_display = proxy_display[:32] + "..."
-            error_table.add_row(proxy_display, reason)
-        
-        console.print()
-        console.print(error_table)
+        # Error breakdown table (top 10 only)
+        if len(failed_proxies_with_reason) > 0:
+            error_table = Table(
+                title="[bold red]Failure Analysis (Top 10)[/bold red]",
+                box=ROUNDED,
+                border_style="red",
+                show_header=True,
+                header_style="bold white"
+            )
+            error_table.add_column("Proxy", style="cyan", width=40)
+            error_table.add_column("Reason", style="yellow")
+            
+            for proxy, reason in failed_proxies_with_reason[:10]:
+                proxy_display = proxy.split('@')[1] if '@' in proxy else proxy
+                if len(proxy_display) > 35:
+                    proxy_display = proxy_display[:32] + "..."
+                error_table.add_row(proxy_display, reason)
+            
+            console.print()
+            console.print(error_table)
     
     return good_proxies
 
 def manage_paths_menu_display():
     """Placeholder untuk menu manage paths."""
     console.print(Panel(
-        "[yellow]⚠️  Feature Coming Soon[/yellow]\n\n"
+        "[yellow]Feature Coming Soon[/yellow]\n\n"
         "[dim]Fitur 'Kelola Path Target' sedang dalam pengembangan.\n"
         "Saat ini Anda dapat mengedit file '../config/paths.txt' secara manual.[/dim]",
-        title="[bold]🚧 Under Construction[/bold]",
+        title="[bold]Under Construction[/bold]",
         border_style="yellow",
         box=ROUNDED
     ))
