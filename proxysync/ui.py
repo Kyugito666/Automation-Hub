@@ -18,6 +18,13 @@ from rich.progress import (
 )
 from rich.live import Live
 
+# Import questionary untuk arrow key navigation
+try:
+    import questionary
+    QUESTIONARY_AVAILABLE = True
+except ImportError:
+    QUESTIONARY_AVAILABLE = False
+
 console = Console()
 
 def print_header():
@@ -32,21 +39,57 @@ def print_header():
     console.print()
 
 def display_main_menu():
-    """Menampilkan menu utama interaktif."""
+    """Menampilkan menu utama interaktif dengan arrow key navigation."""
     console.print(Align.center(Text("--- MAIN MENU ---", style="bold cyan")))
-    console.print("[1] Sinkronisasi IP Otorisasi Webshare")
-    console.print("[2] Unduh Proksi dari Daftar API")
-    console.print("[3] Konversi 'proxylist.txt'")
-    console.print("[4] Jalankan Tes Akurat & Distribusi")
-    console.print("[5] Kelola Path Target")
-    console.print("[6] Keluar")
     
-    choice = Prompt.ask(
-        "\n[bold yellow]Pilih opsi[/bold yellow]",
-        choices=["1", "2", "3", "4", "5", "6"],
-        default="6"
-    )
-    return choice
+    menu_options = [
+        "[1] Sinkronisasi IP Otorisasi Webshare",
+        "[2] Unduh Proksi dari Daftar API",
+        "[3] Konversi 'proxylist.txt'",
+        "[4] Jalankan Tes Akurat & Distribusi",
+        "[5] Kelola Path Target",
+        "[6] Keluar",
+    ]
+    
+    if QUESTIONARY_AVAILABLE:
+        # Gunakan questionary untuk arrow key navigation
+        selected_option_str = questionary.select(
+            "Pilih opsi (gunakan ↑/↓, Enter untuk memilih):",
+            choices=menu_options,
+            use_arrow_keys=True,
+            use_shortcuts=True,
+            style=questionary.Style([
+                ('qmark', 'fg:cyan bold'),
+                ('question', 'bold'),
+                ('answer', 'fg:green bold'),
+                ('pointer', 'fg:yellow bold'),
+                ('highlighted', 'fg:yellow bold'),
+                ('selected', 'fg:green'),
+            ])
+        ).ask()
+        
+        if selected_option_str is None:  # User pressed Ctrl+C
+            return "6"
+        
+        # Ekstrak nomor dari pilihan
+        match = re.match(r"\[(\d+)\]", selected_option_str)
+        if match:
+            return match.group(1)
+        return "6"
+    else:
+        # Fallback ke mode text input jika questionary tidak tersedia
+        console.print("[yellow]⚠️  Install 'questionary' untuk arrow key navigation:[/yellow]")
+        console.print("[dim]   pip install questionary[/dim]\n")
+        
+        for option in menu_options:
+            console.print(option)
+        
+        choice = Prompt.ask(
+            "\n[bold yellow]Pilih opsi[/bold yellow]",
+            choices=["1", "2", "3", "4", "5", "6"],
+            default="6"
+        )
+        return choice
 
 def fetch_from_api(url: str, api_key: str | None):
     """Fungsi pembantu untuk mengunduh dari satu URL API dengan mekanisme backoff."""
