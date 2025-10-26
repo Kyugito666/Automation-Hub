@@ -179,21 +179,14 @@ internal static class Program
             
             if (choice.StartsWith("⬅️")) return;
 
-            switch (choice[0])
-            {
-                case '✓':
-                    await CollaboratorManager.ValidateAllTokens(cancellationToken);
-                    break;
-                case '📨':
-                    await CollaboratorManager.InviteCollaborators(cancellationToken);
-                    break;
-                case '✅':
-                    await CollaboratorManager.AcceptInvitations(cancellationToken);
-                    break;
-                case '📊':
-                    await Task.Run(() => TokenManager.ShowStatus(), cancellationToken);
-                    break;
-            }
+            if (choice.StartsWith("✓"))
+                await CollaboratorManager.ValidateAllTokens(cancellationToken);
+            else if (choice.StartsWith("📨"))
+                await CollaboratorManager.InviteCollaborators(cancellationToken);
+            else if (choice.StartsWith("✅"))
+                await CollaboratorManager.AcceptInvitations(cancellationToken);
+            else if (choice.StartsWith("📊"))
+                await Task.Run(() => TokenManager.ShowStatus(), cancellationToken);
             
             Pause("Press Enter to continue...", cancellationToken);
         }
