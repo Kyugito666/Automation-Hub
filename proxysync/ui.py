@@ -34,53 +34,64 @@ def display_main_menu():
     menu_table = Table(title="Main Menu", show_header=False, border_style="magenta")
     menu_table.add_column("Option", style="cyan", width=5)
     menu_table.add_column("Description")
-    
-    # --- MENU YANG SUDAH DI-UPDATE ---
     menu_table.add_row("[1]", "Sinkronisasi IP Otorisasi Webshare")
     menu_table.add_row("[2]", "Unduh Proksi dari Daftar API")
     menu_table.add_row("[3]", "Konversi 'proxylist.txt'")
     menu_table.add_row("[4]", "Jalankan Tes Akurat & Distribusi")
     menu_table.add_row("[5]", "Kelola Path Target")
     menu_table.add_row("[6]", "Keluar")
-    # --- AKHIR PERUBAHAN ---
-    
     console.print(Align.center(menu_table))
-    
-    # --- PILIHAN YANG SUDAH DI-UPDATE ---
     return Prompt.ask("Pilih opsi", choices=["1", "2", "3", "4", "5", "6"], default="6")
-    # --- AKHIR PERUBAHAN ---
 
-def fetch_from_api(url):
+# === PERUBAHAN DOWNLOAD v2 ===
+def fetch_from_api(url: str, api_key: str | None):
     """Fungsi pembantu untuk mengunduh dari satu URL API dengan mekanisme backoff."""
     max_retries = 3
+    headers = {'Accept': 'text/plain'} # Header dasar untuk download
+    if api_key:
+        headers['Authorization'] = f"Token {api_key}" # Tambahkan Auth jika ada key
+
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, timeout=45)
-            response.raise_for_status()
+            # Gunakan header yang sudah disiapkan
+            response = requests.get(url, headers=headers, timeout=60) # Timeout dinaikkan ke 60s
+            
+            # Cek Rate Limit dulu
+            if response.status_code == 429:
+                 # PERPANJANG JEDA: 15s, 30s, 45s
+                wait_time = 15 * (attempt + 1) 
+                console.print(f"[bold yellow]Rate limit terdeteksi. Menunggu {wait_time} detik...[/bold yellow]")
+                time.sleep(wait_time)
+                error_message = f"Rate limited (429) on attempt {attempt + 1}"
+                continue # Coba lagi setelah jeda
+            
+            # Jika bukan 429, baru cek error lain atau sukses
+            response.raise_for_status() 
             content = response.text.strip()
             if content:
                 return url, content.splitlines(), None
-            error_message = "API tidak mengembalikan konten"
+            else:
+                error_message = "API tidak mengembalikan konten (respons kosong)"
+                break # Jangan retry jika respons kosong
 
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:
-                wait_time = 10 * (attempt + 1)
-                console.print(f"[bold yellow]Rate limit terdeteksi. Menunggu {wait_time} detik...[/bold yellow]")
-                time.sleep(wait_time)
-                error_message = str(e)
-                continue
-            else:
-                error_message = str(e)
-                break
+            # Error HTTP selain 429 (misal 400 Bad Request, 401 Unauthorized, 5xx Server Error)
+            error_message = f"{e.response.status_code} Client/Server Error: {str(e)}"
+            break # Jangan retry untuk error ini, kemungkinan URL/Key salah
 
         except requests.exceptions.RequestException as e:
-            error_message = str(e)
-            time.sleep(3)
+            # Error koneksi (timeout, DNS, etc.)
+            error_message = f"Koneksi Gagal: {str(e)}"
+            if attempt < max_retries - 1:
+                console.print(f"[yellow]Koneksi gagal, mencoba lagi dalam 5 detik... ({attempt+1}/{max_retries})[/yellow]")
+                time.sleep(5) # Jeda singkat untuk error koneksi
+            # Biarkan loop lanjut ke attempt berikutnya
 
+    # Jika loop selesai tanpa return sukses
     return url, [], error_message
 
-def run_sequential_api_downloads(urls):
-    """Menjalankan unduhan API satu per satu untuk keandalan maksimal."""
+def run_sequential_api_downloads(download_targets: list[tuple[str, str | None]]):
+    """Menjalankan unduhan API satu per satu."""
     all_proxies = []
     progress = Progress(
         SpinnerColumn(),
@@ -89,20 +100,34 @@ def run_sequential_api_downloads(urls):
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         console=console
     )
+    total_targets = len(download_targets)
     with Live(progress):
-        task = progress.add_task("[cyan]Mengunduh satu per satu (mode andal)...[/cyan]", total=len(urls))
-        for url in urls:
-            _, proxies, error = fetch_from_api(url) # Memanggil fungsi fetch secara langsung
+        task = progress.add_task("[cyan]Mengunduh satu per satu...[/cyan]", total=total_targets)
+        for i, (url, api_key) in enumerate(download_targets):
+            progress.update(task, description=f"[cyan]Mengunduh ({i+1}/{total_targets})...[/cyan]")
+            
+            # Panggil fetch_from_api dengan URL dan API key
+            _, proxies, error = fetch_from_api(url, api_key) 
+            
             if error:
-                error_msg = str(error).splitlines()[0]
-                console.print(f"[bold red]✖ GAGAL FINAL[/bold red] dari {url[:50]}... [dim]({error_msg})[/dim]")
+                error_msg = str(error).splitlines()[0] # Ambil baris pertama error
+                console.print(f"[bold red]✖ GAGAL[/bold red] dari {url[:50]}... [dim]({error_msg})[/dim]")
             else:
                 console.print(f"[green]✔ Berhasil[/green] dari {url[:50]}... ({len(proxies)} proksi)")
                 all_proxies.extend(proxies)
+                
             progress.update(task, advance=1)
-            time.sleep(1) # Memberi jeda 1 detik antar setiap unduhan sebagai pengaman tambahan
+            
+            # JEDA ANTAR REQUEST (di luar retry)
+            # Jika bukan request terakhir, beri jeda
+            if i < total_targets - 1:
+                # PERPANJANG JEDA ANTAR AKUN
+                jeda = 5 
+                console.print(f"[grey]   Jeda {jeda} detik sebelum akun berikutnya...[/]")
+                time.sleep(jeda) 
 
     return all_proxies
+# === AKHIR PERUBAHAN DOWNLOAD v2 ===
 
 
 def run_concurrent_checks_display(proxies, check_function, max_workers, fail_file):
