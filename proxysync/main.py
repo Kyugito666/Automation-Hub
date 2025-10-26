@@ -4,7 +4,7 @@ import shutil
 import time
 import re
 import sys
-import json
+import json # <-- Pastikan 'json' di-import
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import ui  # Mengimpor semua fungsi UI dari file ui.py
@@ -26,8 +26,12 @@ WEBSHARE_AUTH_URL = "https://proxy.webshare.io/api/v2/proxy/ipauthorization/"
 WEBSHARE_SUB_URL = "https://proxy.webshare.io/api/v2/subscription/"
 WEBSHARE_CONFIG_URL = "https://proxy.webshare.io/api/v2/proxy/config/"
 WEBSHARE_PROFILE_URL = "https://proxy.webshare.io/api/v2/profile/"
-WEBSHARE_DOWNLOAD_URL_BASE = "https://proxy.webshare.io/api/v2/proxy/list/download/{token}/-/any/{username}/direct/-/"
+# === PERUBAHAN DOWNLOAD v3 (FINAL) ===
+# URL Base SEKARANG pakai 'username' literal
+WEBSHARE_DOWNLOAD_URL_BASE = "https://proxy.webshare.io/api/v2/proxy/list/download/{token}/-/any/username/direct/-/"
+# Format URL juga pakai 'username' literal
 WEBSHARE_DOWNLOAD_URL_FORMAT = WEBSHARE_DOWNLOAD_URL_BASE + "?plan_id={plan_id}"
+# === AKHIR PERUBAHAN DOWNLOAD v3 (FINAL) ===
 IP_CHECK_SERVICE_URL = "https://api.ipify.org?format=json"
 
 # --- Konfigurasi Tes Proxy ---
@@ -73,7 +77,6 @@ def get_current_public_ip():
         ui.console.print(f"   -> [bold green]IP baru: {new_ip}[/bold green]"); return new_ip
     except requests.RequestException as e: ui.console.print(f"   -> [bold red]ERROR Gagal cek IP: {e}[/bold red]", file=sys.stderr); return None
 
-# === PERUBAHAN EMAIL v2 ===
 def get_account_email(session: requests.Session) -> str:
     """Mengambil email akun Webshare (tanpa sensor)."""
     try:
@@ -88,7 +91,6 @@ def get_account_email(session: requests.Session) -> str:
     except requests.exceptions.HTTPError as e: return f"[bold red]HTTP Err ({e.response.status_code})[/]"
     except requests.RequestException: return "[bold red]Koneksi Err[/]"
     except Exception: return "[bold red]Parsing Err[/]"
-# === AKHIR PERUBAHAN EMAIL v2 ===
 
 def get_target_plan_id(session: requests.Session):
     ui.console.print("2. Cek Plan ID (via /config/)...")
@@ -163,7 +165,7 @@ def run_webshare_ip_sync():
         try:
             with requests.Session() as email_session:
                 email_session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
-                account_email_info = get_account_email(email_session) # Panggil fungsi (sudah tanpa sensor)
+                account_email_info = get_account_email(email_session) # Tanpa sensor
         except Exception: account_email_info = "[bold red]Error[/]"
         ui.console.print(f"\n--- Key: [...{api_key[-6:]}] (Email: {account_email_info}) ---")
 
@@ -190,9 +192,22 @@ def get_webshare_download_url(session: requests.Session, plan_id: str):
     try:
         response = session.get(WEBSHARE_CONFIG_URL, params=params, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
-        data = response.json(); username = data.get("username"); token = data.get("proxy_list_download_token")
-        if not username or not token: ui.console.print("   -> [bold red]ERROR: 'username'/'token' N/A.[/bold red]"); return None
-        download_url = WEBSHARE_DOWNLOAD_URL_FORMAT.format(token=token, username=username, plan_id=plan_id)
+        data = response.json()
+        # username = data.get("username") # <-- TIDAK DIPAKAI LAGI
+        token = data.get("proxy_list_download_token")
+        # if not username or not token: # Cek token saja
+        if not token:
+             ui.console.print("   -> [bold red]ERROR: 'proxy_list_download_token' N/A.[/bold red]"); return None
+
+        # === PERUBAHAN DOWNLOAD v3 (FINAL) ===
+        # Format URL pakai 'username' literal, HANYA butuh token & plan_id
+        download_url = WEBSHARE_DOWNLOAD_URL_FORMAT.format(
+            token=token,
+            # username=username, # <-- Dihapus
+            plan_id=plan_id
+        )
+        # === AKHIR PERUBAHAN DOWNLOAD v3 (FINAL) ===
+
         ui.console.print(f"   -> [green]OK URL download.[/green]"); return download_url
     except requests.exceptions.HTTPError as e: ui.console.print(f"   -> [bold red]ERROR Config: {e.response.text}[/bold red]"); return None
     except requests.RequestException as e: ui.console.print(f"   -> [bold red]ERROR Koneksi (config): {e}[/bold red]"); return None
@@ -227,7 +242,7 @@ def download_proxies_from_api():
             try:
                 plan_id = get_target_plan_id(session)
                 if not plan_id: ui.console.print(f"   -> [bold red]Akun skip.[/bold red]"); continue
-                download_url = get_webshare_download_url(session, plan_id)
+                download_url = get_webshare_download_url(session, plan_id) # Panggil fungsi yang sudah di-fix
                 if download_url: all_download_targets.append((download_url, api_key))
                 else: ui.console.print("   -> [yellow]Gagal URL. Skip.[/yellow]")
             except Exception as e: ui.console.print(f"   -> [bold red]!!! FATAL: {e}[/bold red]")
