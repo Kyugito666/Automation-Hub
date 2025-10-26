@@ -4,6 +4,7 @@ import shutil
 import time
 import re
 import sys
+import json # <-- Pastikan 'json' di-import
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import ui  # Mengimpor semua fungsi UI dari file ui.py
@@ -22,8 +23,8 @@ PROXY_BACKUP_FILE = "proxy_backup.txt" # Backup tetap di folder proxysync
 
 # --- Konfigurasi Webshare (BARU) ---
 WEBSHARE_AUTH_URL = "https://proxy.webshare.io/api/v2/proxy/ipauthorization/"
-WEBSHARE_SUB_URL = "https://proxy.webshare.io/api/v2/subscription/" # <-- INI HANYA UNTUK PAID PLAN (TERNYATA)
-WEBSHARE_CONFIG_URL = "https://proxy.webshare.io/api/v2/proxy/config/" # <-- INI SUMBER KEBENARAN
+WEBSHARE_SUB_URL = "https://proxy.webshare.io/api/v2/subscription/" 
+WEBSHARE_CONFIG_URL = "https://proxy.webshare.io/api/v2/proxy/config/" 
 WEBSHARE_DOWNLOAD_URL_BASE = "https://proxy.webshare.io/api/v2/proxy/list/download/{token}/-/any/{username}/direct/-/"
 WEBSHARE_DOWNLOAD_URL_FORMAT = WEBSHARE_DOWNLOAD_URL_BASE + "?plan_id={plan_id}"
 IP_CHECK_SERVICE_URL = "https://api.ipify.org?format=json"
@@ -109,7 +110,6 @@ def get_target_plan_id(session: requests.Session):
     """
     ui.console.print("2. Auto-discover Plan ID (via /config/)...")
     try:
-        # === PERUBAHAN BUG INTI v4 (FINAL) ===
         # Panggil /config/ TANPA plan_id untuk mendapatkan plan default (termasuk Free)
         response = session.get(WEBSHARE_CONFIG_URL, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
@@ -124,13 +124,12 @@ def get_target_plan_id(session: requests.Session):
         else:
             ui.console.print("   -> [bold red]ERROR: /config/ tidak mengembalikan 'id' plan.[/bold red]")
             return None
-        # === AKHIR PERUBAHAN BUG INTI v4 (FINAL) ===
 
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             ui.console.print("   -> [bold red]ERROR: API Key tidak valid.[/bold red]")
         else:
-            ui.console.print(f"   -> [bold red]ERROR: HTTP Error: {e}[/bold red]")
+            ui.console.print(f"   -> [bold red]ERROR: HTTP Error: {e.response.text}[/bold red]")
         return None
     except requests.RequestException as e:
         ui.console.print(f"   -> [bold red]ERROR: Gagal koneksi ke Webshare: {e}[/bold red]")
@@ -164,19 +163,24 @@ def remove_ip(session: requests.Session, ip: str, plan_id: str):
     params = {"plan_id": plan_id} # plan_id sekarang WAJIB
     payload = {"ip_address": ip} 
     
+    # Kita harus menambahkan header 'Content-Type' secara manual saat menggunakan 'data'
+    headers = {'Content-Type': 'application/json'}
+        
     try:
         
-        # === PERBAIKAN BUG INTI v4 (FINAL) ===
-        # Kembali ke method "DELETE" yang benar, tapi panggil via 'request'
-        # untuk MEMAKSA 'requests' mengirim body JSON.
+        # === PERBAIKAN BUG INTI v5 (FINAL) ===
+        # Menggunakan 'data' (raw string) instead of 'json' (helper)
+        # Ini adalah cara paling 'direct' untuk maksa 'requests'
+        # mengirim body/payload di request DELETE.
         response = session.request(
             "DELETE", 
             WEBSHARE_AUTH_URL, 
-            json=payload, 
+            data=json.dumps(payload), # <-- Diubah dari json=payload
+            headers=headers,          # <-- Ditambahkan
             params=params, 
             timeout=WEBSHARE_API_TIMEOUT
         )
-        # === AKHIR PERBAIKAN BUG INTI v4 (FINAL) ===
+        # === AKHIR PERBAIKAN BUG INTI v5 (FINAL) ===
 
         # API Webshare mengembalikan 204 (No Content) saat sukses delete
         if response.status_code == 204:
@@ -265,8 +269,15 @@ def run_webshare_ip_sync():
 
                 existing_ips = get_authorized_ips(session, plan_id) # plan_id sekarang WAJIB
 
+                # === LOGIKA BARU YANG LU MINTA (udah ada dari v4) ===
+                if new_ip in existing_ips:
+                    ui.console.print(f"   -> [green]IP baru ({new_ip}) sudah terotorisasi. Tidak ada perubahan.[/green]")
+                    continue # Lanjut ke akun berikutnya
+                # === AKHIR LOGIKA BARU ===
+
                 ui.console.print("\n4. Memeriksa IP lama untuk dihapus...")
-                ips_to_delete = [ip for ip in existing_ips if ip != new_ip]
+                # ips_to_delete sekarang berisi SEMUA IP yang ada (karena new_ip tidak ada di list)
+                ips_to_delete = [ip for ip in existing_ips] 
                 if not ips_to_delete:
                     ui.console.print("   -> Tidak ada IP lama yang perlu dihapus.")
                 else:
@@ -274,13 +285,12 @@ def run_webshare_ip_sync():
                         remove_ip(session, ip, plan_id) # plan_id sekarang WAJIB
 
                 ui.console.print("\n5. Memeriksa IP baru untuk ditambahkan...")
-                if new_ip not in existing_ips:
-                    add_ip(session, new_ip, plan_id) # plan_id sekarang WAJIB
-                else:
-                    ui.console.print(f"   -> IP baru ({new_ip}) sudah terotorisasi.")
+                # Kita PASTI add, karena kita sudah cek di awal
+                add_ip(session, new_ip, plan_id) # plan_id sekarang WAJIB
             
             except Exception as e:
-                ui.console.print(f"   -> [bold red]!!! FATAL ERROR untuk akun ini (Proses lanjut ke akun berikutnya): {e}[/bold red]")
+                # Catch exception dari remove_ip atau add_ip
+                ui.console.print(f"   -> [bold red]!!! ERROR saat proses Hapus/Tambah. Lanjut ke akun berikutnya.[/bold red]")
     
     ui.console.print("\n[bold green]✅ Proses sinkronisasi IP Webshare selesai.[/bold green]")
 
@@ -309,7 +319,6 @@ def get_webshare_download_url(session: requests.Session, plan_id: str):
             return None
 
         # Format URL download
-        # (kita bisa pakai format dengan plan_id karena kita sekarang PASTI punya plan_id)
         download_url = WEBSHARE_DOWNLOAD_URL_FORMAT.format(
             token=token,
             username=username,
@@ -320,7 +329,7 @@ def get_webshare_download_url(session: requests.Session, plan_id: str):
         return download_url
 
     except requests.exceptions.HTTPError as e:
-        ui.console.print(f"   -> [bold red]ERROR: Gagal mengambil config proxy: {e}[/bold red]")
+        ui.console.print(f"   -> [bold red]ERROR: Gagal mengambil config proxy: {e.response.text}[/bold red]")
         return None
     except requests.RequestException as e:
         ui.console.print(f"   -> [bold red]ERROR: Gagal koneksi ke Webshare (config): {e}[/bold red]")
