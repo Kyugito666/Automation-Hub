@@ -1,3 +1,4 @@
+print("DEBUG: Starting ui.py execution", flush=True)
 import time
 import requests
 import re # <-- Import re
