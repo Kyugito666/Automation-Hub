@@ -24,7 +24,10 @@ PROXY_BACKUP_FILE = "proxy_backup.txt" # Backup tetap di folder proxysync
 WEBSHARE_AUTH_URL = "https://proxy.webshare.io/api/v2/proxy/ipauthorization/"
 WEBSHARE_SUB_URL = "https://proxy.webshare.io/api/v2/subscription/"
 WEBSHARE_CONFIG_URL = "https://proxy.webshare.io/api/v2/proxy/config/"
-WEBSHARE_DOWNLOAD_URL_FORMAT = "https://proxy.webshare.io/api/v2/proxy/list/download/{token}/-/any/{username}/direct/-/?plan_id={plan_id}"
+# --- PERUBAHAN A: Pisahkan URL Download dari parameter ---
+WEBSHARE_DOWNLOAD_URL_BASE = "https://proxy.webshare.io/api/v2/proxy/list/download/{token}/-/any/{username}/direct/-/"
+WEBSHARE_DOWNLOAD_URL_FORMAT = WEBSHARE_DOWNLOAD_URL_BASE + "?plan_id={plan_id}"
+# --- AKHIR PERUBAHAN A ---
 IP_CHECK_SERVICE_URL = "https://api.ipify.org?format=json"
 # --- AKHIR KONFIGURASI BARU ---
 
@@ -36,9 +39,7 @@ GITHUB_API_TEST_URL = "https://api.github.com/zen" # <-- TETAP PAKAI INI
 
 API_DOWNLOAD_WORKERS = 1
 RETRY_COUNT = 2
-
-# === PERUBAHAN 1: Tambah konstanta timeout ===
-WEBSHARE_API_TIMEOUT = 30 # Timeout untuk API Webshare (naikkan dari 10)
+WEBSHARE_API_TIMEOUT = 30 # Timeout untuk API Webshare
 
 # --- Variabel Global untuk Token GitHub ---
 GITHUB_TEST_TOKEN = None
@@ -95,7 +96,6 @@ def get_current_public_ip():
     """Mengambil IP publik saat ini dari layanan eksternal."""
     ui.console.print("1. Mengambil IP publik saat ini...")
     try:
-        # === PERUBAHAN 2: Terapkan timeout ===
         response = requests.get(IP_CHECK_SERVICE_URL, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
         new_ip = response.json()["ip"]
@@ -106,10 +106,13 @@ def get_current_public_ip():
         return None
 
 def get_target_plan_id(session: requests.Session):
-    """Auto-discover Plan ID. Hanya mengembalikan jika TEPAT 1 plan aktif."""
+    """
+    Auto-discover Plan ID. 
+    Mengembalikan ID jika TEPAT 1 plan aktif (paid plan) ditemukan.
+    Mengembalikan None jika tidak ada plan aktif (kasus free plan).
+    """
     ui.console.print("2. Auto-discover Plan ID...")
     try:
-        # === PERUBAHAN 3: Terapkan timeout ===
         response = session.get(WEBSHARE_SUB_URL, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
         
@@ -118,39 +121,28 @@ def get_target_plan_id(session: requests.Session):
         
         active_plans = [p for p in plans if p.get('status', '').lower() == 'active']
         
-        # === PERUBAHAN 4: Logika debugging ditambah di sini ===
         if len(active_plans) == 1:
             plan = active_plans[0]
             plan_id = str(plan.get('id'))
             plan_name = plan.get('plan', {}).get('name', 'N/A')
-            ui.console.print(f"   -> [green]Sukses: Ditemukan 1 plan aktif: '{plan_name}' (ID: {plan_id})[/green]")
+            ui.console.print(f"   -> [green]Sukses: Ditemukan 1 plan (paid) aktif: '{plan_name}' (ID: {plan_id})[/green]")
             return plan_id
         
         elif len(active_plans) == 0:
-            ui.console.print("   -> [bold red]ERROR: Tidak ada subscription plan 'active' ditemukan.[/bold red]")
-            # --- TAMBAHAN DEBUGGING ---
-            if len(plans) > 0:
-                ui.console.print("      [yellow]Info: Plan yang ditemukan (tapi tidak aktif):[/yellow]")
-                for p in plans:
-                    plan_name = p.get('plan', {}).get('name', 'N/A')
-                    plan_status = p.get('status', 'N/A')
-                    ui.console.print(f"      - '{plan_name}' (Status: [bold yellow]{plan_status}[/bold yellow])")
-            else:
-                ui.console.print("      [yellow]Info: Akun ini tidak memiliki plan subscription sama sekali.[/yellow]")
-            # --- AKHIR TAMBAHAN ---
-            return None
+            # --- PERUBAHAN B: Logika ini diubah ---
+            ui.console.print("   -> [yellow]INFO: Tidak ada 'paid plan' aktif ditemukan (API subscription kosong).[/yellow]")
+            ui.console.print("   -> [cyan]Asumsi ini adalah Free Plan. Mencoba lanjut tanpa Plan ID...[/cyan]")
+            return None # <-- KEMBALIKAN None, BUKAN ERROR
+            # --- AKHIR PERUBAHAN B ---
             
         else:
             ui.console.print(f"   -> [bold red]ERROR: Ditemukan {len(active_plans)} plan aktif. Ambiguitas.[/bold red]")
-            # --- TAMBAHAN DEBUGGING ---
             ui.console.print("      [yellow]Info: Plan aktif yang ditemukan:[/yellow]")
             for p in active_plans:
                 plan_name = p.get('plan', {}).get('name', 'N/A')
-                plan_id = str(p.get('id'))
-                ui.console.print(f"      - '{plan_name}' (ID: {plan_id})")
-            # --- AKHIR TAMBAHAN ---
+                plan_id_str = str(p.get('id'))
+                ui.console.print(f"      - '{plan_name}' (ID: {plan_id_str})")
             return None
-        # === AKHIR PERUBAHAN 4 ===
 
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
@@ -162,12 +154,17 @@ def get_target_plan_id(session: requests.Session):
         ui.console.print(f"   -> [bold red]ERROR: Gagal koneksi ke Webshare: {e}[/bold red]")
         return None
 
-def get_authorized_ips(session: requests.Session, plan_id: str):
+def get_authorized_ips(session: requests.Session, plan_id: str | None):
     """Mengambil semua IP yang sudah terotorisasi di Webshare."""
     ui.console.print("3. Mengambil IP terotorisasi yang ada...")
-    params = {"plan_id": plan_id}
+    
+    # --- PERUBAHAN C: Buat params opsional ---
+    params = {}
+    if plan_id:
+        params["plan_id"] = plan_id
+    # --- AKHIR PERUBAHAN C ---
+
     try:
-        # === PERUBAHAN 5: Terapkan timeout ===
         response = session.get(WEBSHARE_AUTH_URL, params=params, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
         results = response.json().get("results", [])
@@ -182,13 +179,18 @@ def get_authorized_ips(session: requests.Session, plan_id: str):
         ui.console.print(f"   -> [bold red]ERROR: Gagal mengambil IP lama: {e}[/bold red]")
         return []
 
-def remove_ip(session: requests.Session, ip: str, plan_id: str):
+def remove_ip(session: requests.Session, ip: str, plan_id: str | None):
     """Menghapus satu IP dari otorisasi Webshare."""
     ui.console.print(f"   -> Menghapus IP lama: {ip}")
-    params = {"plan_id": plan_id}
+    
+    # --- PERUBAHAN D: Buat params opsional ---
+    params = {}
+    if plan_id:
+        params["plan_id"] = plan_id
+    # --- AKHIR PERUBAHAN D ---
+    
     payload = {"ip_address": ip} 
     try:
-        # === PERUBAHAN 6: Terapkan timeout ===
         response = session.delete(WEBSHARE_AUTH_URL, json=payload, params=params, timeout=WEBSHARE_API_TIMEOUT)
         if response.status_code == 204:
             ui.console.print(f"   -> [green]Sukses hapus: {ip}[/green]")
@@ -197,13 +199,18 @@ def remove_ip(session: requests.Session, ip: str, plan_id: str):
     except requests.RequestException as e:
         ui.console.print(f"   -> [bold red]ERROR: Gagal hapus {ip}: {e.response.text}[/bold red]")
 
-def add_ip(session: requests.Session, ip: str, plan_id: str):
+def add_ip(session: requests.Session, ip: str, plan_id: str | None):
     """Menambahkan satu IP ke otorisasi Webshare."""
     ui.console.print(f"   -> Menambahkan IP baru: {ip}")
-    params = {"plan_id": plan_id}
+    
+    # --- PERUBAHAN E: Buat params opsional ---
+    params = {}
+    if plan_id:
+        params["plan_id"] = plan_id
+    # --- AKHIR PERUBAHAN E ---
+    
     payload = {"ip_address": ip}
     try:
-        # === PERUBAHAN 7: Terapkan timeout ===
         response = session.post(WEBSHARE_AUTH_URL, json=payload, params=params, timeout=WEBSHARE_API_TIMEOUT)
         if response.status_code == 201:
             ui.console.print(f"   -> [green]Sukses tambah: {ip}[/green]")
@@ -217,7 +224,6 @@ def run_webshare_ip_sync():
     ui.print_header()
     ui.console.print("[bold cyan]--- Sinkronisasi IP Otorisasi Webshare ---[/bold cyan]")
     
-    # Path ../config/apikeys.txt digunakan di sini
     api_keys = load_webshare_apikeys(WEBSHARE_APIKEYS_FILE)
     if not api_keys:
         ui.console.print(f"[bold red]File '{WEBSHARE_APIKEYS_FILE}' kosong atau tidak ditemukan.[/bold red]")
@@ -241,13 +247,14 @@ def run_webshare_ip_sync():
             })
             
             try:
-                plan_id = get_target_plan_id(session)
-                
-                if not plan_id:
-                    ui.console.print("   -> [yellow]Gagal menemukan plan ID. Akun dilewati.[/yellow]")
-                    continue
+                # plan_id bisa jadi None jika ini free plan, dan itu OK
+                plan_id = get_target_plan_id(session) 
 
-                existing_ips = get_authorized_ips(session, plan_id)
+                # --- PERUBAHAN F: Hapus cek 'if not plan_id' ---
+                # Cek 'if not plan_id' dihapus agar skrip tetap jalan
+                # --- AKHIR PERUBAHAN F ---
+
+                existing_ips = get_authorized_ips(session, plan_id) # Kirim None jika plan_id=None
 
                 ui.console.print("\n4. Memeriksa IP lama untuk dihapus...")
                 ips_to_delete = [ip for ip in existing_ips if ip != new_ip]
@@ -255,11 +262,11 @@ def run_webshare_ip_sync():
                     ui.console.print("   -> Tidak ada IP lama yang perlu dihapus.")
                 else:
                     for ip in ips_to_delete:
-                        remove_ip(session, ip, plan_id)
+                        remove_ip(session, ip, plan_id) # Kirim None jika plan_id=None
 
                 ui.console.print("\n5. Memeriksa IP baru untuk ditambahkan...")
                 if new_ip not in existing_ips:
-                    add_ip(session, new_ip, plan_id)
+                    add_ip(session, new_ip, plan_id) # Kirim None jika plan_id=None
                 else:
                     ui.console.print(f"   -> IP baru ({new_ip}) sudah terotorisasi.")
             
@@ -270,14 +277,19 @@ def run_webshare_ip_sync():
 
 # --- LOGIKA BARU: WEBSHARE PROXY DOWNLOAD (MENU 2) ---
 
-def get_webshare_download_url(session: requests.Session, plan_id: str):
+def get_webshare_download_url(session: requests.Session, plan_id: str | None):
     """
     Mengambil username dan download token untuk membangun URL download proxy.
     """
     ui.console.print("   -> Memanggil 'proxy/config/' untuk URL download...")
-    params = {"plan_id": plan_id}
+    
+    # --- PERUBAHAN G: Buat params opsional ---
+    params = {}
+    if plan_id:
+        params["plan_id"] = plan_id
+    # --- AKHIR PERUBAHAN G ---
+    
     try:
-        # === PERUBAHAN 8: Terapkan timeout ===
         response = session.get(WEBSHARE_CONFIG_URL, params=params, timeout=WEBSHARE_API_TIMEOUT)
         response.raise_for_status()
         
@@ -289,11 +301,22 @@ def get_webshare_download_url(session: requests.Session, plan_id: str):
             ui.console.print("   -> [bold red]ERROR: 'username' atau 'proxy_list_download_token' tidak ditemukan di response.[/bold red]")
             return None
 
-        download_url = WEBSHARE_DOWNLOAD_URL_FORMAT.format(
-            token=token,
-            username=username,
-            plan_id=plan_id
-        )
+        # --- PERUBAHAN H: Logika URL dinamis ---
+        if plan_id:
+            # Ini untuk Paid Plan
+            download_url = WEBSHARE_DOWNLOAD_URL_FORMAT.format(
+                token=token,
+                username=username,
+                plan_id=plan_id
+            )
+        else:
+            # Ini untuk Free Plan (tanpa plan_id)
+            download_url = WEBSHARE_DOWNLOAD_URL_BASE.format(
+                token=token,
+                username=username
+            )
+        # --- AKHIR PERUBAHAN H ---
+
         ui.console.print(f"   -> [green]Sukses generate URL download.[/green]")
         return download_url
 
@@ -341,14 +364,20 @@ def download_proxies_from_api():
         with requests.Session() as session:
             session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
             try:
+                # plan_id bisa jadi None jika ini free plan, dan itu OK
                 plan_id = get_target_plan_id(session)
-                if not plan_id:
-                    ui.console.print("   -> [yellow]Gagal menemukan plan ID. Akun dilewati.[/yellow]")
-                    continue
                 
-                download_url = get_webshare_download_url(session, plan_id)
+                # --- PERUBAHAN I: Hapus cek 'if not plan_id' ---
+                # Cek 'if not plan_id' dihapus
+                # --- AKHIR PERUBAHAN I ---
+                
+                download_url = get_webshare_download_url(session, plan_id) # Kirim None jika plan_id=None
                 if download_url:
                     all_download_urls.append(download_url)
+                else:
+                    # Ini terjadi jika get_webshare_download_url gagal (misal: config error)
+                    ui.console.print("   -> [yellow]Gagal generate URL download untuk akun ini. Dilewati.[/yellow]")
+
             except Exception as e:
                 ui.console.print(f"   -> [bold red]!!! FATAL ERROR untuk akun ini: {e}[/bold red]")
 
