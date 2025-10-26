@@ -1,15 +1,12 @@
 print("DEBUG: Starting ui.py execution", flush=True)
 import time
 import requests
-import re # <-- Import re
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.align import Align
 from rich.console import Console
 from rich.panel import Panel
-# === PERUBAHAN UI v1 ===
-# Hapus Prompt, ganti dengan SelectionPrompt
-from rich.prompt import Prompt, SelectionPrompt 
-# === AKHIR PERUBAHAN UI v1 ===
+from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 from rich.progress import (
@@ -34,41 +31,22 @@ def print_header():
     console.print(Panel(header_table, border_style="green"))
     console.print()
 
-# === PERUBAHAN UI v2 ===
 def display_main_menu():
-    """Menampilkan menu utama interaktif dengan SelectionPrompt."""
-    
-    # Definisikan pilihan menu sebagai list of strings
-    menu_options = [
-        "[1] Sinkronisasi IP Otorisasi Webshare",
-        "[2] Unduh Proksi dari Daftar API",
-        "[3] Konversi 'proxylist.txt'",
-        "[4] Jalankan Tes Akurat & Distribusi",
-        "[5] Kelola Path Target",
-        "[6] Keluar",
-    ]
-    
+    """Menampilkan menu utama interaktif."""
     console.print(Align.center(Text("--- MAIN MENU ---", style="bold cyan")))
-
-    # Gunakan SelectionPrompt
-    selected_option_str = SelectionPrompt.ask(
-        "Pilih opsi (gunakan panah atas/bawah, Enter untuk memilih)",
-        choices=menu_options,
-        show_choices=True, # Tampilkan pilihan saat prompt
-        wrap_around=True  # Aktifkan wrap-around
-    )
+    console.print("[1] Sinkronisasi IP Otorisasi Webshare")
+    console.print("[2] Unduh Proksi dari Daftar API")
+    console.print("[3] Konversi 'proxylist.txt'")
+    console.print("[4] Jalankan Tes Akurat & Distribusi")
+    console.print("[5] Kelola Path Target")
+    console.print("[6] Keluar")
     
-    # Ekstrak nomor pilihan dari string yang dipilih
-    # Contoh: "[1] Sinkronisasi..." -> "1"
-    match = re.match(r"\[(\d+)\]", selected_option_str)
-    if match:
-        return match.group(1)
-    else:
-        # Fallback jika format tidak terduga (seharusnya tidak terjadi)
-        console.print("[bold red]Error: Pilihan tidak valid.[/bold red]")
-        return "6" # Default ke keluar jika error
-# === AKHIR PERUBAHAN UI v2 ===
-
+    choice = Prompt.ask(
+        "\n[bold yellow]Pilih opsi[/bold yellow]",
+        choices=["1", "2", "3", "4", "5", "6"],
+        default="6"
+    )
+    return choice
 
 def fetch_from_api(url: str, api_key: str | None):
     """Fungsi pembantu untuk mengunduh dari satu URL API dengan mekanisme backoff."""
