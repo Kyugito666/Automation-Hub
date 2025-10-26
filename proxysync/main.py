@@ -1,3 +1,4 @@
+print("DEBUG: Starting main.py execution", flush=True)
 import os
 import random
 import shutil
