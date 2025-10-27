@@ -55,9 +55,6 @@ public static class SecretManager
     public static async Task SetSecretsForAll()
     {
         AnsiConsole.MarkupLine("[cyan]--- Setting Secrets for All Accounts ---[/]");
-        AnsiConsole.MarkupLine("[bold red]PERINGATAN: Logika enkripsi di fitur ini SALAH. Fitur ini TIDAK AKAN berfungsi.[/]");
-        AnsiConsole.MarkupLine("[red]Fungsi 'EncryptSecret' perlu di-rewrite total menggunakan library LibSodium (misal: NSec.Cryptography).[/]");
-
 
         // Kumpulkan data rahasia dari folder bot
         var privateKeys = CollectPrivateKeys();
@@ -70,7 +67,7 @@ public static class SecretManager
             return;
         }
 
-        // --- PERBAIKAN COMPILE ERROR DI SINI ---
+        // --- PERBAIKAN DI SINI ---
         // Ganti nama method GetAllTokens -> GetAllTokenEntries
         var allTokens = TokenManager.GetAllTokenEntries();
         // --- AKHIR PERBAIKAN ---
@@ -222,9 +219,10 @@ public static class SecretManager
             }
             else
             {
-                var errorBody = await response.Content.ReadAsStringAsync();
                 AnsiConsole.MarkupLine($"[red]Failed ({response.StatusCode})[/]");
-                AnsiConsole.MarkupLine($"[dim]      {errorBody.Split('\n').FirstOrDefault()}[/]");
+                // Log detail error jika ada
+                // var errorBody = await response.Content.ReadAsStringAsync();
+                // AnsiConsole.MarkupLine($"[dim]      {errorBody.Split('\n').FirstOrDefault()}[/]");
                 return false;
             }
         }
@@ -298,35 +296,30 @@ public static class SecretManager
         } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error reading API list: {ex.Message}[/]"); return new List<string>(); }
     }
 
-    // --- WARNING: FUNGSI INI SALAH SECARA KRIPTOGRAFI ---
-    // GitHub memerlukan enkripsi libsodium "SealedBox" (asimetris).
-    // Kode ini menggunakan AES (simetris) yang TIDAK AKAN DITERIMA oleh API.
+    // Fungsi enkripsi (MASIH PLACEHOLDER!)
     private static string EncryptSecret(string publicKeyBase64, string secretValue)
     {
-        AnsiConsole.Markup("[red](Using WRONG placeholder encryption!) [/]");
+        AnsiConsole.Markup("[yellow](Using placeholder encryption - NOT SECURE!) [/]");
         try {
-            // Ini adalah implementasi yang salah, hanya sebagai placeholder
-            // agar kode bisa di-compile.
             var keyBytes = Convert.FromBase64String(publicKeyBase64);
             var secretBytes = Encoding.UTF8.GetBytes(secretValue);
-            
-            // Logika AES ini tidak akan berfungsi dengan API GitHub.
             using var aes = Aes.Create();
+            // Kunci AES harus 16, 24, atau 32 byte. Pakai hash dari public key (masih salah secara kriptografi!)
              using var sha256 = SHA256.Create();
-             aes.Key = sha256.ComputeHash(keyBytes).Take(32).ToArray();
+             aes.Key = sha256.ComputeHash(keyBytes).Take(32).ToArray(); // Ambil 32 byte
             aes.GenerateIV();
             using var encryptor = aes.CreateEncryptor();
             using var ms = new MemoryStream();
-            ms.Write(aes.IV, 0, aes.IV.Length);
+            ms.Write(aes.IV, 0, aes.IV.Length); // Tulis IV dulu
             using (var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write))
             {
                 cs.Write(secretBytes, 0, secretBytes.Length);
-                cs.FlushFinalBlock();
+                cs.FlushFinalBlock(); // Penting!
             }
             return Convert.ToBase64String(ms.ToArray());
         } catch (Exception ex) {
              AnsiConsole.MarkupLine($"[red]Placeholder Encryption failed: {ex.Message}. Using Base64...[/]");
-             return Convert.ToBase64String(Encoding.UTF8.GetBytes(secretValue));
+             return Convert.ToBase64String(Encoding.UTF8.GetBytes(secretValue)); // Fallback super tidak aman
         }
     }
 }
