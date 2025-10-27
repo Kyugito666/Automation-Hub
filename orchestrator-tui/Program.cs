@@ -44,7 +44,7 @@ internal static class Program
             AnsiConsole.WriteException(ex);
         }
         finally { 
-            AnsiConsole.MarkupLine("\n[dim]Orchestrator shutting down.[/dim]"); 
+            AnsiConsole.MarkupLine("\n[dim]Orchestrator shutting down.[/]"); 
         }
     }
 
@@ -56,28 +56,23 @@ internal static class Program
             AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
             AnsiConsole.MarkupLine("[dim]Codespace Orchestrator - Local Control, Remote Execution[/]");
 
-            AnsiConsole.MarkupLine("\n[bold white]MAIN MENU[/]");
-            AnsiConsole.MarkupLine("[green]1.[/] Start/Manage Codespace Runner (Continuous Loop)");
-            AnsiConsole.MarkupLine("[cyan]2.[/] Token & Collaborator Management");
-            AnsiConsole.MarkupLine("[yellow]3.[/] Proxy Management (Run ProxySync)");
-            AnsiConsole.MarkupLine("[grey]4.[/] Test Local Bot");
-            AnsiConsole.MarkupLine("5. Refresh All Configs");
-            AnsiConsole.MarkupLine("0. Exit");
-            
             var selection = AnsiConsole.Prompt(
-                new TextPrompt<string>("\n[bold]Pilih menu (0-5):[/]")
-                    .ValidationErrorMessage("[red]Masukkan angka 0-5[/]")
-                    .Validate(choice => 
-                    {
-                        return choice switch
-                        {
-                            "0" or "1" or "2" or "3" or "4" or "5" => ValidationResult.Success(),
-                            _ => ValidationResult.Error("[red]Invalid, pilih 0-5[/]")
-                        };
+                new SelectionPrompt<string>()
+                    .Title("\n[bold white]MAIN MENU[/]")
+                    .PageSize(10)
+                    .AddChoices(new[] {
+                        "1. Start/Manage Codespace Runner (Continuous Loop)",
+                        "2. Token & Collaborator Management",
+                        "3. Proxy Management (Run ProxySync)",
+                        "4. Test Local Bot",
+                        "5. Refresh All Configs",
+                        "0. Exit"
                     }));
 
+            var choice = selection[0].ToString();
+            
             try {
-                switch (selection) {
+                switch (choice) {
                     case "1": 
                         await RunOrchestratorLoopAsync(cancellationToken); 
                         break;
@@ -103,7 +98,7 @@ internal static class Program
                 Pause("Press Enter to continue...", CancellationToken.None); 
             }
             catch (Exception ex) { 
-                AnsiConsole.MarkupLine($"[red]Error: {ex.Message}[/]"); 
+                AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); 
                 AnsiConsole.WriteException(ex); 
                 Pause("Press Enter to continue...", CancellationToken.None); 
             }
@@ -115,21 +110,19 @@ internal static class Program
              AnsiConsole.Clear(); 
              AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
              
-             AnsiConsole.MarkupLine("\n[bold white]TOKEN & COLLABORATOR SETUP[/]");
-             AnsiConsole.MarkupLine("1. Validate Tokens & Get Usernames");
-             AnsiConsole.MarkupLine("2. Invite Collaborators");
-             AnsiConsole.MarkupLine("3. Accept Invitations");
-             AnsiConsole.MarkupLine("4. Show Token/Proxy Status");
-             AnsiConsole.MarkupLine("0. Back to Main Menu");
-             
-             var sel = AnsiConsole.Prompt(
-                 new TextPrompt<string>("\n[bold]Pilih (0-4):[/]")
-                     .ValidationErrorMessage("[red]Masukkan 0-4[/]")
-                     .Validate(c => c switch {
-                         "0" or "1" or "2" or "3" or "4" => ValidationResult.Success(),
-                         _ => ValidationResult.Error("[red]Invalid[/]")
+             var selection = AnsiConsole.Prompt(
+                 new SelectionPrompt<string>()
+                     .Title("\n[bold white]TOKEN & COLLABORATOR SETUP[/]")
+                     .PageSize(10)
+                     .AddChoices(new[] {
+                         "1. Validate Tokens & Get Usernames",
+                         "2. Invite Collaborators",
+                         "3. Accept Invitations",
+                         "4. Show Token/Proxy Status",
+                         "0. Back to Main Menu"
                      }));
              
+             var sel = selection[0].ToString();
              if (sel == "0") return;
 
              switch (sel)
@@ -156,18 +149,16 @@ internal static class Program
              AnsiConsole.Clear(); 
              AnsiConsole.Write(new FigletText("Proxy").Centered().Color(Color.Green));
              
-             AnsiConsole.MarkupLine("\n[bold white]LOCAL PROXY MANAGEMENT[/]");
-             AnsiConsole.MarkupLine("1. Run ProxySync (Download, Test, Generate proxy.txt)");
-             AnsiConsole.MarkupLine("0. Back to Main Menu");
-             
-             var sel = AnsiConsole.Prompt(
-                 new TextPrompt<string>("\n[bold]Pilih (0-1):[/]")
-                     .ValidationErrorMessage("[red]Masukkan 0 atau 1[/]")
-                     .Validate(c => c switch {
-                         "0" or "1" => ValidationResult.Success(),
-                         _ => ValidationResult.Error("[red]Invalid[/]")
+             var selection = AnsiConsole.Prompt(
+                 new SelectionPrompt<string>()
+                     .Title("\n[bold white]LOCAL PROXY MANAGEMENT[/]")
+                     .PageSize(10)
+                     .AddChoices(new[] {
+                         "1. Run ProxySync (Download, Test, Generate proxy.txt)",
+                         "0. Back to Main Menu"
                      }));
              
+             var sel = selection[0].ToString();
              if (sel == "0") return;
              
              if (sel == "1") await ProxyManager.DeployProxies(cancellationToken);
@@ -181,19 +172,17 @@ internal static class Program
             AnsiConsole.Clear(); 
             AnsiConsole.Write(new FigletText("Debug").Centered().Color(Color.Grey));
             
-            AnsiConsole.MarkupLine("\n[bold white]DEBUG & LOCAL TESTING[/]");
-            AnsiConsole.MarkupLine("1. Test Local Bot (Run Interactively)");
-            AnsiConsole.MarkupLine("2. Update All Bots Locally");
-            AnsiConsole.MarkupLine("0. Back to Main Menu");
-            
-            var sel = AnsiConsole.Prompt(
-                new TextPrompt<string>("\n[bold]Pilih (0-2):[/]")
-                    .ValidationErrorMessage("[red]Masukkan 0-2[/]")
-                    .Validate(c => c switch {
-                        "0" or "1" or "2" => ValidationResult.Success(),
-                        _ => ValidationResult.Error("[red]Invalid[/]")
+            var selection = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title("\n[bold white]DEBUG & LOCAL TESTING[/]")
+                    .PageSize(10)
+                    .AddChoices(new[] {
+                        "1. Test Local Bot (Run Interactively)",
+                        "2. Update All Bots Locally",
+                        "0. Back to Main Menu"
                     }));
             
+            var sel = selection[0].ToString();
             if (sel == "0") return;
             
             switch (sel) {
@@ -237,13 +226,13 @@ internal static class Program
         
         if (selectedBot == backOption) return;
         
-        AnsiConsole.MarkupLine($"\n[cyan]Preparing {selectedBot.Name}...[/]");
+        AnsiConsole.MarkupLine($"\n[cyan]Preparing {selectedBot.Name.EscapeMarkup()}...[/]");
         
         string projectRoot = GetProjectRoot(); 
         string botPath = Path.Combine(projectRoot, selectedBot.Path);
         
         if (!Directory.Exists(botPath)) { 
-            AnsiConsole.MarkupLine($"[red]Path not found: {botPath}[/]");
+            AnsiConsole.MarkupLine($"[red]Path not found: {botPath.EscapeMarkup()}[/]");
             AnsiConsole.MarkupLine("[yellow]Tip: Run 'Update All Bots Locally' first.[/]");
             Pause("Press Enter to continue...", cancellationToken); 
             return; 
@@ -282,7 +271,7 @@ internal static class Program
             AnsiConsole.MarkupLine("[green]   ✓ Local dependencies OK.[/]");
         } 
         catch (Exception ex) { 
-            AnsiConsole.MarkupLine($"[red]   ✗ Dependency installation failed: {ex.Message}[/]"); 
+            AnsiConsole.MarkupLine($"[red]   ✗ Dependency installation failed: {ex.Message.EscapeMarkup()}[/]"); 
             Pause("Press Enter to continue...", cancellationToken); 
             return; 
         }
@@ -290,13 +279,13 @@ internal static class Program
         var (executor, args) = GetRunCommandLocal(botPath, selectedBot.Type);
         
         if (string.IsNullOrEmpty(executor)) { 
-            AnsiConsole.MarkupLine($"[red]   ✗ No valid entry point found for {selectedBot.Name}[/]"); 
+            AnsiConsole.MarkupLine($"[red]   ✗ No valid entry point found for {selectedBot.Name.EscapeMarkup()}[/]"); 
             Pause("Press Enter to continue...", cancellationToken); 
             return; 
         }
         
-        AnsiConsole.MarkupLine($"\n[cyan]Running {selectedBot.Name}...[/]");
-        AnsiConsole.MarkupLine($"[dim]   CMD: {executor} {args}[/]");
+        AnsiConsole.MarkupLine($"\n[cyan]Running {selectedBot.Name.EscapeMarkup()}...[/]");
+        AnsiConsole.MarkupLine($"[dim]   CMD: {executor.EscapeMarkup()} {args.EscapeMarkup()}[/]");
         AnsiConsole.MarkupLine("[yellow]Press Ctrl+C here to stop the bot and return to menu.[/]");
         
         try { 
@@ -306,7 +295,7 @@ internal static class Program
             AnsiConsole.MarkupLine("\n[yellow]Bot stopped by user.[/]"); 
         } 
         catch (Exception ex) { 
-            AnsiConsole.MarkupLine($"\n[red]Bot crashed: {ex.Message}[/]"); 
+            AnsiConsole.MarkupLine($"\n[red]Bot crashed: {ex.Message.EscapeMarkup()}[/]"); 
             Pause("Press Enter to continue...", CancellationToken.None); 
         }
     }
@@ -372,7 +361,7 @@ internal static class Program
         }
         
         var fallbackPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-        AnsiConsole.MarkupLine($"[yellow]Warning: Project root not detected. Using fallback: {fallbackPath}[/]");
+        AnsiConsole.MarkupLine($"[yellow]Warning: Project root not detected. Using fallback: {fallbackPath.EscapeMarkup()}[/]");
         return fallbackPath;
     }
 
@@ -394,7 +383,6 @@ internal static class Program
             
             try 
             { 
-                // Step 1: Check billing
                 Console.WriteLine("Checking billing..."); 
                 var billingInfo = await BillingManager.GetBillingInfo(currentToken); 
                 BillingManager.DisplayBilling(billingInfo, currentToken.Username ?? "unknown");
@@ -416,7 +404,6 @@ internal static class Program
                     continue; 
                 }
                 
-                // Step 2: Ensure codespace exists and is healthy
                 Console.WriteLine("Ensuring codespace..."); 
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken);
                 
@@ -430,7 +417,6 @@ internal static class Program
                     Console.WriteLine($"Active CS: {activeCodespace}");
                     Console.WriteLine("New/Recreated CS detected..."); 
                     
-                    // Step 3: Upload configs (dengan retry)
                     bool uploadSuccess = false;
                     for (int uploadAttempt = 1; uploadAttempt <= 3; uploadAttempt++)
                     {
@@ -442,7 +428,7 @@ internal static class Program
                         }
                         catch (Exception uploadEx)
                         {
-                            AnsiConsole.MarkupLine($"[red]Upload attempt {uploadAttempt}/3 failed: {uploadEx.Message}[/]");
+                            AnsiConsole.MarkupLine($"[red]Upload attempt {uploadAttempt}/3 failed: {uploadEx.Message.EscapeMarkup()}[/]");
                             if (uploadAttempt < 3)
                             {
                                 AnsiConsole.MarkupLine("[yellow]Retrying in 10 seconds...[/]");
@@ -456,7 +442,6 @@ internal static class Program
                         throw new Exception("Failed to upload configs after 3 attempts");
                     }
                     
-                    // Step 4: Trigger startup script (dengan retry)
                     bool startupSuccess = false;
                     for (int startupAttempt = 1; startupAttempt <= 3; startupAttempt++)
                     {
@@ -468,7 +453,7 @@ internal static class Program
                         }
                         catch (Exception startupEx)
                         {
-                            AnsiConsole.MarkupLine($"[red]Startup attempt {startupAttempt}/3 failed: {startupEx.Message}[/]");
+                            AnsiConsole.MarkupLine($"[red]Startup attempt {startupAttempt}/3 failed: {startupEx.Message.EscapeMarkup()}[/]");
                             if (startupAttempt < 3)
                             {
                                 AnsiConsole.MarkupLine("[yellow]Retrying in 15 seconds...[/]");
@@ -491,11 +476,9 @@ internal static class Program
                 
                 consecutiveErrors = 0;
                 
-                // Step 5: Keep-alive sleep
                 Console.WriteLine($"Sleeping for Keep-Alive ({KeepAliveInterval.TotalMinutes} min)..."); 
                 await Task.Delay(KeepAliveInterval, cancellationToken);
                 
-                // Step 6: Keep-alive health check
                 currentState = TokenManager.GetState(); 
                 activeCodespace = currentState.ActiveCodespaceName; 
                 
