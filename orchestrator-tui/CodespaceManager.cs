@@ -13,7 +13,10 @@ public static class CodespaceManager
 
     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
-    private static readonly string MasterProxyFile = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
+    // PERBAIKAN: Gunakan success_proxy.txt (jika ada) sebagai master list
+    private static readonly string MasterProxyFile = File.Exists(Path.Combine(ProjectRoot, "proxysync", "success_proxy.txt"))
+                                                     ? Path.Combine(ProjectRoot, "proxysync", "success_proxy.txt")
+                                                     : Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
 
     private static string GetProjectRoot()
     {
@@ -70,6 +73,7 @@ public static class CodespaceManager
                 AnsiConsole.MarkupLine("[yellow]No existing runner found.[/]");
             }
             
+            // Cleanup codespace lain yang mungkin stuck dengan nama display yang sama
             foreach (var cs in all.Where(cs => cs.Name != existing?.Name && cs.DisplayName == CODESPACE_DISPLAY_NAME))
             {
                 AnsiConsole.MarkupLine($"[yellow]Deleting STUCK codespace: {cs.Name} (State: {cs.State})[/]");
@@ -79,7 +83,8 @@ public static class CodespaceManager
             AnsiConsole.MarkupLine($"[cyan]Creating new '{CODESPACE_DISPLAY_NAME}' ({MACHINE_TYPE})...[/]");
             AnsiConsole.MarkupLine("[dim]This may take several minutes...[/]");
             
-            string args = $"codespace create -r {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
+            // === PERBAIKAN 1: Mengganti -r menjadi -R ===
+            string args = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
             var newName = await ShellHelper.RunGhCommand(token, args, CREATE_TIMEOUT_MS);
             
             if (string.IsNullOrWhiteSpace(newName))
@@ -87,8 +92,12 @@ public static class CodespaceManager
                 throw new Exception("Failed to create codespace (no name returned)");
             }
             
-            AnsiConsole.MarkupLine($"[green]✓ Created: {newName}[/]");
-            return newName;
+            // Hasil 'gh create' seringkali mengandung output lain, kita ambil nama codespace-nya saja
+            var newNameClean = newName.Split('\n').LastOrDefault(line => !line.StartsWith("✓"))?.Trim();
+            if (string.IsNullOrWhiteSpace(newNameClean)) newNameClean = newName.Trim(); // Fallback
+
+            AnsiConsole.MarkupLine($"[green]✓ Created: {newNameClean}[/]");
+            return newNameClean;
         }
         catch (Exception ex)
         {
@@ -106,10 +115,28 @@ public static class CodespaceManager
         AnsiConsole.MarkupLine("\n[cyan]Uploading configs to codespace...[/]");
         string remoteDir = $"/workspaces/{token.Repo}/config";
 
+        // Memastikan folder config remote ada
+        try
+        {
+            await ShellHelper.RunGhCommand(token, $"codespace ssh -c {codespaceName} -- \"mkdir -p {remoteDir}\"");
+        }
+        catch (Exception e)
+        {
+            AnsiConsole.MarkupLine($"[red]Warning: Gagal membuat folder config remote: {e.Message}. Upload mungkin gagal.[/]");
+        }
+
         await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "bots_config.json"), $"{remoteDir}/bots_config.json");
         await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "apilist.txt"), $"{remoteDir}/apilist.txt");
         await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "paths.txt"), $"{remoteDir}/paths.txt");
-        await UploadFile(token, codespaceName, MasterProxyFile, $"{remoteDir}/proxy.txt");
+        
+        if (File.Exists(MasterProxyFile))
+        {
+            await UploadFile(token, codespaceName, MasterProxyFile, $"{remoteDir}/proxy.txt");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[yellow]  SKIP: Master proxy file not found at {MasterProxyFile}[/]");
+        }
     }
 
     private static async Task UploadFile(TokenEntry token, string csName, string localPath, string remotePath)
@@ -120,7 +147,11 @@ public static class CodespaceManager
             return;
         }
         AnsiConsole.Markup($"[dim]  Uploading {Path.GetFileName(localPath)}... [/]");
-        string args = $"codespace cp \"{localPath}\" \"{csName}:{remotePath}\"";
+
+        // === PERBAIKAN 2: Menggunakan sintaks 'gh cp <local> <remote> -c <name>' ===
+        // Sintaks lama: $"codespace cp \"{localPath}\" \"{csName}:{remotePath}\""
+        string args = $"codespace cp \"{localPath}\" \"{remotePath}\" -c {csName}";
+        
         await ShellHelper.RunGhCommand(token, args);
         AnsiConsole.MarkupLine("[green]Done[/]");
     }
@@ -130,6 +161,17 @@ public static class CodespaceManager
         AnsiConsole.MarkupLine("\n[cyan]Triggering remote startup script (auto-start.sh)...[/]");
         string remoteScript = $"/workspaces/{token.Repo}/auto-start.sh";
         
+        // Memastikan skripnya executable
+        try
+        {
+            await ShellHelper.RunGhCommand(token, $"codespace ssh -c {codespaceName} -- \"chmod +x {remoteScript}\"");
+        }
+        catch (Exception e)
+        {
+            AnsiConsole.MarkupLine($"[red]Warning: Gagal 'chmod +x' auto-start.sh: {e.Message}[/]");
+        }
+        
+        // Menjalankan skrip
         string cmd = $"\"nohup bash {remoteScript} > /tmp/startup.log 2>&1 &\"";
         string args = $"codespace ssh -c {codespaceName} -- {cmd}";
 
@@ -163,7 +205,7 @@ public static class CodespaceManager
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]  SSH check failed: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]  SSH check failed: {ex.Message.Split('\n').FirstOrDefault()}[/]");
             return false;
         }
     }
@@ -171,13 +213,25 @@ public static class CodespaceManager
     private static async Task<(CodespaceInfo? existing, List<CodespaceInfo> all)> FindExistingCodespace(TokenEntry token)
     {
         string args = "codespace list --json name,displayName,state,machineName";
-        string jsonResult = await ShellHelper.RunGhCommand(token, args);
-
-        var allCodespaces = JsonSerializer.Deserialize<List<CodespaceInfo>>(jsonResult) ?? new List<CodespaceInfo>();
-
-        var existing = allCodespaces.FirstOrDefault(cs => cs.DisplayName == CODESPACE_DISPLAY_NAME);
-        
-        return (existing, allCodespaces);
+        string jsonResult = "";
+        try
+        {
+            jsonResult = await ShellHelper.RunGhCommand(token, args);
+            if (string.IsNullOrWhiteSpace(jsonResult))
+            {
+                return (null, new List<CodespaceInfo>()); // Handle jika tidak ada codespace sama sekali
+            }
+            
+            var allCodespaces = JsonSerializer.Deserialize<List<CodespaceInfo>>(jsonResult) ?? new List<CodespaceInfo>();
+            var existing = allCodespaces.FirstOrDefault(cs => cs.DisplayName == CODESPACE_DISPLAY_NAME);
+            return (existing, allCodespaces);
+        }
+        catch (Exception ex)
+        {
+             AnsiConsole.MarkupLine($"[red]Error listing codespaces: {ex.Message}[/]");
+             AnsiConsole.MarkupLine($"[dim]JSON Result: {jsonResult}[/]");
+             return (null, new List<CodespaceInfo>());
+        }
     }
     
     private class CodespaceInfo
