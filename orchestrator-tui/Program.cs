@@ -60,6 +60,7 @@ internal static class Program
                 new SelectionPrompt<string>()
                     .Title("\n[bold white]MAIN MENU[/]")
                     .PageSize(10)
+                    .WrapAround(true)
                     .AddChoices(new[] {
                         "1. Start/Manage Codespace Runner (Continuous Loop)",
                         "2. Token & Collaborator Management",
