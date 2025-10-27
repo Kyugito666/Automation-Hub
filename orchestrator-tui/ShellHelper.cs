@@ -198,7 +198,14 @@ public static class ShellHelper
     {
         var startInfo = new ProcessStartInfo
         {
-            UseShellExecute = true,
+            // === PERBAIKAN ERROR TEST LOCAL BOT ===
+            // 'UseShellExecute = true' tidak reliable saat dikombinasi
+            // dengan 'FileName = "cmd.exe"'.
+            // Diubah ke 'false' agar konsisten dengan 'RunInteractive'
+            // dan memastikan proses mewarisi konsol TUI dengan benar.
+            UseShellExecute = false,
+            // === AKHIR PERBAIKAN ===
+            
             CreateNoWindow = false,
             RedirectStandardOutput = false,
             RedirectStandardError = false,
