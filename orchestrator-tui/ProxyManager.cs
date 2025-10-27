@@ -8,6 +8,8 @@ public static class ProxyManager
     private static readonly string ProxySyncDir = Path.Combine(ProjectRoot, "proxysync");
     private static readonly string ProxySyncScript = Path.Combine(ProxySyncDir, "main.py");
     private static readonly string ProxySyncReqs = Path.Combine(ProxySyncDir, "requirements.txt");
+    private static readonly string VenvDir = Path.Combine(ProxySyncDir, ".venv");
+
 
     private static string GetProjectRoot()
     {
@@ -28,6 +30,20 @@ public static class ProxyManager
         
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     }
+    
+    // Helper untuk menemukan executable di dalam venv
+    private static string GetVenvExecutable(string exeName)
+    {
+        var winPath = Path.Combine(VenvDir, "Scripts", $"{exeName}.exe");
+        if (File.Exists(winPath)) return $"\"{winPath}\"";
+        
+        var linPath = Path.Combine(VenvDir, "bin", exeName);
+        if (File.Exists(linPath)) return $"\"{linPath}\"";
+        
+        // Fallback ke global jika venv tidak ada
+        return exeName;
+    }
+
 
     public static async Task DeployProxies(CancellationToken cancellationToken = default)
     {
@@ -41,26 +57,29 @@ public static class ProxyManager
             return;
         }
 
-        AnsiConsole.MarkupLine("\n[cyan]1. Menginstal dependensi ProxySync (pip)...[/]");
         try
         {
-// === PERBAIKAN IMPORT ERROR ===
-            await ShellHelper.RunCommandAsync("pip", $"install --no-cache-dir --upgrade -r \"{ProxySyncReqs}\"", ProxySyncDir);
-            // === AKHIR PERBAIKAN ===
+            // === PERBAIKAN: Gunakan VENV ===
+            
+            // 1. Buat Venv jika belum ada
+            if (!Directory.Exists(VenvDir))
+            {
+                AnsiConsole.MarkupLine("\n[cyan]1. Membuat virtual environment (venv) untuk ProxySync...[/]");
+                await ShellHelper.RunCommandAsync("python", $"-m venv \"{VenvDir}\"", ProxySyncDir);
+                AnsiConsole.MarkupLine("[green]   ✓ Venv dibuat.[/]");
+            }
+            
+            // 2. Instal dependensi menggunakan pip dari venv
+            AnsiConsole.MarkupLine("\n[cyan]2. Menginstal dependensi ProxySync (pip ke venv)...[/]");
+            string pipCmd = GetVenvExecutable("pip");
+            await ShellHelper.RunCommandAsync(pipCmd, $"install --no-cache-dir --upgrade -r \"{ProxySyncReqs}\"", ProxySyncDir);
             AnsiConsole.MarkupLine("[green]   ✓ Dependensi ProxySync terinstal.[/]");
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]   Gagal menginstal dependensi: {ex.Message}[/]");
-            return;
-        }
 
-        AnsiConsole.MarkupLine("\n[cyan]2. Menjalankan ProxySync...[/]");
-        AnsiConsole.MarkupLine("[dim]   (Anda akan masuk ke UI interaktif ProxySync)[/]");
-
-        try
-        {
-        await ShellHelper.RunInteractive("python", $"\"{ProxySyncScript}\"", ProxySyncDir, null, cancellationToken);
+            // 3. Jalankan skrip menggunakan python dari venv
+            AnsiConsole.MarkupLine("\n[cyan]3. Menjalankan ProxySync...[/]");
+            AnsiConsole.MarkupLine("[dim]   (Anda akan masuk ke UI interaktif ProxySync)[/]");
+            string pythonCmd = GetVenvExecutable("python");
+            await ShellHelper.RunInteractive(pythonCmd, $"\"{ProxySyncScript}\"", ProxySyncDir, null, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -69,6 +88,7 @@ public static class ProxyManager
         catch (Exception ex)
         {
             AnsiConsole.MarkupLine($"[red]   Gagal menjalankan ProxySync: {ex.Message}[/]");
+            AnsiConsole.WriteException(ex);
         }
 
         AnsiConsole.MarkupLine("\n[bold green]✅ Proses ProxySync selesai.[/]");
