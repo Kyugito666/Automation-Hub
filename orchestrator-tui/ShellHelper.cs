@@ -78,15 +78,15 @@ public static class ShellHelper
                 }
                 throw new Exception($"Command timed out after {timeoutMilliseconds}ms");
             }
-            catch (Exception ex) when (retryCount < MAX_RETRY_ON_PROXY_ERROR)
+            catch (Exception) when (retryCount < MAX_RETRY_ON_PROXY_ERROR)
             {
-                lastException = ex;
-                AnsiConsole.MarkupLine($"[yellow]Command failed: {ex.Message}. Retrying... ({retryCount + 1}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
+                lastException = lastException;
+                AnsiConsole.MarkupLine($"[yellow]Command failed. Retrying... ({retryCount + 1}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
                 retryCount++;
                 await Task.Delay(3000);
                 continue;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 throw;
             }
@@ -189,10 +189,6 @@ public static class ShellHelper
         }
     }
 
-    /// <summary>
-    /// НОВАЯ ФУНКЦИЯ: Full interactive mode dengan keyboard input support
-    /// Untuk bot yang memerlukan UI interaction (arrow keys, y/n, 1/2/3, etc.)
-    /// </summary>
     public static async Task RunInteractiveWithFullInput(
         string command, 
         string args, 
@@ -202,7 +198,7 @@ public static class ShellHelper
     {
         var startInfo = new ProcessStartInfo
         {
-            UseShellExecute = false,
+            UseShellExecute = true,
             CreateNoWindow = false,
             RedirectStandardOutput = false,
             RedirectStandardError = false,
@@ -226,7 +222,6 @@ public static class ShellHelper
             }
         }
 
-        // Platform-specific command execution
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             startInfo.FileName = "cmd.exe";
@@ -249,8 +244,17 @@ public static class ShellHelper
             
             process.Start();
             
-            // Register cancellation handler
-            cancellationToken.Register(() =>
+            var processExitedTcs = new TaskCompletionSource<bool>();
+            
+            process.EnableRaisingEvents = true;
+            process.Exited += (sender, args) => processExitedTcs.TrySetResult(true);
+            
+            var cancellationTcs = new TaskCompletionSource<bool>();
+            cancellationToken.Register(() => cancellationTcs.TrySetResult(true));
+            
+            var completedTask = await Task.WhenAny(processExitedTcs.Task, cancellationTcs.Task);
+            
+            if (completedTask == cancellationTcs.Task)
             {
                 try
                 {
@@ -258,13 +262,17 @@ public static class ShellHelper
                     {
                         AnsiConsole.MarkupLine("\n[yellow]Sending termination signal...[/]");
                         process.Kill(true);
+                        await Task.Delay(2000);
                     }
                 }
                 catch { }
-            });
-
-            // Wait for process to complete
-            await process.WaitForExitAsync(cancellationToken);
+                
+                AnsiConsole.MarkupLine("[yellow]═══════════════════════════════════════════════════[/]");
+                AnsiConsole.MarkupLine("[yellow]✓ Bot stopped by user (Ctrl+C)[/]");
+                throw new OperationCanceledException();
+            }
+            
+            await Task.Delay(500);
 
             AnsiConsole.MarkupLine("[yellow]═══════════════════════════════════════════════════[/]");
             
@@ -280,20 +288,24 @@ public static class ShellHelper
             {
                 AnsiConsole.MarkupLine($"[red]✗ Bot exited with errors (Exit Code: {process.ExitCode})[/]");
             }
+            
+            AnsiConsole.MarkupLine("\n[dim]Press Enter to return to menu...[/]");
+            Console.ReadLine();
         }
         catch (OperationCanceledException)
         {
-            AnsiConsole.MarkupLine("\n[yellow]═══════════════════════════════════════════════════[/]");
-            AnsiConsole.MarkupLine("[yellow]✓ Bot stopped by user (Ctrl+C)[/]");
             try 
             { 
                 if (!process.HasExited) 
                 {
                     process.Kill(true);
-                    await Task.Delay(1000); // Give time to cleanup
+                    await Task.Delay(1000);
                 }
             } 
             catch { }
+            
+            AnsiConsole.MarkupLine("\n[dim]Press Enter to return to menu...[/]");
+            Console.ReadLine();
             throw;
         }
         catch (Exception ex)
@@ -301,6 +313,9 @@ public static class ShellHelper
             AnsiConsole.MarkupLine("\n[yellow]═══════════════════════════════════════════════════[/]");
             AnsiConsole.MarkupLine($"[red]✗ Error running bot: {ex.Message.EscapeMarkup()}[/]");
             try { if (!process.HasExited) process.Kill(true); } catch { }
+            
+            AnsiConsole.MarkupLine("\n[dim]Press Enter to return to menu...[/]");
+            Console.ReadLine();
             throw;
         }
     }
