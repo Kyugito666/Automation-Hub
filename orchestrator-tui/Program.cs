@@ -167,7 +167,6 @@ internal static class Program
              Pause("Press Enter to continue...", cancellationToken);
         }
     }
-
     private static async Task ShowDebugMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
             AnsiConsole.Clear(); 
@@ -287,10 +286,11 @@ internal static class Program
         
         AnsiConsole.MarkupLine($"\n[cyan]Running {selectedBot.Name.EscapeMarkup()}...[/]");
         AnsiConsole.MarkupLine($"[dim]   CMD: {executor.EscapeMarkup()} {args.EscapeMarkup()}[/]");
-        AnsiConsole.MarkupLine("[yellow]Press Ctrl+C here to stop the bot and return to menu.[/]");
+        AnsiConsole.MarkupLine("[yellow]Press Ctrl+C to stop the bot and return to menu.[/]");
+        AnsiConsole.MarkupLine("[dim]Full keyboard interaction enabled (arrow keys, enter, y/n, etc.)[/]");
         
         try { 
-            await ShellHelper.RunInteractive(executor, args, botPath, null, cancellationToken); 
+            await ShellHelper.RunInteractiveWithFullInput(executor, args, botPath, null, cancellationToken); 
         }
         catch (OperationCanceledException) { 
             AnsiConsole.MarkupLine("\n[yellow]Bot stopped by user.[/]"); 
@@ -365,7 +365,6 @@ internal static class Program
         AnsiConsole.MarkupLine($"[yellow]Warning: Project root not detected. Using fallback: {fallbackPath.EscapeMarkup()}[/]");
         return fallbackPath;
     }
-
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) 
     {
         Console.WriteLine("Starting Orchestrator Loop...");
