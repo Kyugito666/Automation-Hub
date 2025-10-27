@@ -12,8 +12,11 @@ public static class TokenManager
     private static readonly string ConfigRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "config"));
     private static readonly string ProjectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string TokensPath = Path.Combine(ConfigRoot, "github_tokens.txt");
-    private static readonly string MasterProxyListPath = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
+    
+    // FIXED: Prioritas success_proxy.txt (hasil test yang pasti bekerja)
     private static readonly string SuccessProxyListPath = Path.Combine(ProjectRoot, "proxysync", "success_proxy.txt");
+    private static readonly string FallbackProxyListPath = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
+    
     private static readonly string StatePath = Path.Combine(ProjectRoot, ".token-state.json");
     private static readonly string TokenCachePath = Path.Combine(ProjectRoot, ".token-cache.json");
 
@@ -89,27 +92,32 @@ public static class TokenManager
     }
     
     private static void LoadProxyList() {
-        string proxyFileToLoad = File.Exists(SuccessProxyListPath) ? SuccessProxyListPath : MasterProxyListPath;
+        // FIXED: Prioritas success_proxy.txt (proxy yang sudah lulus test)
+        string proxyFileToLoad = File.Exists(SuccessProxyListPath) ? SuccessProxyListPath : 
+                                 File.Exists(FallbackProxyListPath) ? FallbackProxyListPath : null;
         
-        if (File.Exists(proxyFileToLoad)) {
-            try { 
-                _availableProxies = File.ReadAllLines(proxyFileToLoad)
-                    .Select(l => l.Trim())
-                    .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"))
-                    .Distinct()
-                    .ToList();
-                
-                if (proxyFileToLoad == SuccessProxyListPath) {
-                    AnsiConsole.MarkupLine($"[dim]Loaded {_availableProxies.Count} tested proxies from {Path.GetFileName(proxyFileToLoad)}[/]");
-                } else {
-                    AnsiConsole.MarkupLine($"[yellow]Warning: {Path.GetFileName(SuccessProxyListPath)} not found. Loading from {Path.GetFileName(MasterProxyListPath)} ({_availableProxies.Count}). Run ProxySync![/]");
-                }
-            } catch (Exception ex) { 
-                AnsiConsole.MarkupLine($"[red]Error loading proxies from {proxyFileToLoad.EscapeMarkup()}: {ex.Message.EscapeMarkup()}[/]"); 
-                _availableProxies.Clear(); 
+        if (proxyFileToLoad == null) {
+            AnsiConsole.MarkupLine("[red]CRITICAL: Tidak ada file proxy yang tersedia![/]");
+            AnsiConsole.MarkupLine("[yellow]Jalankan ProxySync (Menu 3) untuk generate success_proxy.txt[/]");
+            _availableProxies.Clear();
+            return;
+        }
+        
+        try { 
+            _availableProxies = File.ReadAllLines(proxyFileToLoad)
+                .Select(l => l.Trim())
+                .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"))
+                .Distinct()
+                .ToList();
+            
+            if (proxyFileToLoad == SuccessProxyListPath) {
+                AnsiConsole.MarkupLine($"[green]✓ {_availableProxies.Count} tested proxies dari success_proxy.txt[/]");
+            } else {
+                AnsiConsole.MarkupLine($"[yellow]⚠ Pakai fallback proxy.txt ({_availableProxies.Count} proxies)[/]");
+                AnsiConsole.MarkupLine("[yellow]  Jalankan ProxySync untuk proxy yang sudah ditest![/]");
             }
-        } else { 
-            AnsiConsole.MarkupLine("[yellow]Warning: Proxy file not found. Running without proxies.[/]"); 
+        } catch (Exception ex) { 
+            AnsiConsole.MarkupLine($"[red]Error loading proxies: {ex.Message.EscapeMarkup()}[/]"); 
             _availableProxies.Clear(); 
         }
     }
