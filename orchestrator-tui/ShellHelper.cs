@@ -7,28 +7,100 @@ namespace Orchestrator;
 
 public static class ShellHelper
 {
-    public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = 60000)
+    private const int DEFAULT_TIMEOUT_MS = 60000;
+    private const int MAX_RETRY_ON_PROXY_ERROR = 2;
+
+    public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
     {
         var startInfo = CreateStartInfo("gh", args, token);
         
-        var (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, timeoutMilliseconds);
+        int retryCount = 0;
+        Exception? lastException = null;
 
-        if (exitCode != 0)
+        while (retryCount <= MAX_RETRY_ON_PROXY_ERROR)
         {
-            bool isRateLimit = stderr.Contains("API rate limit exceeded") || stderr.Contains("403");
-            bool isAuthError = stderr.Contains("Bad credentials") || stderr.Contains("401");
-            
-            if (isRateLimit || isAuthError)
+            try
             {
-                AnsiConsole.MarkupLine($"[red]Error ({(isRateLimit ? "Rate Limit" : "Auth")}) detected. Attempting token rotation...[/]");
-                TokenManager.SwitchToNextToken();
-                throw new Exception($"GH Command Failed ({(isRateLimit ? "Rate Limit/403" : "Auth/401")}): Triggering token rotation.");
+                var (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, timeoutMilliseconds);
+
+                if (exitCode != 0)
+                {
+                    // Parse error type
+                    bool isRateLimit = stderr.Contains("API rate limit exceeded") || stderr.Contains("403");
+                    bool isAuthError = stderr.Contains("Bad credentials") || stderr.Contains("401");
+                    bool isProxyError = stderr.Contains("407") || stderr.Contains("Proxy Authentication Required");
+                    bool isNetworkError = stderr.Contains("dial tcp") || stderr.Contains("connection refused") || stderr.Contains("i/o timeout");
+                    
+                    // Handle proxy errors dengan rotasi
+                    if (isProxyError && retryCount < MAX_RETRY_ON_PROXY_ERROR)
+                    {
+                        AnsiConsole.MarkupLine($"[yellow]Proxy error detected (407). Attempting proxy rotation... (Retry {retryCount + 1}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
+                        
+                        if (TokenManager.RotateProxyForToken(token))
+                        {
+                            // Update startInfo dengan proxy baru
+                            startInfo = CreateStartInfo("gh", args, token);
+                            retryCount++;
+                            await Task.Delay(3000); // Wait before retry
+                            continue;
+                        }
+                        else
+                        {
+                            AnsiConsole.MarkupLine("[red]No more proxies available for rotation.[/]");
+                        }
+                    }
+                    
+                    // Handle network errors dengan retry
+                    if (isNetworkError && retryCount < MAX_RETRY_ON_PROXY_ERROR)
+                    {
+                        AnsiConsole.MarkupLine($"[yellow]Network error detected. Retrying... ({retryCount + 1}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
+                        retryCount++;
+                        await Task.Delay(5000);
+                        continue;
+                    }
+                    
+                    // Handle rate limit / auth errors (trigger token rotation di caller)
+                    if (isRateLimit || isAuthError)
+                    {
+                        string errorType = isRateLimit ? "Rate Limit/403" : "Auth/401";
+                        AnsiConsole.MarkupLine($"[red]Error ({errorType}) detected. Token rotation may be needed.[/]");
+                        throw new Exception($"GH Command Failed ({errorType}): {stderr.Split('\n').FirstOrDefault()}");
+                    }
+                    
+                    // Generic error
+                    throw new Exception($"gh command failed (Exit Code: {exitCode}): {stderr.Split('\n').FirstOrDefault()}");
+                }
+
+                return stdout;
             }
-            
-            throw new Exception($"gh command failed (Exit Code: {exitCode}): {stderr}");
+            catch (TaskCanceledException)
+            {
+                if (retryCount < MAX_RETRY_ON_PROXY_ERROR)
+                {
+                    AnsiConsole.MarkupLine($"[yellow]Command timeout. Retrying... ({retryCount + 1}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
+                    retryCount++;
+                    await Task.Delay(5000);
+                    continue;
+                }
+                throw new Exception($"Command timed out after {timeoutMilliseconds}ms");
+            }
+            catch (Exception ex) when (retryCount < MAX_RETRY_ON_PROXY_ERROR)
+            {
+                lastException = ex;
+                AnsiConsole.MarkupLine($"[yellow]Command failed: {ex.Message}. Retrying... ({retryCount + 1}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
+                retryCount++;
+                await Task.Delay(3000);
+                continue;
+            }
+            catch (Exception ex)
+            {
+                // Final throw after all retries
+                throw;
+            }
         }
 
-        return stdout;
+        // Jika keluar loop tanpa return, throw last exception
+        throw lastException ?? new Exception("Command failed after retries");
     }
 
     public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
@@ -177,7 +249,11 @@ public static class ShellHelper
             if (e.Data != null)
             {
                 stderrBuilder.AppendLine(e.Data);
-                if (!string.IsNullOrWhiteSpace(e.Data))
+                
+                // Only log non-trivial errors to console
+                if (!string.IsNullOrWhiteSpace(e.Data) && 
+                    !e.Data.Contains("Flag shorthand") && // Suppress deprecation warnings
+                    !e.Data.StartsWith("✓")) // Suppress success messages from gh CLI
                 {
                     AnsiConsole.MarkupLine($"[yellow]ERR: {e.Data.EscapeMarkup()}[/]");
                 }
