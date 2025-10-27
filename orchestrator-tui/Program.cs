@@ -167,6 +167,7 @@ internal static class Program
              Pause("Press Enter to continue...", cancellationToken);
         }
     }
+    
     private static async Task ShowDebugMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
             AnsiConsole.Clear(); 
@@ -178,22 +179,13 @@ internal static class Program
                     .PageSize(10)
                     .AddChoices(new[] {
                         "1. Test Local Bot (Run Interactively)",
-                        "2. Update All Bots Locally",
                         "0. Back to Main Menu"
                     }));
             
             var sel = selection[0].ToString();
             if (sel == "0") return;
             
-            switch (sel) {
-                case "1": 
-                    await TestLocalBotAsync(cancellationToken); 
-                    break;
-                case "2": 
-                    await BotUpdater.UpdateAllBotsLocally(); 
-                    Pause("Press Enter to continue...", cancellationToken); 
-                    break;
-            }
+            if (sel == "1") await TestLocalBotAsync(cancellationToken);
         }
     }
 
@@ -205,7 +197,7 @@ internal static class Program
             return; 
         }
         
-        var enabledBots = config.BotsAndTools.Where(b => b.Enabled).ToList();
+        var enabledBots = config.BotsAndTools.Where(b => b.Enabled && b.IsBot).ToList();
         if (!enabledBots.Any()) { 
             AnsiConsole.MarkupLine("[yellow]No enabled bots.[/]"); 
             Pause("Press Enter to continue...", cancellationToken); 
@@ -228,12 +220,13 @@ internal static class Program
         
         AnsiConsole.MarkupLine($"\n[cyan]Preparing {selectedBot.Name.EscapeMarkup()}...[/]");
         
-        string projectRoot = GetProjectRoot(); 
-        string botPath = Path.Combine(projectRoot, selectedBot.Path);
+        // === PERBAIKAN: Gunakan path D:\SC langsung ===
+        string botPath = GetLocalBotPathForTest(selectedBot.Path);
         
         if (!Directory.Exists(botPath)) { 
             AnsiConsole.MarkupLine($"[red]Path not found: {botPath.EscapeMarkup()}[/]");
-            AnsiConsole.MarkupLine("[yellow]Tip: Run 'Update All Bots Locally' first.[/]");
+            AnsiConsole.MarkupLine("[yellow]Bot belum ada di D:\\SC\\PrivateKey atau D:\\SC\\Token[/yellow]");
+            AnsiConsole.MarkupLine("[yellow]Silakan clone manual atau gunakan menu Update All Bots[/yellow]");
             Pause("Press Enter to continue...", cancellationToken); 
             return; 
         }
@@ -301,6 +294,35 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// Konversi path relatif dari config ke path absolut D:\SC
+    /// Contoh: "bots/privatekey/TurnAutoBot-NTE" -> "D:\SC\PrivateKey\TurnAutoBot-NTE"
+    /// </summary>
+    private static string GetLocalBotPathForTest(string configPath)
+    {
+        // Normalize path separator
+        configPath = configPath.Replace('/', '\\');
+        
+        // Ambil nama bot (bagian terakhir)
+        var botName = Path.GetFileName(configPath);
+        
+        // Tentukan folder target (PrivateKey atau Token)
+        if (configPath.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine(@"D:\SC\PrivateKey", botName);
+        }
+        else if (configPath.Contains("token", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine(@"D:\SC\Token", botName);
+        }
+        else
+        {
+            // Fallback jika format path tidak dikenali
+            AnsiConsole.MarkupLine($"[yellow]Warning: Path format tidak dikenali: {configPath}[/yellow]");
+            return Path.Combine(@"D:\SC", botName);
+        }
+    }
+
     private static (string executor, string args) GetRunCommandLocal(string botPath, string type) {
         if (type == "python") {
             string pythonExe = "python"; 
@@ -365,6 +387,7 @@ internal static class Program
         AnsiConsole.MarkupLine($"[yellow]Warning: Project root not detected. Using fallback: {fallbackPath.EscapeMarkup()}[/]");
         return fallbackPath;
     }
+    
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) 
     {
         Console.WriteLine("Starting Orchestrator Loop...");
