@@ -567,3 +567,27 @@ private static async Task RunOrchestratorLoopAsync(CancellationToken cancellatio
             }
         }
     }
+// END OF RunOrchestratorLoopAsync
+
+    private static void Pause(string message, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested) return;
+        
+        Console.WriteLine();
+        Console.Write(message);
+        
+        try
+        {
+            while (!Console.KeyAvailable)
+            {
+                if (cancellationToken.IsCancellationRequested) return;
+                System.Threading.Thread.Sleep(100);
+            }
+            Console.ReadKey(true);
+        }
+        catch (InvalidOperationException)
+        {
+            System.Threading.Thread.Sleep(2000);
+        }
+    }
+}
