@@ -33,7 +33,6 @@ public static class ShellHelper
 
     public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
     {
-        // PERBAIKAN: Gunakan CreateStartInfo agar path executable ditemukan
         var startInfo = CreateStartInfo(command, args, token);
         if (workingDir != null)
         {
@@ -50,15 +49,8 @@ public static class ShellHelper
 
     public static async Task RunInteractive(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
     {
-        // === PERBAIKAN TOTAL PADA FUNGSI INI ===
-        // Menghapus wrapper "cmd.exe /c" yang merusak path quoting.
-        // Langsung panggil executable-nya, sama seperti RunProcessAsync.
-        
         var startInfo = new ProcessStartInfo
         {
-            // Temukan executable via PATH atau gunakan path absolut jika disediakan
-            FileName = FindExecutable(command),
-            Arguments = args,
             UseShellExecute = false,
             CreateNoWindow = false,
             RedirectStandardOutput = false,
@@ -82,22 +74,23 @@ public static class ShellHelper
                 startInfo.EnvironmentVariables["HTTP_PROXY"] = token.Proxy;
             }
         }
-        
-        // Hapus logic if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        // karena sekarang cross-platform
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            startInfo.FileName = "cmd.exe";
+            startInfo.Arguments = $"/c \"{command} {args}\"";
+        }
+        else
+        {
+            startInfo.FileName = command;
+            startInfo.Arguments = args;
+        }
 
         using var process = new Process { StartInfo = startInfo };
 
         try
         {
             AnsiConsole.MarkupLine($"[dim]Starting interactive: {startInfo.FileName} {startInfo.Arguments}[/]");
-            if (!File.Exists(startInfo.FileName))
-            {
-                AnsiConsole.MarkupLine($"[red]Error: Executable not found at {startInfo.FileName}[/]");
-                AnsiConsole.MarkupLine($"[red]Command '{command}' was not found in PATH or as absolute path.[/]");
-                return;
-            }
-            
             process.Start();
             
             cancellationToken.Register(() =>
@@ -106,7 +99,7 @@ public static class ShellHelper
                 {
                     if (!process.HasExited)
                     {
-                        process.Kill(true); // Kill entire process tree
+                        process.Kill(true);
                     }
                 }
                 catch { }
@@ -114,7 +107,7 @@ public static class ShellHelper
 
             await process.WaitForExitAsync(cancellationToken);
 
-            if (process.ExitCode != 0 && process.ExitCode != -1 && !cancellationToken.IsCancellationRequested)
+            if (process.ExitCode != 0 && process.ExitCode != -1)
             {
                 AnsiConsole.MarkupLine($"[yellow]Interactive process exited with code: {process.ExitCode}[/]");
             }
@@ -123,7 +116,7 @@ public static class ShellHelper
         {
             AnsiConsole.MarkupLine("[yellow]Interactive process cancelled.[/]");
             try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw; // Re-throw agar pemanggil (Program.cs) tahu
+            throw;
         }
         catch (Exception ex)
         {
@@ -184,8 +177,7 @@ public static class ShellHelper
             if (e.Data != null)
             {
                 stderrBuilder.AppendLine(e.Data);
-                // Non-GH commands (like pip) sering output ke stderr, jadi jangan print sbg "ERR"
-                if (startInfo.FileName.Contains("gh"))
+                if (!string.IsNullOrWhiteSpace(e.Data))
                 {
                     AnsiConsole.MarkupLine($"[yellow]ERR: {e.Data.EscapeMarkup()}[/]");
                 }
@@ -194,7 +186,6 @@ public static class ShellHelper
         
         process.Exited += (sender, e) =>
         {
-            // Beri waktu buffer untuk data terim
             Task.Delay(100).ContinueWith(_ => 
                 tcs.TrySetResult((stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim(), process.ExitCode))
             );
@@ -204,7 +195,7 @@ public static class ShellHelper
         {
             if (!File.Exists(startInfo.FileName))
             {
-                throw new FileNotFoundException($"Executable not found: {startInfo.FileName}. (Command: '{Path.GetFileNameWithoutExtension(startInfo.FileName)}')");
+                throw new FileNotFoundException($"Executable not found: {startInfo.FileName}");
             }
 
             process.Start();
@@ -212,18 +203,15 @@ public static class ShellHelper
             process.BeginErrorReadLine();
 
             using var timeoutCts = new CancellationTokenSource(timeoutMilliseconds);
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token);
-
-            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, linkedCts.Token));
+            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, timeoutCts.Token));
 
             if (completedTask == tcs.Task)
             {
-                timeoutCts.Cancel(); // Batalkan timeout jika proses selesai
-                return await tcs.Task; // Kembalikan hasil
+                timeoutCts.Cancel();
+                return await tcs.Task;
             }
             else
             {
-                // Ini terjadi jika timeoutCts di-cancel
                 throw new TaskCanceledException($"Process timed out after {timeoutMilliseconds / 1000}s");
             }
         }
@@ -237,35 +225,19 @@ public static class ShellHelper
         {
             AnsiConsole.MarkupLine($"[red]Failed to run process '{startInfo.FileName}': {ex.Message}[/]");
             try { if (!process.HasExited) process.Kill(true); } catch { }
-            // Kembalikan error di stderr
             return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim() + "\n" + ex.Message, -1);
         }
     }
 
     private static string FindExecutable(string command)
     {
-        // Jika command sudah merupakan path absolut (misal, dari venv), gunakan itu
         if (Path.IsPathFullyQualified(command) && File.Exists(command))
         {
             return command;
         }
-        
-        // Jika di Windows dan path-nya diquote (misal, dari Program.cs),
-        // coba unquote dulu sebelum cek File.Exists
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && command.StartsWith("\"") && command.EndsWith("\""))
-        {
-            string unquotedCommand = command.Substring(1, command.Length - 2);
-            if (Path.IsPathFullyQualified(unquotedCommand) && File.Exists(unquotedCommand))
-            {
-                return unquotedCommand;
-            }
-        }
 
-        // Jika command simpel (gh, pip, python), cari di PATH
         var paths = Environment.GetEnvironmentVariable("PATH");
-        var extensions = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) 
-            ? new[] { "", ".exe", ".cmd", ".bat" } 
-            : new[] { "" };
+        var extensions = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? new[] { "", ".exe", ".cmd", ".bat" } : new[] { "" };
 
         foreach (var path in paths?.Split(Path.PathSeparator) ?? Array.Empty<string>())
         {
@@ -274,11 +246,11 @@ public static class ShellHelper
                 var fullPath = Path.Combine(path, command + ext);
                 if (File.Exists(fullPath))
                 {
-                    return fullPath; // Ditemukan di PATH
+                    return fullPath;
                 }
             }
         }
         
-        return command; // Fallback: kembalikan command as-is, mungkin gagal
+        return command;
     }
 }
