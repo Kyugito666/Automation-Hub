@@ -56,6 +56,26 @@ public static class BotUpdater
         }
         AnsiConsole.Write(table);
     }
+
+    private static string GetLocalBotPathForUpdate(string configPath)
+    {
+        configPath = configPath.Replace('/', '\\');
+        var botName = Path.GetFileName(configPath);
+        
+        if (configPath.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine(@"D:\SC\PrivateKey", botName);
+        }
+        else if (configPath.Contains("token", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine(@"D:\SC\Token", botName);
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[yellow]Warning: Path format tidak dikenali: {configPath}[/yellow]");
+            return Path.Combine(@"D:\SC", botName);
+        }
+    }
     
     public static async Task UpdateAllBotsLocally()
     {
@@ -79,7 +99,6 @@ public static class BotUpdater
                 continue;
             }
             
-            // === PERBAIKAN: Gunakan path D:\SC ===
             string targetPath = GetLocalBotPathForUpdate(bot.Path);
             
             AnsiConsole.MarkupLine($"   [dim]Target: {targetPath.EscapeMarkup()}[/]");
@@ -92,9 +111,6 @@ public static class BotUpdater
                 {
                     AnsiConsole.MarkupLine($"   Folder [yellow]{bot.Path}[/] ditemukan. Menjalankan 'git pull'...");
                     
-                    // === PERBAIKAN UTAMA: Handle unstaged changes ===
-                    
-                    // Opsi 1: Cek status dulu
                     bool hasChanges = false;
                     try
                     {
@@ -109,7 +125,6 @@ public static class BotUpdater
                     {
                         AnsiConsole.MarkupLine("   [yellow]⚠ Unstaged changes terdeteksi. Melakukan stash...[/]");
                         
-                        // Stash perubahan lokal
                         try
                         {
                             await ShellHelper.RunCommandAsync("git", "stash push -u -m \"Auto-stash by BotUpdater\"", targetPath);
@@ -120,7 +135,6 @@ public static class BotUpdater
                             AnsiConsole.MarkupLine($"   [red]✗ Gagal stash: {stashEx.Message}[/]");
                             AnsiConsole.MarkupLine("   [yellow]Mencoba hard reset...[/]");
                             
-                            // Fallback: Hard reset (HATI-HATI: Menghapus perubahan lokal!)
                             try
                             {
                                 await ShellHelper.RunCommandAsync("git", "fetch origin", targetPath);
@@ -130,15 +144,13 @@ public static class BotUpdater
                             catch (Exception resetEx)
                             {
                                 AnsiConsole.MarkupLine($"   [red]✗ Hard reset gagal: {resetEx.Message}[/]");
-                                throw; // Re-throw untuk ditangani di outer catch
+                                throw;
                             }
                         }
                     }
                     
-                    // Pull dengan strategy yang lebih aman
                     try
                     {
-                        // Gunakan --rebase=false untuk menghindari konflik rebase
                         await ShellHelper.RunCommandAsync("git", "pull --no-rebase origin HEAD", targetPath);
                         AnsiConsole.MarkupLine("   [green]✓ Git pull berhasil[/]");
                         successCount++;
@@ -147,15 +159,12 @@ public static class BotUpdater
                     {
                         AnsiConsole.MarkupLine($"   [red]✗ Git pull gagal: {pullEx.Message}[/]");
                         
-                        // Jika pull gagal, coba fetch + reset
                         AnsiConsole.MarkupLine("   [yellow]Mencoba fetch + reset...[/]");
                         await ShellHelper.RunCommandAsync("git", "fetch origin", targetPath);
                         await ShellHelper.RunCommandAsync("git", "reset --hard origin/HEAD", targetPath);
                         AnsiConsole.MarkupLine("   [green]✓ Sync via fetch+reset berhasil[/]");
                         successCount++;
                     }
-                    
-                    // === AKHIR PERBAIKAN ===
                 }
                 else
                 {
