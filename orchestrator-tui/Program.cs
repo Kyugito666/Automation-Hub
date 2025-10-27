@@ -56,19 +56,25 @@ internal static class Program
             AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
             AnsiConsole.MarkupLine("[dim]Codespace Orchestrator - Local Control, Remote Execution[/]");
 
-            var prompt = new SelectionPrompt<string>()
-                    .Title("\n[bold white]MAIN MENU[/]")
-                    .PageSize(10).WrapAround()
-                    .AddChoices(new[] {
-                        "[green]1. Start/Manage Codespace Runner (Continuous Loop)[/]",
-                        "[cyan]2. Token & Collaborator Management[/]",
-                        "[yellow]3. Proxy Management (Run ProxySync)[/]",
-                        "[grey]4. Test Local Bot[/]",
-                        "5. Refresh All Configs",
-                        "0. Exit" });
+            AnsiConsole.MarkupLine("\n[bold white]MAIN MENU[/]");
+            AnsiConsole.MarkupLine("[green]1.[/] Start/Manage Codespace Runner (Continuous Loop)");
+            AnsiConsole.MarkupLine("[cyan]2.[/] Token & Collaborator Management");
+            AnsiConsole.MarkupLine("[yellow]3.[/] Proxy Management (Run ProxySync)");
+            AnsiConsole.MarkupLine("[grey]4.[/] Test Local Bot");
+            AnsiConsole.MarkupLine("5. Refresh All Configs");
+            AnsiConsole.MarkupLine("0. Exit");
             
-            var choice = AnsiConsole.Prompt(prompt);
-            var selection = choice.Split('.')[0].Trim('[');
+            var selection = AnsiConsole.Prompt(
+                new TextPrompt<string>("\n[bold]Pilih menu (0-5):[/]")
+                    .ValidationErrorMessage("[red]Masukkan angka 0-5[/]")
+                    .Validate(choice => 
+                    {
+                        return choice switch
+                        {
+                            "0" or "1" or "2" or "3" or "4" or "5" => ValidationResult.Success(),
+                            _ => ValidationResult.Error("[red]Invalid, pilih 0-5[/]")
+                        };
+                    }));
 
             try {
                 switch (selection) {
@@ -109,19 +115,21 @@ internal static class Program
              AnsiConsole.Clear(); 
              AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
              
-             var prompt = new SelectionPrompt<string>()
-                .Title("\n[bold white]TOKEN & COLLABORATOR SETUP[/]")
-                .PageSize(10).WrapAround()
-                .AddChoices(new[] { 
-                    "1. Validate Tokens & Get Usernames", 
-                    "2. Invite Collaborators", 
-                    "3. Accept Invitations", 
-                    "4. Show Token/Proxy Status", 
-                    "0. Back to Main Menu" 
-                });
+             AnsiConsole.MarkupLine("\n[bold white]TOKEN & COLLABORATOR SETUP[/]");
+             AnsiConsole.MarkupLine("1. Validate Tokens & Get Usernames");
+             AnsiConsole.MarkupLine("2. Invite Collaborators");
+             AnsiConsole.MarkupLine("3. Accept Invitations");
+             AnsiConsole.MarkupLine("4. Show Token/Proxy Status");
+             AnsiConsole.MarkupLine("0. Back to Main Menu");
              
-             var choice = AnsiConsole.Prompt(prompt);
-             var sel = choice.Split('.')[0]; 
+             var sel = AnsiConsole.Prompt(
+                 new TextPrompt<string>("\n[bold]Pilih (0-4):[/]")
+                     .ValidationErrorMessage("[red]Masukkan 0-4[/]")
+                     .Validate(c => c switch {
+                         "0" or "1" or "2" or "3" or "4" => ValidationResult.Success(),
+                         _ => ValidationResult.Error("[red]Invalid[/]")
+                     }));
+             
              if (sel == "0") return;
 
              switch (sel)
@@ -148,16 +156,18 @@ internal static class Program
              AnsiConsole.Clear(); 
              AnsiConsole.Write(new FigletText("Proxy").Centered().Color(Color.Green));
              
-             var prompt = new SelectionPrompt<string>()
-                .Title("\n[bold white]LOCAL PROXY MANAGEMENT[/]")
-                .PageSize(10).WrapAround()
-                .AddChoices(new[] { 
-                    "1. Run ProxySync (Download, Test, Generate proxy.txt)", 
-                    "0. Back to Main Menu" 
-                });
+             AnsiConsole.MarkupLine("\n[bold white]LOCAL PROXY MANAGEMENT[/]");
+             AnsiConsole.MarkupLine("1. Run ProxySync (Download, Test, Generate proxy.txt)");
+             AnsiConsole.MarkupLine("0. Back to Main Menu");
              
-             var choice = AnsiConsole.Prompt(prompt);
-             var sel = choice.Split('.')[0]; 
+             var sel = AnsiConsole.Prompt(
+                 new TextPrompt<string>("\n[bold]Pilih (0-1):[/]")
+                     .ValidationErrorMessage("[red]Masukkan 0 atau 1[/]")
+                     .Validate(c => c switch {
+                         "0" or "1" => ValidationResult.Success(),
+                         _ => ValidationResult.Error("[red]Invalid[/]")
+                     }));
+             
              if (sel == "0") return;
              
              if (sel == "1") await ProxyManager.DeployProxies(cancellationToken);
@@ -171,18 +181,19 @@ internal static class Program
             AnsiConsole.Clear(); 
             AnsiConsole.Write(new FigletText("Debug").Centered().Color(Color.Grey));
             
-            var prompt = new SelectionPrompt<string>()
-                .Title("\n[bold white]DEBUG & LOCAL TESTING[/]")
-                .PageSize(10)
-                .WrapAround(true)
-                .AddChoices(new[] { 
-                    "1. Test Local Bot (Run Interactively)", 
-                    "2. Update All Bots Locally", 
-                    "0. Back to Main Menu" 
-                });
+            AnsiConsole.MarkupLine("\n[bold white]DEBUG & LOCAL TESTING[/]");
+            AnsiConsole.MarkupLine("1. Test Local Bot (Run Interactively)");
+            AnsiConsole.MarkupLine("2. Update All Bots Locally");
+            AnsiConsole.MarkupLine("0. Back to Main Menu");
             
-            var choice = AnsiConsole.Prompt(prompt);
-            var sel = choice.Split('.')[0]; 
+            var sel = AnsiConsole.Prompt(
+                new TextPrompt<string>("\n[bold]Pilih (0-2):[/]")
+                    .ValidationErrorMessage("[red]Masukkan 0-2[/]")
+                    .Validate(c => c switch {
+                        "0" or "1" or "2" => ValidationResult.Success(),
+                        _ => ValidationResult.Error("[red]Invalid[/]")
+                    }));
+            
             if (sel == "0") return;
             
             switch (sel) {
