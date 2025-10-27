@@ -220,54 +220,19 @@ internal static class Program
         
         AnsiConsole.MarkupLine($"\n[cyan]Preparing {selectedBot.Name.EscapeMarkup()}...[/]");
         
-        // === PERBAIKAN: Gunakan path D:\SC langsung ===
         string botPath = GetLocalBotPathForTest(selectedBot.Path);
         
         if (!Directory.Exists(botPath)) { 
             AnsiConsole.MarkupLine($"[red]Path not found: {botPath.EscapeMarkup()}[/]");
             AnsiConsole.MarkupLine("[yellow]Bot belum ada di D:\\SC\\PrivateKey atau D:\\SC\\Token[/yellow]");
-            AnsiConsole.MarkupLine("[yellow]Silakan clone manual atau gunakan menu Update All Bots[/yellow]");
             Pause("Press Enter to continue...", cancellationToken); 
             return; 
         }
-        
-        try { 
-            AnsiConsole.MarkupLine("[cyan]Installing dependencies locally...[/]");
-            
-            if (selectedBot.Type == "python") { 
-                var reqFile = Path.Combine(botPath, "requirements.txt");
-                if (File.Exists(reqFile)) {
-                    var venvDir = Path.Combine(botPath, ".venv"); 
-                    string pipCmd = "pip";
-                    
-                    if (!Directory.Exists(venvDir)) { 
-                        AnsiConsole.MarkupLine("[dim]   Creating python venv...[/]");
-                        await ShellHelper.RunCommandAsync("python", $"-m venv .venv", botPath); 
-                    }
-                    
-                    var winPip = Path.Combine(venvDir, "Scripts", "pip.exe"); 
-                    var linPip = Path.Combine(venvDir, "bin", "pip"); 
-                    
-                    if (File.Exists(winPip)) pipCmd = $"\"{winPip}\""; 
-                    else if (File.Exists(linPip)) pipCmd = $"\"{linPip}\"";
-                    
-                    await ShellHelper.RunCommandAsync(pipCmd, $"install --no-cache-dir -r requirements.txt", botPath);
-                }
-            } 
-            else if (selectedBot.Type == "javascript") { 
-                var pkgFile = Path.Combine(botPath, "package.json"); 
-                if (File.Exists(pkgFile)) { 
-                    await ShellHelper.RunCommandAsync("npm", "install --silent --no-progress", botPath); 
-                }
-            } 
-            
-            AnsiConsole.MarkupLine("[green]   ✓ Local dependencies OK.[/]");
-        } 
-        catch (Exception ex) { 
-            AnsiConsole.MarkupLine($"[red]   ✗ Dependency installation failed: {ex.Message.EscapeMarkup()}[/]"); 
-            Pause("Press Enter to continue...", cancellationToken); 
-            return; 
-        }
+
+        // === PERBAIKAN: HAPUS BLOK INSTALASI DEPENDENSI ===
+        // Sesuai permintaan, blok 'try-catch' untuk 'npm install'
+        // dan 'pip install' dihapus total.
+        // === AKHIR PERBAIKAN ===
         
         var (executor, args) = GetRunCommandLocal(botPath, selectedBot.Type);
         
@@ -325,16 +290,38 @@ internal static class Program
 
     private static (string executor, string args) GetRunCommandLocal(string botPath, string type) {
         if (type == "python") {
-            string pythonExe = "python"; 
-            var venvDir = Path.Combine(botPath, ".venv");
+            string pythonExe = "python"; // Fallback ke python global
             
-            if (Directory.Exists(venvDir)) {
-                var winPath = Path.Combine(venvDir, "Scripts", "python.exe"); 
-                var linPath = Path.Combine(venvDir, "bin", "python"); 
-                
-                if (File.Exists(winPath)) pythonExe = $"\"{winPath}\""; 
-                else if (File.Exists(linPath)) pythonExe = $"\"{linPath}\"";
+            // === PERBAIKAN: Cari venv yang ada ===
+            var venvNames = new[] { ".venv", "venv", "myenv" };
+            string? foundVenvPath = null;
+            
+            foreach (var venvName in venvNames)
+            {
+                var venvDir = Path.Combine(botPath, venvName);
+                if (Directory.Exists(venvDir))
+                {
+                    foundVenvPath = venvDir;
+                    AnsiConsole.MarkupLine($"[dim]   Found existing venv: [yellow]{venvName}[/][/]");
+                    break;
+                }
             }
+
+            if (foundVenvPath != null) {
+                var winPath = Path.Combine(foundVenvPath, "Scripts", "python.exe"); 
+                var linPath = Path.Combine(foundVenvPath, "bin", "python"); 
+                
+                if (File.Exists(winPath)) {
+                    pythonExe = $"\"{winPath}\""; 
+                } else if (File.Exists(linPath)) {
+                    pythonExe = $"\"{linPath}\"";
+                } else {
+                    AnsiConsole.MarkupLine($"[yellow]   Venv found but no python.exe/python. Fallback to global 'python'[/]");
+                }
+            } else {
+                 AnsiConsole.MarkupLine("[dim]   No venv found. Using global 'python'[/]");
+            }
+            // === AKHIR PERBAIKAN ===
             
             foreach (var entry in new[] {"run.py", "main.py", "bot.py"}) { 
                 if (File.Exists(Path.Combine(botPath, entry))) 
