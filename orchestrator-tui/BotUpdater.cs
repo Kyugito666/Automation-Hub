@@ -63,7 +63,7 @@ public static class BotUpdater
         if (config == null) return;
 
         AnsiConsole.MarkupLine($"[cyan]Mulai proses update LOKAL untuk {config.BotsAndTools.Count} entri...[/]");
-        AnsiConsole.MarkupLine("[yellow]WARNING: Ini hanya meng-update salinan lokal, BUKAN di Codespace remote.[/]");
+        AnsiConsole.MarkupLine("[yellow]INFO: Bot akan di-update di D:\\SC\\PrivateKey dan D:\\SC\\Token[/]");
 
         int successCount = 0;
         int failCount = 0;
@@ -79,7 +79,10 @@ public static class BotUpdater
                 continue;
             }
             
-            var targetPath = Path.Combine(ProjectRoot, bot.Path);
+            // === PERBAIKAN: Gunakan path D:\SC ===
+            string targetPath = GetLocalBotPathForUpdate(bot.Path);
+            
+            AnsiConsole.MarkupLine($"   [dim]Target: {targetPath.EscapeMarkup()}[/]");
 
             try 
             {
