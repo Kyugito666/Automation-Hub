@@ -25,23 +25,20 @@ public static class ShellHelper
 
                 if (exitCode != 0)
                 {
-                    // Parse error type
                     bool isRateLimit = stderr.Contains("API rate limit exceeded") || stderr.Contains("403");
                     bool isAuthError = stderr.Contains("Bad credentials") || stderr.Contains("401");
                     bool isProxyError = stderr.Contains("407") || stderr.Contains("Proxy Authentication Required");
                     bool isNetworkError = stderr.Contains("dial tcp") || stderr.Contains("connection refused") || stderr.Contains("i/o timeout");
                     
-                    // Handle proxy errors dengan rotasi
                     if (isProxyError && retryCount < MAX_RETRY_ON_PROXY_ERROR)
                     {
                         AnsiConsole.MarkupLine($"[yellow]Proxy error detected (407). Attempting proxy rotation... (Retry {retryCount + 1}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
                         
                         if (TokenManager.RotateProxyForToken(token))
                         {
-                            // Update startInfo dengan proxy baru
                             startInfo = CreateStartInfo("gh", args, token);
                             retryCount++;
-                            await Task.Delay(3000); // Wait before retry
+                            await Task.Delay(3000);
                             continue;
                         }
                         else
@@ -50,7 +47,6 @@ public static class ShellHelper
                         }
                     }
                     
-                    // Handle network errors dengan retry
                     if (isNetworkError && retryCount < MAX_RETRY_ON_PROXY_ERROR)
                     {
                         AnsiConsole.MarkupLine($"[yellow]Network error detected. Retrying... ({retryCount + 1}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
@@ -59,7 +55,6 @@ public static class ShellHelper
                         continue;
                     }
                     
-                    // Handle rate limit / auth errors (trigger token rotation di caller)
                     if (isRateLimit || isAuthError)
                     {
                         string errorType = isRateLimit ? "Rate Limit/403" : "Auth/401";
@@ -67,7 +62,6 @@ public static class ShellHelper
                         throw new Exception($"GH Command Failed ({errorType}): {stderr.Split('\n').FirstOrDefault()}");
                     }
                     
-                    // Generic error
                     throw new Exception($"gh command failed (Exit Code: {exitCode}): {stderr.Split('\n').FirstOrDefault()}");
                 }
 
@@ -94,12 +88,10 @@ public static class ShellHelper
             }
             catch (Exception ex)
             {
-                // Final throw after all retries
                 throw;
             }
         }
 
-        // Jika keluar loop tanpa return, throw last exception
         throw lastException ?? new Exception("Command failed after retries");
     }
 
@@ -197,6 +189,122 @@ public static class ShellHelper
         }
     }
 
+    /// <summary>
+    /// НОВАЯ ФУНКЦИЯ: Full interactive mode dengan keyboard input support
+    /// Untuk bot yang memerlukan UI interaction (arrow keys, y/n, 1/2/3, etc.)
+    /// </summary>
+    public static async Task RunInteractiveWithFullInput(
+        string command, 
+        string args, 
+        string? workingDir = null, 
+        TokenEntry? token = null, 
+        CancellationToken cancellationToken = default)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            UseShellExecute = false,
+            CreateNoWindow = false,
+            RedirectStandardOutput = false,
+            RedirectStandardError = false,
+            RedirectStandardInput = false
+        };
+
+        if (workingDir != null)
+        {
+            startInfo.WorkingDirectory = workingDir;
+        }
+
+        if (token != null)
+        {
+            startInfo.EnvironmentVariables["GH_TOKEN"] = token.Token;
+            if (!string.IsNullOrEmpty(token.Proxy))
+            {
+                startInfo.EnvironmentVariables["https_proxy"] = token.Proxy;
+                startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
+                startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy;
+                startInfo.EnvironmentVariables["HTTP_PROXY"] = token.Proxy;
+            }
+        }
+
+        // Platform-specific command execution
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            startInfo.FileName = "cmd.exe";
+            startInfo.Arguments = $"/c \"{command} {args}\"";
+        }
+        else
+        {
+            startInfo.FileName = "/bin/bash";
+            startInfo.Arguments = $"-c \"{command} {args}\"";
+        }
+
+        using var process = new Process { StartInfo = startInfo };
+
+        try
+        {
+            AnsiConsole.MarkupLine($"[bold green]▶ Starting bot in FULL INTERACTIVE MODE[/]");
+            AnsiConsole.MarkupLine($"[dim]Command: {command} {args}[/]");
+            AnsiConsole.MarkupLine($"[dim]Working Dir: {workingDir ?? "current"}[/]");
+            AnsiConsole.MarkupLine("[yellow]═══════════════════════════════════════════════════[/]");
+            
+            process.Start();
+            
+            // Register cancellation handler
+            cancellationToken.Register(() =>
+            {
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        AnsiConsole.MarkupLine("\n[yellow]Sending termination signal...[/]");
+                        process.Kill(true);
+                    }
+                }
+                catch { }
+            });
+
+            // Wait for process to complete
+            await process.WaitForExitAsync(cancellationToken);
+
+            AnsiConsole.MarkupLine("[yellow]═══════════════════════════════════════════════════[/]");
+            
+            if (process.ExitCode == 0)
+            {
+                AnsiConsole.MarkupLine($"[green]✓ Bot exited successfully (Exit Code: {process.ExitCode})[/]");
+            }
+            else if (process.ExitCode == -1)
+            {
+                AnsiConsole.MarkupLine($"[yellow]⚠ Bot was terminated (Exit Code: {process.ExitCode})[/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[red]✗ Bot exited with errors (Exit Code: {process.ExitCode})[/]");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            AnsiConsole.MarkupLine("\n[yellow]═══════════════════════════════════════════════════[/]");
+            AnsiConsole.MarkupLine("[yellow]✓ Bot stopped by user (Ctrl+C)[/]");
+            try 
+            { 
+                if (!process.HasExited) 
+                {
+                    process.Kill(true);
+                    await Task.Delay(1000); // Give time to cleanup
+                }
+            } 
+            catch { }
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine("\n[yellow]═══════════════════════════════════════════════════[/]");
+            AnsiConsole.MarkupLine($"[red]✗ Error running bot: {ex.Message.EscapeMarkup()}[/]");
+            try { if (!process.HasExited) process.Kill(true); } catch { }
+            throw;
+        }
+    }
+
     private static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token)
     {
         var startInfo = new ProcessStartInfo
@@ -250,10 +358,9 @@ public static class ShellHelper
             {
                 stderrBuilder.AppendLine(e.Data);
                 
-                // Only log non-trivial errors to console
                 if (!string.IsNullOrWhiteSpace(e.Data) && 
-                    !e.Data.Contains("Flag shorthand") && // Suppress deprecation warnings
-                    !e.Data.StartsWith("✓")) // Suppress success messages from gh CLI
+                    !e.Data.Contains("Flag shorthand") && 
+                    !e.Data.StartsWith("✓"))
                 {
                     AnsiConsole.MarkupLine($"[yellow]ERR: {e.Data.EscapeMarkup()}[/]");
                 }
