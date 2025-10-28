@@ -9,6 +9,9 @@ public class BotConfig
     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string ConfigFile = Path.Combine(ProjectRoot, "config", "bots_config.json");
 
+    // Helper untuk mencari D:\SC\PrivateKey\...
+    private static readonly string LocalBotRoot = @"D:\SC";
+
     private static string GetProjectRoot()
     {
         var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -56,6 +59,33 @@ public class BotConfig
         {
              AnsiConsole.MarkupLine($"[red]Error reading {ConfigFile}: {ex.Message}[/]");
              return null;
+        }
+    }
+    
+    // === FUNGSI BARU (DIPINDAH DARI PROGRAM.CS) ===
+    // Di-pake 'CodespaceManager' untuk nyari file '.env', 'pk.txt' di D:\SC
+    public static string GetLocalBotPath(string configPath)
+    {
+        // Normalize path separator
+        configPath = configPath.Replace('/', '\\');
+        
+        // Ambil nama bot (bagian terakhir)
+        var botName = Path.GetFileName(configPath);
+        
+        // Tentukan folder target (PrivateKey atau Token)
+        if (configPath.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine(LocalBotRoot, "PrivateKey", botName);
+        }
+        else if (configPath.Contains("token", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.Combine(LocalBotRoot, "Token", botName);
+        }
+        else
+        {
+            // Fallback untuk proxysync atau tools lain
+            AnsiConsole.MarkupLine($"[dim]   Path non-standar: {configPath}. Ditaro di root D:\\SC[/]");
+            return Path.Combine(LocalBotRoot, botName);
         }
     }
 }
