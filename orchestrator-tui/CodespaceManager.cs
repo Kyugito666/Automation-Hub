@@ -14,13 +14,12 @@ public static class CodespaceManager
     private const int STOP_TIMEOUT_MS = 120000;
     private const int START_TIMEOUT_MS = 300000;
     
-    // === PERBAIKAN: "Realtime" (Cek tiap 5d) tapi "Sabar" (Timeout lama) ===
-    private const int STATE_POLL_INTERVAL_SEC = 5; // "Ping" tiap 5 detik
-    private const int STATE_POLL_MAX_DURATION_MIN = 8; // Max safety net
-    private const int SSH_READY_POLL_INTERVAL_SEC = 5; // "Ping" SSH tiap 5 detik
-    private const int SSH_READY_MAX_DURATION_MIN = 8; // SABAR: Nunggu SSH max 8 menit (sebelumnya 6, lalu 3)
-    // === AKHIR PERBAIKAN ===
-    
+    // Ping "Realtime"
+    private const int STATE_POLL_INTERVAL_SEC = 2; 
+    private const int STATE_POLL_MAX_DURATION_MIN = 8;
+    private const int SSH_READY_POLL_INTERVAL_SEC = 2; 
+
+    private const int SSH_READY_MAX_DURATION_MIN = 8; 
     private const int SSH_PROBE_TIMEOUT_MS = 30000;
     private const int HEALTH_CHECK_POLL_INTERVAL_SEC = 10;
     private const int HEALTH_CHECK_MAX_DURATION_MIN = 4;
@@ -49,7 +48,6 @@ public static class CodespaceManager
         else
             AnsiConsole.MarkupLine("[yellow]Unable to fetch (continuing)[/]");
 
-        // Outer loop (safety net) tetap 8 menit
         while (stopwatch.Elapsed.TotalMinutes < STATE_POLL_MAX_DURATION_MIN)
         {
             AnsiConsole.Markup($"[dim]({stopwatch.Elapsed:mm\\:ss}) Finding codespace... [/]");
@@ -92,15 +90,12 @@ public static class CodespaceManager
                     
                     AnsiConsole.MarkupLine("[cyan]Triggering startup & checking health...[/]");
                     try {
+                        // Coba trigger. Kalo gagal (karena clone belum kelar),
+                        // devcontainer postAttach HARUSNYA tetep jalanin.
                         await TriggerStartupScript(token, codespace.Name);
                     } catch (Exception scriptEx) {
-                        if (scriptEx.Message.Contains("Script not found")) {
-                            AnsiConsole.MarkupLine("[red]Script not found (repo update?). Recreating...[/]");
-                            await DeleteCodespace(token, codespace.Name);
-                            codespace = null;
-                            break;
-                        }
-                        throw;
+                        AnsiConsole.MarkupLine($"[yellow]Warn: Trigger failed (normal if clone slow): {scriptEx.Message.Split('\n').FirstOrDefault()}[/]");
+                        // JANGAN throw, lanjut aja
                     }
                     
                     if (await CheckHealthWithRetry(token, codespace.Name)) {
@@ -118,7 +113,6 @@ public static class CodespaceManager
                     AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Starting...[/]");
                     await StartCodespace(token, codespace.Name);
                     
-                    // SABAR: Kasih waktu 3 menit buat start
                     if (!await WaitForState(token, codespace.Name, "Available", TimeSpan.FromMinutes(3)))
                         AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
                     
@@ -133,13 +127,7 @@ public static class CodespaceManager
                     try {
                         await TriggerStartupScript(token, codespace.Name);
                     } catch (Exception scriptEx) {
-                        if (scriptEx.Message.Contains("Script not found")) {
-                            AnsiConsole.MarkupLine("[red]Script not found. Recreating...[/]");
-                            await DeleteCodespace(token, codespace.Name);
-                            codespace = null;
-                            break;
-                        }
-                        throw;
+                        AnsiConsole.MarkupLine($"[yellow]Warn: Trigger failed (normal if clone slow): {scriptEx.Message.Split('\n').FirstOrDefault()}[/]");
                     }
                     
                     if (await CheckHealthWithRetry(token, codespace.Name)) {
@@ -155,8 +143,8 @@ public static class CodespaceManager
                 case "Starting":
                 case "Queued":
                 case "Rebuilding":
-                    AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Waiting {STATE_POLL_INTERVAL_SEC}s...[/]"); // "Ping" 5 detik
-                    await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000); 
+                    AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Waiting {STATE_POLL_INTERVAL_SEC}s...[/]"); 
+                    await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000); // Ping 2 detik
                     continue;
 
                 default:
@@ -228,14 +216,12 @@ private static async Task<string> CreateNewCodespace(TokenEntry token, string re
             await StartCodespace(token, newName);
             
             AnsiConsole.MarkupLine("[cyan]Waiting for Available state...[/]");
-            // SABAR: Kasih waktu 5 menit
-            if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(5))) { // Sebelumnya 4
+            if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(5))) { 
                 AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
             }
         } else {
             AnsiConsole.MarkupLine($"[dim]Waiting for Available (current: {currentState})...[/]");
-            // SABAR: Kasih waktu 6 menit
-            if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(6))) { // Sebelumnya 5
+            if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(6))) { 
                 AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
             }
         }
@@ -412,8 +398,7 @@ private static async Task StartCodespace(TokenEntry token, string codespaceName)
                 return false; 
             }
             
-            // "Ping" 5 detik (STATE_POLL_INTERVAL_SEC)
-            await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000);
+            await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000); // Ping 2 detik
         } 
         
         sw.Stop(); 
@@ -424,7 +409,6 @@ private static async Task StartCodespace(TokenEntry token, string codespaceName)
     private static async Task<bool> WaitForSshReadyWithRetry(TokenEntry token, string codespaceName) 
     {
         Stopwatch sw = Stopwatch.StartNew(); 
-        // SABAR: Nunggu max 8 menit (SSH_READY_MAX_DURATION_MIN)
         AnsiConsole.MarkupLine($"[cyan]Waiting SSH ready (max {SSH_READY_MAX_DURATION_MIN}min)...[/]");
         
         while(sw.Elapsed.TotalMinutes < SSH_READY_MAX_DURATION_MIN) {
@@ -440,8 +424,7 @@ private static async Task StartCodespace(TokenEntry token, string codespaceName)
             catch (TaskCanceledException) { }
             catch (Exception) { }
             
-            // "Ping" 5 detik (SSH_READY_POLL_INTERVAL_SEC)
-            await Task.Delay(SSH_READY_POLL_INTERVAL_SEC * 1000);
+            await Task.Delay(SSH_READY_POLL_INTERVAL_SEC * 1000); // Ping 2 detik
         } 
         
         sw.Stop(); 
@@ -519,87 +502,29 @@ public static async Task TriggerStartupScript(TokenEntry token, string codespace
 {
     AnsiConsole.MarkupLine("[cyan]Triggering auto-start.sh...[/]");
     
-    // === FIX "BEDEBAH" (Error: shell closed: exit status 2) ===
-    AnsiConsole.Markup("[dim]Waiting for workspace ready... [/]");
     string repoNameLower = token.Repo.ToLower();
     string workspacePath = $"/workspaces/{repoNameLower}";
-    
-    bool workspaceReady = false;
-    for (int attempt = 1; attempt <= 10; attempt++) { // 10 attempt x 5 detik = 50 detik
-        try {
-            // Pakai "test -d" (cek direktori) yang lebih aman.
-            // "echo READY || echo NOT_READY" memastikan command SELALU exit code 0
-            // Ini mencegah error "shell closed" jika folder belum ada.
-            string checkWorkspace = $"codespace ssh -c {codespaceName} -- \"test -d {workspacePath} && echo READY || echo NOT_READY\"";
-            string result = await ShellHelper.RunGhCommand(token, checkWorkspace, SSH_PROBE_TIMEOUT_MS);
-            
-            if (result.Trim() == "READY") {
-                workspaceReady = true;
-                AnsiConsole.MarkupLine($"[green]OK[/] [dim](attempt {attempt})[/]");
-                break;
-            }
-            // Jika "NOT_READY", biarkan loop lanjut (setelah delay)
-        } catch (Exception ex) {
-            // Ini hanya akan error jika KONEKSI SSH-nya gagal
-            AnsiConsole.MarkupLine($"[yellow]SSH check error: {ex.Message.Split('\n').FirstOrDefault()}[/]");
-        }
-        
-        if (attempt < 10) {
-            await Task.Delay(5000); // 5 detik delay
-        }
-    }
-    
-    if (!workspaceReady) {
-        AnsiConsole.MarkupLine("[red]TIMEOUT[/]");
-        throw new Exception($"Workspace directory '{workspacePath}' not ready after 50 seconds");
-    }
-    // === AKHIR FIX "BEDEBAH" ===
-    
     string remoteScript = $"{workspacePath}/auto-start.sh";
     
-    AnsiConsole.Markup("[dim]Verifying script exists... [/]");
-    
-    bool scriptExists = false;
-    for (int attempt = 1; attempt <= 6; attempt++) {
-        try { 
-            string checkArgs = $"codespace ssh -c {codespaceName} -- \"test -f {remoteScript} && echo OK || echo MISSING\""; 
-            string checkResult = await ShellHelper.RunGhCommand(token, checkArgs, SSH_PROBE_TIMEOUT_MS); 
-            
-            if (checkResult.Trim() == "OK") {
-                scriptExists = true;
-                AnsiConsole.MarkupLine("[green]OK[/]");
-                break;
-            }
-            
-            if (attempt < 6) {
-                AnsiConsole.Markup($"[yellow]retry {attempt}/6[/]...");
-                await Task.Delay(10000); // 10 detik per retry
-            }
-        } catch (Exception ex) { 
-            if (attempt == 6) {
-                AnsiConsole.MarkupLine($"[red]FAIL: {ex.Message.Split('\n').FirstOrDefault()}[/]");
-                throw;
-            }
-            AnsiConsole.Markup($"[yellow]err {attempt}/6[/]...");
-            await Task.Delay(10000);
-        }
-    }
-    
-    if (!scriptExists) {
-        AnsiConsole.MarkupLine("[red]FAIL[/]");
-        throw new Exception($"Script {remoteScript} not found after 60 seconds");
-    }
+    // === PERBAIKAN: Hapus total loop "Verifying script" ===
+    // Kita tidak lagi nungguin file-nya. Kita ASUMSIKAN
+    // devcontainer.json (postAttachCommand) atau trigger ini
+    // salah satunya akan berhasil.
+    // === AKHIR PERBAIKAN ===
     
     AnsiConsole.Markup("[dim]Executing (detached)... [/]"); 
     string cmd = $"nohup bash {remoteScript} > /tmp/startup.log 2>&1 &"; 
     string args = $"codespace ssh -c {codespaceName} -- {cmd}";
     
     try { 
+        // Kita langsung coba eksekusi.
         await ShellHelper.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
         AnsiConsole.MarkupLine("[green]OK[/]"); 
     } catch (Exception ex) { 
-        AnsiConsole.MarkupLine($"[red]FAIL: {ex.Message.Split('\n').FirstOrDefault()}[/]"); 
-        throw; 
+        // Ini SANGAT MUNGKIN error jika clone belum kelar, dan itu OKE.
+        AnsiConsole.MarkupLine($"[yellow]Warn (expected): {ex.Message.Split('\n').FirstOrDefault()}[/]"); 
+        AnsiConsole.MarkupLine("[dim]   (This is OK, postAttachCommand will take over)[/]");
+        // Kita TIDAK throw error, kita biarin lanjut.
     }
 }
 
