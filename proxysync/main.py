@@ -13,10 +13,13 @@ import ui  # Mengimpor semua fungsi UI dari file ui.py
 # --- Konfigurasi ---
 PROXYLIST_SOURCE_FILE = "proxylist.txt"
 PROXY_SOURCE_FILE = "proxy.txt"
+# === PERBAIKAN PATH: Sesuaikan dengan konteks remote ===
+# File-file ini di-upload TUI ke ../config
 PATHS_SOURCE_FILE = "../config/paths.txt"
 APILIST_SOURCE_FILE = "../config/apilist.txt"
 GITHUB_TOKENS_FILE = "../config/github_tokens.txt"
 WEBSHARE_APIKEYS_FILE = "../config/apikeys.txt"
+# === AKHIR PERBAIKAN PATH ===
 
 FAIL_PROXY_FILE = "fail_proxy.txt"
 SUCCESS_PROXY_FILE = "success_proxy.txt"
@@ -193,10 +196,11 @@ def get_webshare_download_url(session: requests.Session, plan_id: str):
     except requests.exceptions.HTTPError as e: ui.console.print(f"   -> [bold red]ERROR Config: {e.response.text}[/bold red]"); return None
     except requests.RequestException as e: ui.console.print(f"   -> [bold red]ERROR Koneksi (config): {e}[/bold red]"); return None
 
-def download_proxies_from_api():
+def download_proxies_from_api(is_auto=False):
     ui.print_header()
     ui.console.print("[bold cyan]--- Unduh Proksi dari API ---[/bold cyan]")
-    if os.path.exists(PROXYLIST_SOURCE_FILE) and os.path.getsize(PROXYLIST_SOURCE_FILE) > 0:
+    
+    if not is_auto and os.path.exists(PROXYLIST_SOURCE_FILE) and os.path.getsize(PROXYLIST_SOURCE_FILE) > 0:
         choice = ui.Prompt.ask(f"[bold yellow]'{PROXYLIST_SOURCE_FILE}' ada. Hapus?[/bold yellow]", choices=["y", "n"], default="y").lower()
         if choice == 'n': ui.console.print("[cyan]Batal.[/cyan]"); return
     try:
@@ -431,29 +435,77 @@ def save_good_proxies(proxies, file_path):
         ui.console.print(f"\n[bold green]✅ {len(proxies)} proksi valid simpan ke '{file_path}'[/bold green]")
     except IOError as e: ui.console.print(f"\n[bold red]✖ Gagal simpan '{file_path}': {e}[/bold red]")
 
+# === FUNGSI BARU: Untuk 'auto-start.sh' ===
+def run_automated_test_and_save():
+    """
+    Versi non-interaktif dari run_full_process.
+    HANYA tes dan simpan ke success_proxy.txt. TIDAK distribusi.
+    """
+    ui.print_header()
+    ui.console.print("[bold cyan]Langkah Auto: Tes Akurat & Simpan...[/bold cyan]")
+    
+    if not load_github_token(GITHUB_TOKENS_FILE):
+        ui.console.print("[bold red]Tes proxy batal (token GitHub?).[/bold red]")
+        return False
+        
+    ui.console.print("-" * 40); ui.console.print("[bold cyan]Langkah 1: Clean...[/bold cyan]")
+    proxies = load_and_deduplicate_proxies(PROXY_SOURCE_FILE)
+    if not proxies:
+        ui.console.print("[bold red]Stop: 'proxy.txt' kosong.[/bold red]")
+        return False
+        
+    ui.console.print(f"Siap tes {len(proxies)} proksi unik."); ui.console.print("-" * 40)
+    ui.console.print("[bold cyan]Langkah 2: Tes Akurat GitHub...[/bold cyan]")
+    
+    good_proxies = ui.run_concurrent_checks_display(proxies, check_proxy_final, MAX_WORKERS, FAIL_PROXY_FILE)
+    
+    if not good_proxies:
+        ui.console.print("[bold red]Stop: Tidak ada proksi lolos.[/bold red]")
+        return False
+        
+    ui.console.print(f"[bold green]{len(good_proxies)} proksi lolos.[/bold green]"); ui.console.print("-" * 40)
+    ui.console.print("[bold cyan]Langkah 3: Simpan proksi valid...[/bold cyan]")
+    save_good_proxies(good_proxies, SUCCESS_PROXY_FILE)
+    ui.console.print("\n[bold green]✅ Tes otomatis selesai![/bold green]")
+    return True
+# === AKHIR FUNGSI BARU ===
+
 def run_full_process():
+    """Versi INTERAKTIF (dari menu TUI)"""
     ui.print_header()
     if not load_github_token(GITHUB_TOKENS_FILE): ui.console.print("[bold red]Tes proxy batal (token GitHub?).[/bold red]"); return
-    distribute_choice = ui.Prompt.ask("[bold yellow]Distribusi proksi valid?[/bold yellow]", choices=["y", "n"], default="y").lower()
+    
+    # Tanya user apakah mau distribusi
+    distribute_choice = ui.Prompt.ask("[bold yellow]Distribusi proksi valid ke folder bot?[/bold yellow]", choices=["y", "n"], default="y").lower()
+    
     ui.console.print("-" * 40); ui.console.print("[bold cyan]Langkah 1: Backup & Clean...[/bold cyan]")
     backup_file(PROXY_SOURCE_FILE, PROXY_BACKUP_FILE)
     proxies = load_and_deduplicate_proxies(PROXY_SOURCE_FILE)
     if not proxies: ui.console.print("[bold red]Stop: 'proxy.txt' kosong.[/bold red]"); return
+    
     ui.console.print(f"Siap tes {len(proxies)} proksi unik."); ui.console.print("-" * 40)
     ui.console.print("[bold cyan]Langkah 2: Tes Akurat GitHub...[/bold cyan]")
     good_proxies = ui.run_concurrent_checks_display(proxies, check_proxy_final, MAX_WORKERS, FAIL_PROXY_FILE)
     if not good_proxies: ui.console.print("[bold red]Stop: Tidak ada proksi lolos.[/bold red]"); return
+    
     ui.console.print(f"[bold green]{len(good_proxies)} proksi lolos.[/bold green]"); ui.console.print("-" * 40)
+    
+    # Simpan dulu ke success_proxy.txt (selalu)
+    save_good_proxies(good_proxies, SUCCESS_PROXY_FILE)
+    
     if distribute_choice == 'y':
         ui.console.print("[bold cyan]Langkah 3: Distribusi...[/bold cyan]")
         paths = load_paths(PATHS_SOURCE_FILE)
         if not paths: ui.console.print("[bold red]Stop: 'paths.txt' kosong/invalid.[/bold red]"); return
-        distribute_proxies(good_proxies, paths); save_good_proxies(good_proxies, SUCCESS_PROXY_FILE)
-    else: ui.console.print("[bold cyan]Langkah 3: Simpan proksi valid...[/bold cyan]"); save_good_proxies(good_proxies, SUCCESS_PROXY_FILE)
+        # Distribusi dari good_proxies
+        distribute_proxies(good_proxies, paths)
+    else:
+        ui.console.print("[bold cyan]Langkah 3: Distribusi di-skip.[/bold cyan]")
+        
     ui.console.print("\n[bold green]✅ Semua selesai![/bold green]")
 
 def main():
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    """Fungsi main untuk menu INTERAKTIF"""
     while True:
         ui.print_header(); choice = ui.display_main_menu()
         if choice == "1": run_webshare_ip_sync(); ui.Prompt.ask("\n[bold]Tekan Enter...[/bold]")
@@ -463,5 +515,33 @@ def main():
         elif choice == "5": ui.manage_paths_menu_display() # Placeholder
         elif choice == "6": ui.console.print("[bold cyan]Bye![/bold cyan]"); break
 
+# === LOGIKA BARU: Cek --full-auto ===
 if __name__ == "__main__":
-    main()
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    
+    # Cek jika --full-auto ada di argumen
+    if "--full-auto" in sys.argv:
+        ui.console.print("[bold cyan]--- PROXYSYNC FULL AUTO MODE ---[/bold cyan]")
+        
+        # 1. IP Auth
+        ui.console.print("\n[bold]Step 1: IP Sync...[/bold]")
+        run_webshare_ip_sync()
+        
+        # 2. Download
+        ui.console.print("\n[bold]Step 2: Download Proxies...[/bold]")
+        download_proxies_from_api(is_auto=True) # is_auto=True untuk skip prompt
+        
+        # 3. Convert
+        ui.console.print("\n[bold]Step 3: Convert Proxies...[/bold]")
+        convert_proxylist_to_http()
+        
+        # 4. Test & Save
+        ui.console.print("\n[bold]Step 4: Test & Save (Non-Distribute)...[/bold]")
+        run_automated_test_and_save()
+        
+        ui.console.print("\n[bold green]✅ FULL AUTO MODE SELESAI.[/bold green]")
+        
+    else:
+        # Jalankan menu interaktif seperti biasa
+        main()
+# === AKHIR LOGIKA BARU ===
