@@ -510,72 +510,79 @@ private static async Task StartCodespace(TokenEntry token, string codespaceName)
             AnsiConsole.MarkupLine("[dim]No stuck codespaces found[/]");
     }
 
-    public static async Task TriggerStartupScript(TokenEntry token, string codespaceName) 
+public static async Task TriggerStartupScript(TokenEntry token, string codespaceName) 
 {
     AnsiConsole.MarkupLine("[cyan]Triggering auto-start.sh...[/]");
     
-    // === FIX: Gunakan CODESPACE_VSCODE_FOLDER environment variable ===
-    AnsiConsole.Markup("[dim]Detecting workspace path... [/]");
-    string workspacePath = "";
+    // === FIX: Wait for workspace clone to complete ===
+    AnsiConsole.Markup("[dim]Waiting for workspace ready... [/]");
+    string repoNameLower = token.Repo.ToLower();
+    string workspacePath = $"/workspaces/{repoNameLower}";
     
-    try {
-        string detectArgs = $"codespace ssh -c {codespaceName} -- echo $CODESPACE_VSCODE_FOLDER";
-        string detectedPath = await ShellHelper.RunGhCommand(token, detectArgs, SSH_PROBE_TIMEOUT_MS);
-        workspacePath = detectedPath.Trim();
+    bool workspaceReady = false;
+    for (int attempt = 1; attempt <= 10; attempt++) {
+        try {
+            string checkWorkspace = $"codespace ssh -c {codespaceName} -- ls -d {workspacePath} 2>/dev/null";
+            string result = await ShellHelper.RunGhCommand(token, checkWorkspace, SSH_PROBE_TIMEOUT_MS);
+            
+            if (result.Trim() == workspacePath) {
+                workspaceReady = true;
+                AnsiConsole.MarkupLine($"[green]OK[/] [dim](attempt {attempt})[/]");
+                break;
+            }
+        } catch { }
         
-        if (string.IsNullOrEmpty(workspacePath)) {
-            // Fallback ke nama repo lowercase
-            string repoNameLower = token.Repo.ToLower();
-            workspacePath = $"/workspaces/{repoNameLower}";
-            AnsiConsole.MarkupLine($"[yellow]Fallback: {workspacePath}[/]");
-        } else {
-            AnsiConsole.MarkupLine($"[green]{workspacePath}[/]");
+        if (attempt < 10) {
+            await Task.Delay(5000);
         }
-    } catch {
-        string repoNameLower = token.Repo.ToLower();
-        workspacePath = $"/workspaces/{repoNameLower}";
-        AnsiConsole.MarkupLine($"[yellow]Error detecting, using: {workspacePath}[/]");
     }
     
-    string remoteScript = $"{workspacePath}/auto-start.sh";
+    if (!workspaceReady) {
+        AnsiConsole.MarkupLine("[red]TIMEOUT[/]");
+        throw new Exception("Workspace directory not ready after 50 seconds");
+    }
     // === AKHIR FIX ===
+    
+    string remoteScript = $"{workspacePath}/auto-start.sh";
     
     AnsiConsole.Markup("[dim]Verifying script exists... [/]");
     
-    // === FIX: Tambah retry untuk check script ===
+    // === FIX: Simplified script check ===
     bool scriptExists = false;
-    for (int attempt = 1; attempt <= 3; attempt++) {
+    for (int attempt = 1; attempt <= 6; attempt++) {
         try { 
-            string checkArgs = $"codespace ssh -c {codespaceName} -- \"[ -f {remoteScript} ] && echo EXISTS || echo MISSING\""; 
+            string checkArgs = $"codespace ssh -c {codespaceName} -- test -f {remoteScript} && echo OK || echo MISSING"; 
             string checkResult = await ShellHelper.RunGhCommand(token, checkArgs, SSH_PROBE_TIMEOUT_MS); 
             
-            if (checkResult.Contains("EXISTS")) {
+            if (checkResult.Trim() == "OK") {
                 scriptExists = true;
+                AnsiConsole.MarkupLine("[green]OK[/]");
                 break;
             }
             
-            if (attempt < 3) {
-                AnsiConsole.MarkupLine($"[yellow]Not ready (attempt {attempt}/3)[/]");
-                await Task.Delay(5000);
+            if (attempt < 6) {
+                AnsiConsole.Markup($"[yellow]retry {attempt}/6[/]...");
+                await Task.Delay(10000); // 10 detik per retry
             }
         } catch (Exception ex) { 
-            if (attempt == 3) throw;
-            AnsiConsole.MarkupLine($"[yellow]Check error (attempt {attempt}/3): {ex.Message.Split('\n').FirstOrDefault()}[/]");
-            await Task.Delay(5000);
+            if (attempt == 6) {
+                AnsiConsole.MarkupLine($"[red]FAIL: {ex.Message.Split('\n').FirstOrDefault()}[/]");
+                throw;
+            }
+            AnsiConsole.Markup($"[yellow]err {attempt}/6[/]...");
+            await Task.Delay(10000);
         }
     }
     
     if (!scriptExists) {
         AnsiConsole.MarkupLine("[red]FAIL[/]");
-        throw new Exception("Script not found after 3 attempts");
+        throw new Exception($"Script {remoteScript} not found after 60 seconds");
     }
-    
-    AnsiConsole.MarkupLine("[green]OK[/]"); 
     // === AKHIR FIX ===
     
     AnsiConsole.Markup("[dim]Executing (detached)... [/]"); 
     string cmd = $"nohup bash {remoteScript} > /tmp/startup.log 2>&1 &"; 
-    string args = $"codespace ssh -c {codespaceName} -- \"{cmd}\"";
+    string args = $"codespace ssh -c {codespaceName} -- {cmd}";
     
     try { 
         await ShellHelper.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
