@@ -161,46 +161,30 @@ public static class SecretManager
 
     private static void CreateTarGz(Dictionary<string, string> files, string outputPath)
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "bot-secrets-temp");
-        if (Directory.Exists(tempDir))
-            Directory.Delete(tempDir, true);
-        Directory.CreateDirectory(tempDir);
-
+        var tempZip = Path.Combine(Path.GetTempPath(), "bot-secrets.zip");
+        
         try
         {
-            foreach (var kvp in files)
+            if (File.Exists(tempZip))
+                File.Delete(tempZip);
+            
+            using (var zip = ZipFile.Open(tempZip, ZipArchiveMode.Create))
             {
-                var targetPath = Path.Combine(tempDir, kvp.Key);
-                var targetDir = Path.GetDirectoryName(targetPath);
-                if (!string.IsNullOrEmpty(targetDir))
-                    Directory.CreateDirectory(targetDir);
-                File.Copy(kvp.Value, targetPath, true);
+                foreach (var kvp in files)
+                {
+                    zip.CreateEntryFromFile(kvp.Value, kvp.Key.Replace('\\', '/'));
+                }
             }
-
+            
             if (File.Exists(outputPath))
                 File.Delete(outputPath);
-
-            string tarArgs = $"-czf \"{outputPath}\" -C \"{tempDir}\" .";
-            var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "tar",
-                Arguments = tarArgs,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            });
-
-            process?.WaitForExit();
-            if (process?.ExitCode != 0)
-            {
-                throw new Exception("tar command failed");
-            }
+            
+            File.Move(tempZip, outputPath);
         }
         finally
         {
-            if (Directory.Exists(tempDir))
-                Directory.Delete(tempDir, true);
+            if (File.Exists(tempZip))
+                File.Delete(tempZip);
         }
     }
 
