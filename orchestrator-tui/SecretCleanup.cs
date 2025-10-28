@@ -7,8 +7,113 @@ namespace Orchestrator;
 public static class SecretCleanup
 {
     /// <summary>
+    /// Hapus SEMUA User Codespace Secrets (level akun, bukan repo)
+    /// INI YANG BIKIN ERROR "payload exceed 50KB" saat create codespace!
+    /// </summary>
+    public static async Task DeleteAllUserCodespaceSecrets()
+    {
+        AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
+        AnsiConsole.MarkupLine("[cyan]   User Codespace Secrets Cleanup[/]");
+        AnsiConsole.MarkupLine("[red]   THIS IS THE ONE CAUSING 200KB PAYLOAD ERROR![/]");
+        AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
+
+        var currentToken = TokenManager.GetCurrentToken();
+        
+        if (string.IsNullOrEmpty(currentToken.Username))
+        {
+            AnsiConsole.MarkupLine("[red]✗ Active token has no username![/]");
+            AnsiConsole.MarkupLine("[yellow]→ Run Menu 2 -> Validate Tokens first.[/]");
+            return;
+        }
+
+        AnsiConsole.MarkupLine($"[yellow]Target User:[/] [cyan]@{currentToken.Username}[/]");
+        AnsiConsole.MarkupLine($"[dim]Proxy: {TokenManager.MaskProxy(currentToken.Proxy)}[/]");
+        AnsiConsole.MarkupLine($"[red]These secrets are attached to YOUR ACCOUNT (not repo)[/]");
+
+        if (!AnsiConsole.Confirm("\n[red]⚠️  Delete ALL User Codespace Secrets?[/]", false))
+        {
+            AnsiConsole.MarkupLine("[yellow]✗ Cancelled by user.[/]");
+            return;
+        }
+
+        try
+        {
+            using var client = TokenManager.CreateHttpClient(currentToken);
+
+            AnsiConsole.MarkupLine("\n[cyan]Step 1/2:[/] Listing user codespace secrets...");
+            var listUrl = $"https://api.github.com/user/codespaces/secrets";
+            var listResponse = await client.GetAsync(listUrl);
+
+            if (!listResponse.IsSuccessStatusCode)
+            {
+                var error = await listResponse.Content.ReadAsStringAsync();
+                AnsiConsole.MarkupLine($"[red]✗ Failed to list secrets ({listResponse.StatusCode})[/]");
+                AnsiConsole.MarkupLine($"[dim]{error}[/]");
+                return;
+            }
+
+            var json = await listResponse.Content.ReadAsStringAsync();
+            var secretList = JsonSerializer.Deserialize<GitHubSecretList>(json);
+
+            if (secretList?.Secrets == null || !secretList.Secrets.Any())
+            {
+                AnsiConsole.MarkupLine("[green]✓ No user codespace secrets found (already clean)[/]");
+                return;
+            }
+
+            AnsiConsole.MarkupLine($"[red]Found:[/] {secretList.Secrets.Count} user codespace secrets");
+            foreach (var secret in secretList.Secrets)
+            {
+                AnsiConsole.MarkupLine($"  [dim]- {secret.Name} (Updated: {secret.UpdatedAt})[/]");
+            }
+            AnsiConsole.MarkupLine($"[red]⚠️  THESE are causing the 200KB payload error![/]");
+
+            AnsiConsole.MarkupLine("\n[cyan]Step 2/2:[/] Deleting user codespace secrets...");
+            int deleted = 0;
+            int failed = 0;
+
+            foreach (var secret in secretList.Secrets)
+            {
+                try
+                {
+                    var deleteUrl = $"https://api.github.com/user/codespaces/secrets/{secret.Name}";
+                    var deleteResponse = await client.DeleteAsync(deleteUrl);
+
+                    if (deleteResponse.IsSuccessStatusCode || deleteResponse.StatusCode == System.Net.HttpStatusCode.NoContent)
+                    {
+                        AnsiConsole.MarkupLine($"[green]✓[/] Deleted: [dim]{secret.Name}[/]");
+                        deleted++;
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine($"[red]✗[/] Failed: [dim]{secret.Name}[/] ({deleteResponse.StatusCode})");
+                        failed++;
+                    }
+
+                    await Task.Delay(500);
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLine($"[red]✗[/] Error deleting [dim]{secret.Name}[/]: {ex.Message}");
+                    failed++;
+                }
+            }
+
+            AnsiConsole.MarkupLine("\n[cyan]═══════════════════════════════════════════════════════════════[/]");
+            AnsiConsole.MarkupLine($"[green]✓ Cleanup complete![/]");
+            AnsiConsole.MarkupLine($"[dim]Deleted: {deleted} | Failed: {failed} | Total: {secretList.Secrets.Count}[/]");
+            AnsiConsole.MarkupLine("\n[yellow]Now try creating codespace again (Menu 1)[/]");
+            AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"\n[red]✗ Cleanup failed: {ex.Message}[/]");
+            AnsiConsole.WriteException(ex);
+        }
+    }
+
+    /// <summary>
     /// Hapus SEMUA GitHub Repository Secrets (Actions secrets)
-    /// INI YANG BIKIN ERROR "payload exceed 50KB"
     /// </summary>
     public static async Task DeleteAllRepositorySecrets()
     {
