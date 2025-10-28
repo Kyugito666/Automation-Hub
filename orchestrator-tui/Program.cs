@@ -76,8 +76,7 @@ internal static class Program
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
-                        "5. Deploy Secrets (Upload via SSH)",
-                        "6. Refresh All Configs",
+                        "5. Refresh All Configs",
                         "0. Exit"
                     }));
 
