@@ -13,7 +13,6 @@ internal static class Program
 {
     private static CancellationTokenSource _mainCts = new CancellationTokenSource();
     
-    // CTS khusus untuk bot/attach session
     private static CancellationTokenSource? _interactiveCts;
 
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromHours(3);
@@ -24,7 +23,6 @@ internal static class Program
         Console.CancelKeyPress += (sender, e) => {
             e.Cancel = true;
             
-            // Cek apakah kita sedang menjalankan sesi interaktif (attach/bot)
             if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested)
             {
                 AnsiConsole.MarkupLine("\n[yellow]Ctrl+C detected. Requesting interactive session shutdown...[/]");
@@ -73,12 +71,12 @@ internal static class Program
                 new SelectionPrompt<string>()
                     .Title("\n[bold white]MAIN MENU[/]")
                     .PageSize(10)
-                    .WrapAround(true) // <- Wrap-around di Menu Utama
+                    .WrapAround(true)
                     .AddChoices(new[] {
                         "1. Start/Manage Codespace Runner (Continuous Loop)",
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
-                        "4. Attach to Bot Session (Remote)", // <- Menu Baru
+                        "4. Attach to Bot Session (Remote)",
                         "5. Refresh All Configs",
                         "0. Exit"
                     }));
@@ -97,7 +95,7 @@ internal static class Program
                         await ShowLocalMenuAsync(cancellationToken); 
                         break;
                     case "4": 
-                        await ShowAttachMenuAsync(cancellationToken); // <- Menu Baru
+                        await ShowAttachMenuAsync(cancellationToken);
                         break;
                     case "5": 
                         TokenManager.ReloadAllConfigs(); 
@@ -128,7 +126,7 @@ internal static class Program
                  new SelectionPrompt<string>()
                      .Title("\n[bold white]TOKEN & COLLABORATOR SETUP[/]")
                      .PageSize(10)
-                     .WrapAround(true) // <- Wrap-around
+                     .WrapAround(true)
                      .AddChoices(new[] {
                          "1. Validate Tokens & Get Usernames",
                          "2. Invite Collaborators",
@@ -168,7 +166,7 @@ internal static class Program
                  new SelectionPrompt<string>()
                      .Title("\n[bold white]LOCAL PROXY MANAGEMENT[/]")
                      .PageSize(10)
-                     .WrapAround(true) // <- Wrap-around
+                     .WrapAround(true)
                      .AddChoices(new[] {
                          "1. Run ProxySync (Update TUI's proxy list)",
                          "0. Back to Main Menu"
@@ -183,7 +181,6 @@ internal static class Program
         }
     }
     
-    // === MENU BARU: ATTACH TO BOT ===
     private static async Task ShowAttachMenuAsync(CancellationToken mainCancellationToken)
     {
         AnsiConsole.Clear();
@@ -217,7 +214,7 @@ internal static class Program
             new SelectionPrompt<string>()
                 .Title($"Select bot to attach (in [green]{activeCodespace}[/]):")
                 .PageSize(15)
-                .WrapAround(true) // <- Wrap-around
+                .WrapAround(true)
                 .AddChoices(sessions)
         );
 
@@ -233,10 +230,9 @@ internal static class Program
 
         try
         {
-            string tmuxSessionName = "automation_hub_bots"; // Sesuai 'deploy_bots.py'
+            string tmuxSessionName = "automation_hub_bots";
             string args = $"codespace ssh -c {activeCodespace} -- tmux attach-session -t {tmuxSessionName} -w \"{selectedBot}\"";
             
-            // Pisahkan 'gh' dari sisa argumennya
             await ShellHelper.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCts.Token);
         }
         catch (OperationCanceledException)
@@ -257,14 +253,7 @@ internal static class Program
             _interactiveCts = null;
         }
     }
-    // === AKHIR MENU BARU ===
 
-
-    // --- Helper GetProjectRoot (dihapus, pindah ke BotConfig.cs) ---
-    // --- Helper GetLocalBotPathForTest (dihapus, pindah ke BotConfig.cs) ---
-    // --- Helper GetRunCommandLocal (dihapus, 'Test Local Bot' dihapus) ---
-    // --- Helper TestLocalBotAsync (dihapus, 'Test Local Bot' dihapus) ---
-    
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) 
     {
         Console.WriteLine("Starting Orchestrator Loop...");
@@ -306,11 +295,8 @@ internal static class Program
                 
                 Console.WriteLine("Ensuring codespace...");
                 
-                // === LOGIKA BARU: 'EnsureHealthyCodespace' sekarang pinter ===
-                // Dia akan 'start' jika 'Stopped', 'create' jika 'null'
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken);
                 
-                // Cek apakah TUI perlu meng-upload config (HANYA jika nama CS berubah)
                 bool isNewOrRecreatedCodespace = currentState.ActiveCodespaceName != activeCodespace;
                 
                 if (isNewOrRecreatedCodespace) 
@@ -321,10 +307,8 @@ internal static class Program
                     Console.WriteLine($"Active CS: {activeCodespace}");
                     Console.WriteLine("New/Recreated CS detected. Uploading core configs..."); 
                     
-                    // Upload file config (bots_config.json, dll)
                     await CodespaceManager.UploadConfigs(currentToken, activeCodespace);
                     
-                    // Trigger auto-start
                     await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace);
                     Console.WriteLine("Initial startup complete."); 
                 } 
@@ -349,16 +333,17 @@ internal static class Program
                 
                 Console.WriteLine("Keep-Alive: Checking SSH..."); 
                 
-                if (!await CodespaceManager.CheckSshHealthWithRetry(currentToken, activeCodespace)) 
+                // === FIX: Ganti CheckSshHealthWithRetry dengan CheckHealthWithRetry ===
+                if (!await CodespaceManager.CheckHealthWithRetry(currentToken, activeCodespace)) 
                 { 
-                    Console.WriteLine("Keep-Alive: SSH check FAILED!"); 
+                    Console.WriteLine("Keep-Alive: Health check FAILED!"); 
                     currentState.ActiveCodespaceName = null; 
                     TokenManager.SaveState(currentState); 
                     Console.WriteLine("Will recreate next cycle."); 
                 } 
                 else 
                 { 
-                    Console.WriteLine("Keep-Alive: SSH check OK.");
+                    Console.WriteLine("Keep-Alive: Health check OK.");
                     
                     try
                     {
