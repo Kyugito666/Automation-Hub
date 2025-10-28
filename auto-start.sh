@@ -1,65 +1,59 @@
 #!/bin/bash
 #
-# auto-start.sh
-# Entrypoint remote yang dipanggil oleh TUI C# lokal via 'gh codespace ssh'.
+# auto-start.sh (Lightweight - Nexus Style)
+# Dijalankan MANUAL oleh TUI via SSH SETELAH SSH ready.
+# Fokus hanya pada runtime logic: git pull, proxysync, deploy_bots.
 #
 
-# Tentukan path kerja (standar Codespace)
 WORKDIR="/workspaces/automation-hub"
 LOG_FILE="$WORKDIR/startup.log"
 
-# Mengalihkan semua output (stdout & stderr) ke file log
+# Redirect output ke log
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-echo "=================================================="
-echo "  AUTOMATION-HUB CODESPACE RUNNER - AUTO START"
+echo "========================================="
+echo "  AUTO START SCRIPT (Lightweight)"
 echo "  $(date)"
-echo "=================================================="
+echo "========================================="
 
-cd "$WORKDIR"
+cd "$WORKDIR" || exit 1
 
-# === HAPUS FILE HEALTH CHECK LAMA (JIKA ADA) ===
-rm -f /tmp/auto_start_done
-echo "Previous health check file removed (if existed)."
-# === AKHIR HAPUS ===
+# Hapus flag health check/error lama
+rm -f /tmp/auto_start_done /tmp/auto_start_failed_*
+echo "Cleaned up previous status flags."
 
-echo "[1/5] Melakukan self-update (git pull)..."
+echo "[1/3] Self-update (git pull)..."
 git pull
 
-echo "[2/5] Menginstal/Update dependensi ProxySync..."
-# Kita butuh 'rich' dan 'requests' dari proxysync
-if [ -f "$WORKDIR/proxysync/requirements.txt" ]; then
-    pip install --no-cache-dir --upgrade -r "$WORKDIR/proxysync/requirements.txt"
-else
-    echo "WARNING: proxysync/requirements.txt tidak ditemukan. Lanjut..."
-fi
-
-echo "[3/5] Menjalankan ProxySync (IP Auth, Download, Test)..."
-# Menjalankan proxysync dalam mode non-interaktif
+echo "[2/3] Menjalankan ProxySync (IP Auth, Download, Test)..."
+# Asumsi python3 ada di PATH dan proxysync deps sudah diinstall oleh first-setup/postAttach
 python3 "$WORKDIR/proxysync/main.py" --full-auto
-echo "   ProxySync selesai. File 'success_proxy.txt' telah diperbarui."
-
-echo "[4/5] Memeriksa file konfigurasi..."
-# TUI lokal bertanggung jawab meng-upload file-file ini saat 'create'
-if [ ! -f "$WORKDIR/config/bots_config.json" ]; then
-    echo "FATAL: config/bots_config.json tidak ditemukan!"
-    echo "Pastikan TUI lokal sudah 'gh codespace cp' file config."
-    # === TAMBAHAN: Buat file penanda GAGAL ===
-    touch /tmp/auto_start_failed_config
+if [ $? -ne 0 ]; then
+    echo "   ❌ ERROR: ProxySync failed!"
+    touch /tmp/auto_start_failed_proxysync # Buat flag error
     exit 1
 fi
+echo "   ✓ ProxySync selesai. success_proxy.txt updated."
 
-echo "[5/5] Menjalankan skrip deployer utama (deploy_bots.py)..."
-# deploy_bots.py sekarang akan 'smart install' dan baca 'success_proxy.txt'
+echo "[3/3] Menjalankan Bot Deployer (Smart Install)..."
+# Deployer akan cek venv/node_modules dan skip install jika ada
 python3 "$WORKDIR/deploy_bots.py"
+if [ $? -ne 0 ]; then
+    echo "   ❌ ERROR: Bot deployment failed!"
+    touch /tmp/auto_start_failed_deploy # Buat flag error
+    exit 1
+fi
+echo "   ✓ Bot deployment selesai."
 
-echo "=================================================="
-echo "  AUTO-START SCRIPT SELESAI"
-echo "  Gunakan 'Menu 4 (Attach)' di TUI untuk monitor."
-echo "=================================================="
 
-# === TAMBAHAN: Buat file penanda selesai ===
+echo "========================================="
+echo "  AUTO START SCRIPT SELESAI (Sukses)"
+echo "  Gunakan Menu 4 (Attach) di TUI."
+echo "========================================="
+
+# Buat flag SUKSES untuk health check TUI
 touch /tmp/auto_start_done
-echo "Health check file created: /tmp/auto_start_done"
-# === AKHIR TAMBAHAN ===
+echo "Health check flag created: /tmp/auto_start_done"
+
+exit 0 # Pastikan exit code 0 jika sukses
 
