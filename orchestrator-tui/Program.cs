@@ -98,7 +98,7 @@ internal static class Program
                         await ShowAttachMenuAsync(cancellationToken);
                         break;
                     case "5":
-                        await SecretManager.SetSecretsForActiveToken();
+                        AnsiConsole.MarkupLine("[yellow]Manual secret upload removed. Use auto-cleanup instead.[/]");
                         Pause("Press Enter to continue...", cancellationToken);
                         break;
                     case "6": 
