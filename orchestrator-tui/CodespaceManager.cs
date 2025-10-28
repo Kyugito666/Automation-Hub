@@ -240,7 +240,7 @@ public static class CodespaceManager
 
     // === FIX CS1998: Hapus async jika tidak perlu ===
     // Fungsi ini hanya setup string path, tidak ada await
-    public static void UploadConfigs(TokenEntry token, string codespaceName) {
+    public static async Task UploadConfigs(TokenEntry token, string codespaceName) {
         AnsiConsole.MarkupLine("\n[cyan]Uploading CORE configs...[/]");
         string remoteDir = $"/workspaces/{token.Repo}/config";
         AnsiConsole.Markup("[dim]  Ensure remote dir... [/]");
@@ -248,9 +248,9 @@ public static class CodespaceManager
         try { string mkdirArgs=$"codespace ssh -c {codespaceName} -- mkdir -p {remoteDir}"; ShellHelper.RunGhCommand(token, mkdirArgs).GetAwaiter().GetResult(); AnsiConsole.MarkupLine("[green]OK[/]"); }
         catch (Exception ex) { AnsiConsole.MarkupLine($"[yellow]Warn (mkdir): {ex.Message.Split('\n').FirstOrDefault()}[/]"); }
         // Upload tetap async
-        _ = UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "bots_config.json"), $"{remoteDir}/bots_config.json");
-        _ = UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "apilist.txt"), $"{remoteDir}/apilist.txt");
-        _ = UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "paths.txt"), $"{remoteDir}/paths.txt");
+        await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "bots_config.json"), $"{remoteDir}/bots_config.json");
+        await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "apilist.txt"), $"{remoteDir}/apilist.txt");
+        await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "paths.txt"), $"{remoteDir}/paths.txt");
     }
 
     // Fungsi ini memang melakukan banyak await
