@@ -12,6 +12,9 @@ namespace Orchestrator;
 internal static class Program
 {
     private static CancellationTokenSource _mainCts = new CancellationTokenSource();
+    
+    // CTS khusus untuk bot/attach session
+    private static CancellationTokenSource? _interactiveCts;
 
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromHours(3);
     private static readonly TimeSpan ErrorRetryDelay = TimeSpan.FromMinutes(5);
@@ -20,10 +23,20 @@ internal static class Program
     {
         Console.CancelKeyPress += (sender, e) => {
             e.Cancel = true;
-            if (!_mainCts.IsCancellationRequested) {
-                AnsiConsole.MarkupLine("\n[red]Ctrl+C detected. Requesting shutdown...[/]");
+            
+            // Cek apakah kita sedang menjalankan sesi interaktif (attach/bot)
+            if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested)
+            {
+                AnsiConsole.MarkupLine("\n[yellow]Ctrl+C detected. Requesting interactive session shutdown...[/]");
+                _interactiveCts.Cancel();
+            }
+            else if (!_mainCts.IsCancellationRequested)
+            {
+                AnsiConsole.MarkupLine("\n[red]Ctrl+C detected. Requesting main shutdown...[/]");
                 _mainCts.Cancel();
-            } else { 
+            } 
+            else 
+            { 
                 AnsiConsole.MarkupLine("[yellow]Shutdown already requested...[/]"); 
             }
         };
@@ -60,12 +73,12 @@ internal static class Program
                 new SelectionPrompt<string>()
                     .Title("\n[bold white]MAIN MENU[/]")
                     .PageSize(10)
-                    .WrapAround(true)
+                    .WrapAround(true) // <- Wrap-around di Menu Utama
                     .AddChoices(new[] {
                         "1. Start/Manage Codespace Runner (Continuous Loop)",
                         "2. Token & Collaborator Management",
-                        "3. Proxy Management (Run ProxySync)",
-                        "4. Test Local Bot",
+                        "3. Proxy Management (Local TUI Proxy)",
+                        "4. Attach to Bot Session (Remote)", // <- Menu Baru
                         "5. Refresh All Configs",
                         "0. Exit"
                     }));
@@ -84,7 +97,7 @@ internal static class Program
                         await ShowLocalMenuAsync(cancellationToken); 
                         break;
                     case "4": 
-                        await ShowDebugMenuAsync(cancellationToken); 
+                        await ShowAttachMenuAsync(cancellationToken); // <- Menu Baru
                         break;
                     case "5": 
                         TokenManager.ReloadAllConfigs(); 
@@ -115,6 +128,7 @@ internal static class Program
                  new SelectionPrompt<string>()
                      .Title("\n[bold white]TOKEN & COLLABORATOR SETUP[/]")
                      .PageSize(10)
+                     .WrapAround(true) // <- Wrap-around
                      .AddChoices(new[] {
                          "1. Validate Tokens & Get Usernames",
                          "2. Invite Collaborators",
@@ -154,8 +168,9 @@ internal static class Program
                  new SelectionPrompt<string>()
                      .Title("\n[bold white]LOCAL PROXY MANAGEMENT[/]")
                      .PageSize(10)
+                     .WrapAround(true) // <- Wrap-around
                      .AddChoices(new[] {
-                         "1. Run ProxySync (Download, Test, Generate proxy.txt)",
+                         "1. Run ProxySync (Update TUI's proxy list)",
                          "0. Back to Main Menu"
                      }));
              
@@ -168,212 +183,87 @@ internal static class Program
         }
     }
     
-    private static async Task ShowDebugMenuAsync(CancellationToken cancellationToken) {
-        while (!cancellationToken.IsCancellationRequested) {
-            AnsiConsole.Clear(); 
-            AnsiConsole.Write(new FigletText("Debug").Centered().Color(Color.Grey));
-            
-            var selection = AnsiConsole.Prompt(
-                new SelectionPrompt<string>()
-                    .Title("\n[bold white]DEBUG & LOCAL TESTING[/]")
-                    .PageSize(10)
-                    .AddChoices(new[] {
-                        "1. Test Local Bot (Run Interactively)",
-                        "0. Back to Main Menu"
-                    }));
-            
-            var sel = selection[0].ToString();
-            if (sel == "0") return;
-            
-            if (sel == "1") await TestLocalBotAsync(cancellationToken);
-        }
-    }
-
-    private static async Task TestLocalBotAsync(CancellationToken cancellationToken) {
-        var config = BotConfig.Load();
-        if (config == null || !config.BotsAndTools.Any()) { 
-            AnsiConsole.MarkupLine("[red]No bots configured.[/]"); 
-            Pause("Press Enter to continue...", cancellationToken); 
-            return; 
-        }
-        
-        var enabledBots = config.BotsAndTools.Where(b => b.Enabled && b.IsBot).ToList();
-        if (!enabledBots.Any()) { 
-            AnsiConsole.MarkupLine("[yellow]No enabled bots.[/]"); 
-            Pause("Press Enter to continue...", cancellationToken); 
-            return; 
-        }
-        
-        var backOption = new BotEntry { Name = "[Back]", Path = "BACK" };
-        var choices = enabledBots.OrderBy(b => b.Name).ToList(); 
-        choices.Add(backOption);
-        
-        var selectedBot = AnsiConsole.Prompt(
-            new SelectionPrompt<BotEntry>()
-                .Title("Select bot:")
-                .PageSize(15)
-                .UseConverter(b => b.Name)
-                .AddChoices(choices)
-        );
-        
-        if (selectedBot == backOption) return;
-        
-        AnsiConsole.MarkupLine($"\n[cyan]Preparing {selectedBot.Name.EscapeMarkup()}...[/]");
-        
-        string botPath = GetLocalBotPathForTest(selectedBot.Path);
-        
-        if (!Directory.Exists(botPath)) { 
-            AnsiConsole.MarkupLine($"[red]Path not found: {botPath.EscapeMarkup()}[/]");
-            AnsiConsole.MarkupLine("[yellow]Bot belum ada di D:\\SC\\PrivateKey atau D:\\SC\\Token[/yellow]");
-            Pause("Press Enter to continue...", cancellationToken); 
-            return; 
-        }
-
-        // === PERBAIKAN: HAPUS BLOK INSTALASI DEPENDENSI ===
-        // Sesuai permintaan, blok 'try-catch' untuk 'npm install'
-        // dan 'pip install' dihapus total.
-        // === AKHIR PERBAIKAN ===
-        
-        var (executor, args) = GetRunCommandLocal(botPath, selectedBot.Type);
-        
-        if (string.IsNullOrEmpty(executor)) { 
-            AnsiConsole.MarkupLine($"[red]   ✗ No valid entry point found for {selectedBot.Name.EscapeMarkup()}[/]"); 
-            Pause("Press Enter to continue...", cancellationToken); 
-            return; 
-        }
-        
-        AnsiConsole.MarkupLine($"\n[cyan]Running {selectedBot.Name.EscapeMarkup()}...[/]");
-        AnsiConsole.MarkupLine($"[dim]   CMD: {executor.EscapeMarkup()} {args.EscapeMarkup()}[/]");
-        AnsiConsole.MarkupLine("[yellow]Press Ctrl+C to stop the bot and return to menu.[/]");
-        AnsiConsole.MarkupLine("[dim]Full keyboard interaction enabled (arrow keys, enter, y/n, etc.)[/]");
-        
-        try { 
-            await ShellHelper.RunInteractiveWithFullInput(executor, args, botPath, null, cancellationToken); 
-        }
-        catch (OperationCanceledException) { 
-            AnsiConsole.MarkupLine("\n[yellow]Bot stopped by user.[/]"); 
-        } 
-        catch (Exception ex) { 
-            AnsiConsole.MarkupLine($"\n[red]Bot crashed: {ex.Message.EscapeMarkup()}[/]"); 
-            Pause("Press Enter to continue...", CancellationToken.None); 
-        }
-    }
-
-    /// <summary>
-    /// Konversi path relatif dari config ke path absolut D:\SC
-    /// Contoh: "bots/privatekey/TurnAutoBot-NTE" -> "D:\SC\PrivateKey\TurnAutoBot-NTE"
-    /// </summary>
-    private static string GetLocalBotPathForTest(string configPath)
+    // === MENU BARU: ATTACH TO BOT ===
+    private static async Task ShowAttachMenuAsync(CancellationToken mainCancellationToken)
     {
-        // Normalize path separator
-        configPath = configPath.Replace('/', '\\');
+        AnsiConsole.Clear();
+        AnsiConsole.Write(new FigletText("Attach").Centered().Color(Color.Blue));
         
-        // Ambil nama bot (bagian terakhir)
-        var botName = Path.GetFileName(configPath);
+        var currentToken = TokenManager.GetCurrentToken();
+        var state = TokenManager.GetState();
+        var activeCodespace = state.ActiveCodespaceName;
+
+        if (string.IsNullOrEmpty(activeCodespace))
+        {
+            AnsiConsole.MarkupLine("[red]Error: No active codespace found.[/]");
+            AnsiConsole.MarkupLine("[yellow]Please run 'Start/Manage Codespace' (Menu 1) first.[/]");
+            Pause("Press Enter to continue...", mainCancellationToken);
+            return;
+        }
         
-        // Tentukan folder target (PrivateKey atau Token)
-        if (configPath.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
+        var sessions = await CodespaceManager.GetTmuxSessions(currentToken, activeCodespace);
+        if (!sessions.Any())
         {
-            return Path.Combine(@"D:\SC\PrivateKey", botName);
+            AnsiConsole.MarkupLine("[yellow]No running bot sessions found in tmux.[/]");
+            AnsiConsole.MarkupLine("[dim]Bots might still be starting up. Check 'auto-start.sh' log.[/]");
+            Pause("Press Enter to continue...", mainCancellationToken);
+            return;
         }
-        else if (configPath.Contains("token", StringComparison.OrdinalIgnoreCase))
+
+        var backOption = "[ (Back to Main Menu) ]";
+        sessions.Add(backOption);
+
+        var selectedBot = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title($"Select bot to attach (in [green]{activeCodespace}[/]):")
+                .PageSize(15)
+                .WrapAround(true) // <- Wrap-around
+                .AddChoices(sessions)
+        );
+
+        if (selectedBot == backOption) return;
+
+        AnsiConsole.MarkupLine($"\n[cyan]Attaching to [yellow]{selectedBot}[/].[/]");
+        AnsiConsole.MarkupLine("[dim]   (Gunakan [bold]Ctrl+B[/] lalu [bold]D[/] untuk detach dari session)[/]");
+        AnsiConsole.MarkupLine("[dim]   (Gunakan [bold]Ctrl+B[/] lalu [bold]N[/] (next) / [bold]P[/] (prev) untuk ganti bot)[/]");
+        AnsiConsole.MarkupLine("[yellow]   Press Ctrl+C to force-quit this attach session.[/]");
+
+        _interactiveCts = new CancellationTokenSource();
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_interactiveCts.Token, mainCancellationToken);
+
+        try
         {
-            return Path.Combine(@"D:\SC\Token", botName);
+            string tmuxSessionName = "automation_hub_bots"; // Sesuai 'deploy_bots.py'
+            string args = $"codespace ssh -c {activeCodespace} -- tmux attach-session -t {tmuxSessionName} -w \"{selectedBot}\"";
+            
+            // Pisahkan 'gh' dari sisa argumennya
+            await ShellHelper.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCts.Token);
         }
-        else
+        catch (OperationCanceledException)
         {
-            // Fallback jika format path tidak dikenali
-            AnsiConsole.MarkupLine($"[yellow]Warning: Path format tidak dikenali: {configPath}[/yellow]");
-            return Path.Combine(@"D:\SC", botName);
+            if (_interactiveCts.IsCancellationRequested)
+                AnsiConsole.MarkupLine("\n[yellow]Attach session stopped by user (Ctrl+C).[/]");
+            else
+                AnsiConsole.MarkupLine("\n[yellow]Main app shutdown requested. Stopping attach...[/]");
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"\n[red]Attach session crashed: {ex.Message.EscapeMarkup()}[/]");
+            Pause("Press Enter to continue...", CancellationToken.None);
+        }
+        finally
+        {
+            _interactiveCts.Dispose();
+            _interactiveCts = null;
         }
     }
+    // === AKHIR MENU BARU ===
 
-    private static (string executor, string args) GetRunCommandLocal(string botPath, string type) {
-        if (type == "python") {
-            string pythonExe = "python"; // Fallback ke python global
-            
-            // === PERBAIKAN: Cari venv yang ada ===
-            var venvNames = new[] { ".venv", "venv", "myenv" };
-            string? foundVenvPath = null;
-            
-            foreach (var venvName in venvNames)
-            {
-                var venvDir = Path.Combine(botPath, venvName);
-                if (Directory.Exists(venvDir))
-                {
-                    foundVenvPath = venvDir;
-                    AnsiConsole.MarkupLine($"[dim]   Found existing venv: [yellow]{venvName}[/][/]");
-                    break;
-                }
-            }
 
-            if (foundVenvPath != null) {
-                var winPath = Path.Combine(foundVenvPath, "Scripts", "python.exe"); 
-                var linPath = Path.Combine(foundVenvPath, "bin", "python"); 
-                
-                if (File.Exists(winPath)) {
-                    pythonExe = $"\"{winPath}\""; 
-                } else if (File.Exists(linPath)) {
-                    pythonExe = $"\"{linPath}\"";
-                } else {
-                    AnsiConsole.MarkupLine($"[yellow]   Venv found but no python.exe/python. Fallback to global 'python'[/]");
-                }
-            } else {
-                 AnsiConsole.MarkupLine("[dim]   No venv found. Using global 'python'[/]");
-            }
-            // === AKHIR PERBAIKAN ===
-            
-            foreach (var entry in new[] {"run.py", "main.py", "bot.py"}) { 
-                if (File.Exists(Path.Combine(botPath, entry))) 
-                    return (pythonExe, $"\"{entry}\""); 
-            }
-        } 
-        else if (type == "javascript") {
-            var pkgFile = Path.Combine(botPath, "package.json");
-            
-            if (File.Exists(pkgFile)) { 
-                try { 
-                    var content = File.ReadAllText(pkgFile); 
-                    using var doc = JsonDocument.Parse(content); 
-                    
-                    if (doc.RootElement.TryGetProperty("scripts", out var s) && 
-                        s.TryGetProperty("start", out _)) 
-                        return ("npm", "start"); 
-                } 
-                catch { }
-            }
-            
-            foreach (var entry in new[] {"index.js", "main.js", "bot.js"}) { 
-                if (File.Exists(Path.Combine(botPath, entry))) 
-                    return ("node", $"\"{entry}\""); 
-            }
-        }
-        
-        AnsiConsole.MarkupLine("[red]No valid entry point found[/]");
-        return (string.Empty, string.Empty);
-    }
-
-    private static string GetProjectRoot() {
-        var currentDir = new DirectoryInfo(AppContext.BaseDirectory); 
-        int maxDepth = 10; 
-        int currentDepth = 0;
-        
-        while (currentDir != null && currentDepth < maxDepth) {
-            var cfgDir = Path.Combine(currentDir.FullName, "config"); 
-            var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
-            
-            if (Directory.Exists(cfgDir) && File.Exists(gitignore)) { 
-                return currentDir.FullName; 
-            }
-            
-            currentDir = currentDir.Parent; 
-            currentDepth++;
-        }
-        
-        var fallbackPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-        AnsiConsole.MarkupLine($"[yellow]Warning: Project root not detected. Using fallback: {fallbackPath.EscapeMarkup()}[/]");
-        return fallbackPath;
-    }
+    // --- Helper GetProjectRoot (dihapus, pindah ke BotConfig.cs) ---
+    // --- Helper GetLocalBotPathForTest (dihapus, pindah ke BotConfig.cs) ---
+    // --- Helper GetRunCommandLocal (dihapus, 'Test Local Bot' dihapus) ---
+    // --- Helper TestLocalBotAsync (dihapus, 'Test Local Bot' dihapus) ---
     
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) 
     {
@@ -414,74 +304,33 @@ internal static class Program
                     continue; 
                 }
                 
-                Console.WriteLine("Ensuring codespace..."); 
+                Console.WriteLine("Ensuring codespace...");
+                
+                // === LOGIKA BARU: 'EnsureHealthyCodespace' sekarang pinter ===
+                // Dia akan 'start' jika 'Stopped', 'create' jika 'null'
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken);
                 
-                bool isNewCodespace = currentState.ActiveCodespaceName != activeCodespace;
+                // Cek apakah TUI perlu meng-upload config (HANYA jika nama CS berubah)
+                bool isNewOrRecreatedCodespace = currentState.ActiveCodespaceName != activeCodespace;
                 
-                if (isNewCodespace) 
+                if (isNewOrRecreatedCodespace) 
                 { 
                     currentState.ActiveCodespaceName = activeCodespace; 
                     TokenManager.SaveState(currentState); 
                     
                     Console.WriteLine($"Active CS: {activeCodespace}");
-                    Console.WriteLine("New/Recreated CS detected..."); 
+                    Console.WriteLine("New/Recreated CS detected. Uploading core configs..."); 
                     
-                    bool uploadSuccess = false;
-                    for (int uploadAttempt = 1; uploadAttempt <= 3; uploadAttempt++)
-                    {
-                        try
-                        {
-                            await CodespaceManager.UploadConfigs(currentToken, activeCodespace);
-                            uploadSuccess = true;
-                            break;
-                        }
-                        catch (Exception uploadEx)
-                        {
-                            AnsiConsole.MarkupLine($"[red]Upload attempt {uploadAttempt}/3 failed: {uploadEx.Message.EscapeMarkup()}[/]");
-                            if (uploadAttempt < 3)
-                            {
-                                AnsiConsole.MarkupLine("[yellow]Retrying in 10 seconds...[/]");
-                                await Task.Delay(10000, cancellationToken);
-                            }
-                        }
-                    }
+                    // Upload file config (bots_config.json, dll)
+                    await CodespaceManager.UploadConfigs(currentToken, activeCodespace);
                     
-                    if (!uploadSuccess)
-                    {
-                        throw new Exception("Failed to upload configs after 3 attempts");
-                    }
-                    
-                    bool startupSuccess = false;
-                    for (int startupAttempt = 1; startupAttempt <= 3; startupAttempt++)
-                    {
-                        try
-                        {
-                            await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace);
-                            startupSuccess = true;
-                            break;
-                        }
-                        catch (Exception startupEx)
-                        {
-                            AnsiConsole.MarkupLine($"[red]Startup attempt {startupAttempt}/3 failed: {startupEx.Message.EscapeMarkup()}[/]");
-                            if (startupAttempt < 3)
-                            {
-                                AnsiConsole.MarkupLine("[yellow]Retrying in 15 seconds...[/]");
-                                await Task.Delay(15000, cancellationToken);
-                            }
-                        }
-                    }
-                    
-                    if (!startupSuccess)
-                    {
-                        throw new Exception("Failed to trigger startup script after 3 attempts");
-                    }
-                    
+                    // Trigger auto-start
+                    await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace);
                     Console.WriteLine("Initial startup complete."); 
                 } 
                 else 
                 { 
-                    Console.WriteLine("Codespace healthy (reusing existing)."); 
+                    Console.WriteLine("Codespace healthy (reusing existing 'Available' or 'Stopped')."); 
                 }
                 
                 consecutiveErrors = 0;
@@ -513,7 +362,7 @@ internal static class Program
                     
                     try
                     {
-                        Console.WriteLine("Keep-Alive: Re-triggering startup script...");
+                        Console.WriteLine("Keep-Alive: Re-triggering startup script (git pull & restart bots)...");
                         await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace);
                     }
                     catch (Exception ex)
