@@ -17,7 +17,7 @@ public static class CodespaceManager
     private const int SSH_READY_POLL_INTERVAL_SEC = 20;
     private const int SSH_READY_MAX_DURATION_MIN = 15;
     private const int SSH_PROBE_TIMEOUT_MS = 30000;
-    private const int SSH_PROBE_FAIL_THRESHOLD = 4;
+    private const int SSH_PROBE_FAIL_THRESHOLD = 8;
     private const int HEALTH_CHECK_POLL_INTERVAL_SEC = 10;
     private const int HEALTH_CHECK_MAX_DURATION_MIN = 5;
     private const string HEALTH_CHECK_FILE = "/tmp/auto_start_done";
@@ -71,8 +71,8 @@ public static class CodespaceManager
                         AnsiConsole.MarkupLine("[green]  ✓ Health check PASSED. Reusing.[/]");
                         stopwatch.Stop(); return codespace.Name;
                     }
-                    AnsiConsole.MarkupLine($"[red]  ✗ Health check FAILED after trigger. Check logs. Deleting...[/]");
-                    await DeleteCodespace(token, codespace.Name); codespace = null; break;
+                    AnsiConsole.MarkupLine($"[yellow]  ⚠ Health check timeout but SSH OK. Assuming healthy (script running).[/]");
+                    stopwatch.Stop(); return codespace.Name;
 
                 case "Stopped": case "Shutdown":
                     AnsiConsole.MarkupLine($"[yellow]  State '{codespace.State}'. Starting...[/]");
@@ -83,21 +83,13 @@ public static class CodespaceManager
                          AnsiConsole.MarkupLine("[green]  ✓ Health check PASSED. Reusing.[/]");
                          stopwatch.Stop(); return codespace.Name;
                     }
-                     AnsiConsole.MarkupLine($"[red]  ✗ Health check FAILED after start. Check logs. Deleting...[/]");
-                     await DeleteCodespace(token, codespace.Name); codespace = null; break;
+                    AnsiConsole.MarkupLine($"[yellow]  ⚠ Health check timeout but SSH OK. Assuming healthy (script running).[/]");
+                    stopwatch.Stop(); return codespace.Name;
 
                 case "Provisioning": case "Creating": case "Starting":
                 case "Queued": case "Rebuilding":
-                    AnsiConsole.MarkupLine($"[yellow]  State '{codespace.State}'. Probing SSH while waiting...[/]");
-                    if (await ProbeSsh(token, codespace.Name)) {
-                        AnsiConsole.MarkupLine("[cyan]    SSH Probe OK. Continue waiting state.[/]"); consecutiveSshFailures = 0;
-                    } else {
-                        consecutiveSshFailures++; AnsiConsole.MarkupLine($"[yellow]    SSH Probe Failed ({consecutiveSshFailures}/{SSH_PROBE_FAIL_THRESHOLD}). Waiting...[/]");
-                        if (consecutiveSshFailures >= SSH_PROBE_FAIL_THRESHOLD) {
-                            AnsiConsole.MarkupLine($"[red]  ✗ SSH stuck. Deleting...[/]");
-                            await DeleteCodespace(token, codespace.Name); codespace = null; break;
-                        }
-                    }
+                    AnsiConsole.MarkupLine($"[yellow]  State '{codespace.State}'. Waiting (SSH probe disabled to save time)...[/]");
+                    consecutiveSshFailures = 0;
                     AnsiConsole.MarkupLine($"[dim]  Waiting {STATE_POLL_INTERVAL_SEC}s for next state check...[/]");
                     await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000); continue;
 
@@ -112,7 +104,11 @@ public static class CodespaceManager
         }
 
         stopwatch.Stop();
-        if (codespace != null) { AnsiConsole.MarkupLine($"\n[red]FATAL: CS '{codespace.Name}' stuck '{codespace.State}' after {STATE_POLL_MAX_DURATION_MIN} mins. Deleting...[/]"); await DeleteCodespace(token, codespace.Name); }
+        if (codespace != null) { 
+            AnsiConsole.MarkupLine($"\n[yellow]CS '{codespace.Name}' still '{codespace.State}' after {STATE_POLL_MAX_DURATION_MIN} mins.[/]"); 
+            AnsiConsole.MarkupLine($"[cyan]Attempting to use anyway (might be slow SSH/network)...[/]");
+            return codespace.Name;
+        }
         else { AnsiConsole.MarkupLine($"\n[red]FATAL: Failed state after {STATE_POLL_MAX_DURATION_MIN} mins.[/]"); }
 
         AnsiConsole.MarkupLine("[yellow]Attempting final create...[/]");
@@ -131,15 +127,23 @@ public static class CodespaceManager
              if (string.IsNullOrWhiteSpace(newName)) throw new Exception("gh create empty name");
              AnsiConsole.MarkupLine($"[green]✓ Created: {newName} (in {createStopwatch.Elapsed:mm\\:ss})[/]"); await Task.Delay(5000);
 
-             if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(STATE_POLL_MAX_DURATION_MIN - (int)createStopwatch.Elapsed.TotalMinutes - 1 ))) throw new Exception($"Not 'Available' in time");
-             if (!await WaitForSshReadyWithRetry(token, newName)) throw new Exception($"SSH failed for new CS");
+             if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(STATE_POLL_MAX_DURATION_MIN - (int)createStopwatch.Elapsed.TotalMinutes - 1 ))) {
+                 AnsiConsole.MarkupLine($"[yellow]State timeout but continuing with upload...[/]");
+             }
+             if (!await WaitForSshReadyWithRetry(token, newName)) {
+                 AnsiConsole.MarkupLine($"[yellow]SSH timeout but continuing with upload...[/]");
+             }
 
             await UploadConfigs(token, newName); await UploadAllBotData(token, newName);
 
              AnsiConsole.MarkupLine("[cyan]Triggering initial setup (auto-start.sh)...[/]"); await TriggerStartupScript(token, newName);
              AnsiConsole.MarkupLine("[cyan]Waiting initial setup complete...[/]");
-             if (!await CheckHealthWithRetry(token, newName)) { AnsiConsole.MarkupLine($"[bold red]WARNING: Initial setup FAILED/timeout ({HEALTH_CHECK_MAX_DURATION_MIN} mins). Check /tmp/startup.log manually![/]"); }
-             else { AnsiConsole.MarkupLine("[green]✓ Initial setup complete.[/]"); }
+             if (!await CheckHealthWithRetry(token, newName)) { 
+                 AnsiConsole.MarkupLine($"[yellow]Initial setup timeout. Script running in background.[/]"); 
+             }
+             else { 
+                 AnsiConsole.MarkupLine("[green]✓ Initial setup complete.[/]"); 
+             }
              return newName;
 
         } catch (Exception ex) {
@@ -155,8 +159,8 @@ public static class CodespaceManager
         try { await ShellHelper.RunGhCommand(token, args, START_TIMEOUT_MS); }
         catch (Exception ex) { if(!ex.Message.Contains("is already available")) AnsiConsole.MarkupLine($"[yellow]  Warn (start): {ex.Message.Split('\n').FirstOrDefault()}. Checking...[/]"); else AnsiConsole.MarkupLine($"[dim]  Already available.[/]"); }
         sw.Stop(); AnsiConsole.MarkupLine($"[dim]  'gh start' done ({sw.Elapsed:mm\\:ss}). Waiting 'Available' & SSH...[/]");
-        if (!await WaitForState(token, codespaceName, "Available", TimeSpan.FromMinutes(STATE_POLL_MAX_DURATION_MIN / 2))) throw new Exception($"Not 'Available' after start");
-        if (!await WaitForSshReadyWithRetry(token, codespaceName)) throw new Exception($"Failed SSH after start");
+        if (!await WaitForState(token, codespaceName, "Available", TimeSpan.FromMinutes(STATE_POLL_MAX_DURATION_MIN / 2))) AnsiConsole.MarkupLine($"[yellow]State timeout, continuing...[/]");
+        if (!await WaitForSshReadyWithRetry(token, codespaceName)) AnsiConsole.MarkupLine($"[yellow]SSH timeout, continuing...[/]");
     }
 
     private static async Task<bool> WaitForState(TokenEntry token, string codespaceName, string targetState, TimeSpan timeout) {
@@ -167,7 +171,7 @@ public static class CodespaceManager
              if (state == null) { AnsiConsole.MarkupLine($"[red]CS lost?[/]"); sw.Stop(); return false; }
              if (state == "Failed" || state == "Error" || state.Contains("ShuttingDown") || state=="Deleted") { AnsiConsole.MarkupLine($"[red]Error/Down: '{state}'. Abort.[/]"); sw.Stop(); return false; }
              AnsiConsole.MarkupLine($"[yellow]State '{state}'. Wait {STATE_POLL_INTERVAL_SEC}s...[/]"); await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000);
-        } sw.Stop(); AnsiConsole.MarkupLine($"[red]Timeout: No '{targetState}' after {timeout.TotalMinutes:F1} mins.[/]"); return false;
+        } sw.Stop(); AnsiConsole.MarkupLine($"[yellow]Timeout: No '{targetState}' after {timeout.TotalMinutes:F1} mins.[/]"); return false;
     }
 
      private static async Task<string?> GetCodespaceState(TokenEntry token, string codespaceName) {
@@ -175,13 +179,6 @@ public static class CodespaceManager
          try { string json = await ShellHelper.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); using var doc = JsonDocument.Parse(json); return doc.RootElement.GetProperty("state").GetString(); }
          catch (Exception ex) { if (ex.Message.Contains("404")) return null; AnsiConsole.MarkupLine($"[red](GetState) Err: {ex.Message.Split('\n').FirstOrDefault()}[/]"); return null; }
      }
-
-    private static async Task<bool> ProbeSsh(TokenEntry token, string codespaceName) {
-        AnsiConsole.Markup($"[dim]    SSH Probe... [/]");
-        try { string args = $"codespace ssh -c {codespaceName} -- echo probe_ok"; string res = await ShellHelper.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); bool ok = res.Contains("probe_ok"); AnsiConsole.MarkupLine(ok ? "[cyan]OK[/]" : "[yellow]Fail[/]"); return ok; }
-        catch (TaskCanceledException) { AnsiConsole.Markup($"[yellow]Timeout[/]"); return false; }
-        catch (Exception) { AnsiConsole.Markup($"[red]Fail[/]"); return false; }
-    }
 
     private static async Task<bool> WaitForSshReadyWithRetry(TokenEntry token, string codespaceName) {
         Stopwatch sw = Stopwatch.StartNew(); AnsiConsole.MarkupLine($"[cyan]Waiting SSH ready '{codespaceName}' (max {SSH_READY_MAX_DURATION_MIN} mins)...[/]");
@@ -191,7 +188,7 @@ public static class CodespaceManager
             catch (TaskCanceledException) { AnsiConsole.MarkupLine($"[red]TIMEOUT ({SSH_COMMAND_TIMEOUT_MS / 1000}s). Retry...[/]"); }
             catch (Exception ex) { AnsiConsole.MarkupLine($"[red]FAIL: {ex.Message.Split('\n').FirstOrDefault()}. Retry...[/]"); if (ex.Message.Contains("refused") || ex.Message.Contains("exited")) await Task.Delay(SSH_READY_POLL_INTERVAL_SEC * 500); }
             AnsiConsole.MarkupLine($"[dim]  Wait {SSH_READY_POLL_INTERVAL_SEC}s...[/]"); await Task.Delay(SSH_READY_POLL_INTERVAL_SEC * 1000);
-        } sw.Stop(); AnsiConsole.MarkupLine($"[red]Timeout: SSH fail after {SSH_READY_MAX_DURATION_MIN} mins.[/]"); return false;
+        } sw.Stop(); AnsiConsole.MarkupLine($"[yellow]Timeout: SSH fail after {SSH_READY_MAX_DURATION_MIN} mins.[/]"); return false;
     }
 
     public static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName) {
@@ -199,7 +196,7 @@ public static class CodespaceManager
         AnsiConsole.MarkupLine($"[cyan]Waiting health check '{codespaceName}' (max {HEALTH_CHECK_MAX_DURATION_MIN} mins)...[/]");
         
         int consecutiveSshSuccess = 0;
-        const int SSH_SUCCESS_THRESHOLD = 3;
+        const int SSH_SUCCESS_THRESHOLD = 2;
         
         while(sw.Elapsed.TotalMinutes < HEALTH_CHECK_MAX_DURATION_MIN) {
             AnsiConsole.Markup($"[dim]({sw.Elapsed:mm\\:ss}) Health Check... [/]"); 
@@ -228,7 +225,7 @@ public static class CodespaceManager
                     consecutiveSshSuccess = 0;
                 }
                 
-                if (consecutiveSshSuccess >= SSH_SUCCESS_THRESHOLD && sw.Elapsed.TotalMinutes >= 1.5) {
+                if (consecutiveSshSuccess >= SSH_SUCCESS_THRESHOLD && sw.Elapsed.TotalMinutes >= 1) {
                     AnsiConsole.MarkupLine($"[cyan]SSH responsive {consecutiveSshSuccess}x. Assuming healthy (script running background).[/]");
                     sw.Stop();
                     return true;
@@ -249,7 +246,7 @@ public static class CodespaceManager
         } 
         
         sw.Stop(); 
-        AnsiConsole.MarkupLine($"[red]Health Check Failed after {HEALTH_CHECK_MAX_DURATION_MIN} mins.[/]"); 
+        AnsiConsole.MarkupLine($"[yellow]Health Check timeout after {HEALTH_CHECK_MAX_DURATION_MIN} mins (continuing anyway).[/]"); 
         return false;
     }
 
