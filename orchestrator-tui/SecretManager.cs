@@ -8,7 +8,7 @@ public static class SecretManager
 {
     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string LocalBotRoot = @"D:\SC";
-    private static readonly string TempArchivePath = Path.Combine(Path.GetTempPath(), "bot-secrets.tar.gz");
+    private static readonly string TempArchivePath = Path.Combine(Path.GetTempPath(), "bot-secrets.zip");
 
     private static readonly string[] CommonSecretPatterns = new[]
     {
@@ -44,6 +44,74 @@ public static class SecretManager
         }
 
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    }
+
+    public static async Task<bool> AutoDeploySecrets(TokenEntry token, string codespaceName)
+    {
+        try
+        {
+            AnsiConsole.MarkupLine("\n[cyan]═══ Auto-Deploy Secrets ═══[/]");
+
+            var config = BotConfig.Load();
+            if (config == null)
+            {
+                AnsiConsole.MarkupLine("[yellow]⚠ Failed to load bots_config.json, skipping secrets[/]");
+                return false;
+            }
+
+            var secretFiles = new Dictionary<string, string>();
+
+            foreach (var bot in config.BotsAndTools)
+            {
+                if (!bot.Enabled) continue;
+
+                var localBotPath = BotConfig.GetLocalBotPath(bot.Path);
+                if (!Directory.Exists(localBotPath)) continue;
+
+                var files = DetectSecretFilesInDirectory(localBotPath);
+                foreach (var file in files)
+                {
+                    var relativePath = Path.Combine(bot.Path, Path.GetFileName(file)).Replace('\\', '/');
+                    secretFiles[relativePath] = file;
+                }
+            }
+
+            if (!secretFiles.Any())
+            {
+                AnsiConsole.MarkupLine("[dim]○ No secrets found, skipping upload[/]");
+                return true;
+            }
+
+            var totalSize = secretFiles.Sum(kvp => new FileInfo(kvp.Value).Length);
+            AnsiConsole.MarkupLine($"[yellow]Found:[/] {secretFiles.Count} files ({totalSize / 1024.0:F1} KB)");
+
+            AnsiConsole.MarkupLine("[dim]Creating ZIP archive...[/]");
+            CreateTarGz(secretFiles, TempArchivePath);
+
+            string remotePath = "/tmp/bot-secrets.zip";
+            AnsiConsole.MarkupLine("[dim]Uploading via SSH...[/]");
+            string scpArgs = $"codespace cp -c {codespaceName} \"{TempArchivePath}\" remote:{remotePath}";
+            await ShellHelper.RunGhCommand(token, scpArgs, 300000);
+
+            AnsiConsole.MarkupLine("[dim]Extracting in codespace...[/]");
+            string extractCmd = $"cd /workspaces/automation-hub && unzip -o {remotePath} && rm {remotePath}";
+            string sshArgs = $"codespace ssh -c {codespaceName} -- \"{extractCmd}\"";
+            await ShellHelper.RunGhCommand(token, sshArgs, 120000);
+
+            File.Delete(TempArchivePath);
+
+            AnsiConsole.MarkupLine($"[green]✓ Secrets deployed ({secretFiles.Count} files)[/]");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]✗ Secret deployment failed: {ex.Message}[/]");
+            if (File.Exists(TempArchivePath))
+            {
+                try { File.Delete(TempArchivePath); } catch { }
+            }
+            return false;
+        }
     }
 
     public static async Task SetSecretsForActiveToken()
@@ -131,13 +199,13 @@ public static class SecretManager
             AnsiConsole.MarkupLine($"[green]✓[/] Archive: [dim]{new FileInfo(TempArchivePath).Length / 1024.0:F1} KB[/]");
 
             AnsiConsole.MarkupLine("\n[cyan]Step 2/3:[/] Uploading via SSH...");
-            string remotePath = "/tmp/bot-secrets.tar.gz";
+            string remotePath = "/tmp/bot-secrets.zip";
             string scpArgs = $"codespace cp -c {activeCodespace} \"{TempArchivePath}\" remote:{remotePath}";
             await ShellHelper.RunGhCommand(currentToken, scpArgs, 300000);
             AnsiConsole.MarkupLine($"[green]✓[/] Uploaded to [dim]{remotePath}[/]");
 
             AnsiConsole.MarkupLine("\n[cyan]Step 3/3:[/] Extracting in codespace...");
-            string extractCmd = $"cd /workspaces/automation-hub && tar -xzf {remotePath} && rm {remotePath}";
+            string extractCmd = $"cd /workspaces/automation-hub && unzip -o {remotePath} && rm {remotePath}";
             string sshArgs = $"codespace ssh -c {activeCodespace} -- \"{extractCmd}\"";
             await ShellHelper.RunGhCommand(currentToken, sshArgs, 120000);
             AnsiConsole.MarkupLine($"[green]✓[/] Extracted to [dim]/workspaces/automation-hub/[/]");
