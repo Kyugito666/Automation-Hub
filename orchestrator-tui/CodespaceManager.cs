@@ -188,72 +188,71 @@ public static class CodespaceManager
         }
     }
 
-     private static async Task<string> CreateNewCodespace(TokenEntry token, string repoFullName) 
-    {
-        AnsiConsole.MarkupLine($"\n[cyan]═══ Creating New Codespace ═══[/]");
-        AnsiConsole.MarkupLine($"[dim]Machine: {MACHINE_TYPE}, Display: {CODESPACE_DISPLAY_NAME}[/]");
+private static async Task<string> CreateNewCodespace(TokenEntry token, string repoFullName) 
+{
+    AnsiConsole.MarkupLine($"\n[cyan]═══ Creating New Codespace ═══[/]");
+    AnsiConsole.MarkupLine($"[dim]Machine: {MACHINE_TYPE}, Display: {CODESPACE_DISPLAY_NAME}[/]");
+    
+    await SecretCleanup.AutoCleanupBeforeCreate(token);
+    
+    string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
+    Stopwatch createStopwatch = Stopwatch.StartNew(); 
+    string newName = "";
+    
+    try {
+        newName = await ShellHelper.RunGhCommand(token, createArgs, CREATE_TIMEOUT_MS); 
+        createStopwatch.Stop();
         
-        string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
-        Stopwatch createStopwatch = Stopwatch.StartNew(); 
-        string newName = "";
+        if (string.IsNullOrWhiteSpace(newName)) 
+            throw new Exception("gh create returned empty name");
         
-        try {
-            newName = await ShellHelper.RunGhCommand(token, createArgs, CREATE_TIMEOUT_MS); 
-            createStopwatch.Stop();
-       await SecretCleanup.AutoCleanupBeforeCreate(token);
-             string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
-             Stopwatch createStopwatch = Stopwatch.StartNew(); 
-             string newName = "";
-            if (string.IsNullOrWhiteSpace(newName)) 
-                throw new Exception("gh create returned empty name");
-            
-            AnsiConsole.MarkupLine($"[green]✓ Created: {newName}[/] [dim]({createStopwatch.Elapsed:mm\\:ss})[/]");
-            
-            AnsiConsole.MarkupLine("\n[cyan]═══ First Boot Optimization ═══[/]");
-            AnsiConsole.MarkupLine("[yellow]New codespace detected. Performing stop->start cycle...[/]");
-            AnsiConsole.MarkupLine("[dim](This forces proper initialization)[/]");
-            
-            await Task.Delay(15000);
-            
-            await StopCodespace(token, newName);
-            await Task.Delay(5000);
-            await StartCodespace(token, newName);
-            
-            AnsiConsole.MarkupLine("[cyan]Waiting for Available state...[/]");
-            if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(4))) {
-                AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
-            }
-            
-            AnsiConsole.MarkupLine("[cyan]Waiting for SSH ready...[/]");
-            if (!await WaitForSshReadyWithRetry(token, newName)) {
-                throw new Exception("SSH failed after stop->start cycle");
-            }
-            
-            AnsiConsole.MarkupLine("[green]✓ Codespace ready for use[/]");
-            
-            AnsiConsole.MarkupLine("\n[cyan]═══ Triggering Auto-Start ═══[/]");
-            await TriggerStartupScript(token, newName);
-            
-            AnsiConsole.MarkupLine("[green]✓ Codespace created & initialized successfully[/]");
-            AnsiConsole.MarkupLine("[dim]Bots will start automatically. Use Menu 4 to monitor.[/]");
-            
-            return newName;
-
-        } catch (Exception ex) {
-            createStopwatch.Stop(); 
-            AnsiConsole.WriteException(ex);
-            
-            if (!string.IsNullOrWhiteSpace(newName)) { 
-                await DeleteCodespace(token, newName); 
-            }
-            
-            string info = ""; 
-            if (ex.Message.Contains("quota")) info = " (Check Quota!)"; 
-            else if (ex.Message.Contains("401")) info = " (Invalid Token!)";
-            
-            throw new Exception($"FATAL: Create failed{info}. {ex.Message}");
+        AnsiConsole.MarkupLine($"[green]✓ Created: {newName}[/] [dim]({createStopwatch.Elapsed:mm\\:ss})[/]");
+        
+        AnsiConsole.MarkupLine("\n[cyan]═══ First Boot Optimization ═══[/]");
+        AnsiConsole.MarkupLine("[yellow]New codespace detected. Performing stop->start cycle...[/]");
+        AnsiConsole.MarkupLine("[dim](This forces proper initialization)[/]");
+        
+        await Task.Delay(15000);
+        
+        await StopCodespace(token, newName);
+        await Task.Delay(5000);
+        await StartCodespace(token, newName);
+        
+        AnsiConsole.MarkupLine("[cyan]Waiting for Available state...[/]");
+        if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(4))) {
+            AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
         }
+        
+        AnsiConsole.MarkupLine("[cyan]Waiting for SSH ready...[/]");
+        if (!await WaitForSshReadyWithRetry(token, newName)) {
+            throw new Exception("SSH failed after stop->start cycle");
+        }
+        
+        AnsiConsole.MarkupLine("[green]✓ Codespace ready for use[/]");
+        
+        AnsiConsole.MarkupLine("\n[cyan]═══ Triggering Auto-Start ═══[/]");
+        await TriggerStartupScript(token, newName);
+        
+        AnsiConsole.MarkupLine("[green]✓ Codespace created & initialized successfully[/]");
+        AnsiConsole.MarkupLine("[dim]Bots will start automatically. Use Menu 4 to monitor.[/]");
+        
+        return newName;
+
+    } catch (Exception ex) {
+        createStopwatch.Stop(); 
+        AnsiConsole.WriteException(ex);
+        
+        if (!string.IsNullOrWhiteSpace(newName)) { 
+            await DeleteCodespace(token, newName); 
+        }
+        
+        string info = ""; 
+        if (ex.Message.Contains("quota")) info = " (Check Quota!)"; 
+        else if (ex.Message.Contains("401")) info = " (Invalid Token!)";
+        
+        throw new Exception($"FATAL: Create failed{info}. {ex.Message}");
     }
+}
 
     private static async Task<(CodespaceInfo? existing, List<CodespaceInfo> all)> FindExistingCodespace(TokenEntry token) 
     {
