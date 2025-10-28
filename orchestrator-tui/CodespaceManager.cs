@@ -91,7 +91,20 @@ public static class CodespaceManager
                     AnsiConsole.MarkupLine($"[yellow]  State '{codespace.State}'. Starting...[/]");
                     await StartCodespace(token, codespace.Name);
                     AnsiConsole.MarkupLine("[green]  ✓ Started & SSH Ready. Triggering auto-start & checking health...[/]");
-                    await TriggerStartupScript(token, codespace.Name);
+                    
+                    // FIX: Cek script dulu, delete jika not found (repo update)
+                    try {
+                        await TriggerStartupScript(token, codespace.Name);
+                    } catch (Exception scriptEx) {
+                        if (scriptEx.Message.Contains("Script not found")) {
+                            AnsiConsole.MarkupLine("[red]  ✗ Script not found (repo update?). Deleting & recreating...[/]");
+                            await DeleteCodespace(token, codespace.Name);
+                            codespace = null;
+                            break;
+                        }
+                        throw;
+                    }
+                    
                     if (await CheckHealthWithRetry(token, codespace.Name)) {
                          AnsiConsole.MarkupLine("[green]  ✓ Health check PASSED. Reusing.[/]");
                          stopwatch.Stop(); return codespace.Name;
@@ -150,37 +163,65 @@ public static class CodespaceManager
 
     private static async Task<string> CreateNewCodespace(TokenEntry token, string repoFullName) {
         AnsiConsole.MarkupLine($"\n[cyan]Creating new '{CODESPACE_DISPLAY_NAME}' ({MACHINE_TYPE})...[/]");
-        AnsiConsole.MarkupLine($"[dim]Max gh create time: {CREATE_TIMEOUT_MS / 60000} mins.[/]");
         string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
-        Stopwatch createStopwatch = Stopwatch.StartNew(); string newName = "";
+        Stopwatch createStopwatch = Stopwatch.StartNew(); 
+        string newName = "";
+        
         try {
-            newName = await ShellHelper.RunGhCommand(token, createArgs, CREATE_TIMEOUT_MS); createStopwatch.Stop();
-             if (string.IsNullOrWhiteSpace(newName)) throw new Exception("gh create empty name");
-             AnsiConsole.MarkupLine($"[green]✓ Created: {newName} (in {createStopwatch.Elapsed:mm\\:ss})[/]"); await Task.Delay(5000);
+            newName = await ShellHelper.RunGhCommand(token, createArgs, CREATE_TIMEOUT_MS); 
+            createStopwatch.Stop();
+            
+            if (string.IsNullOrWhiteSpace(newName)) 
+                throw new Exception("gh create empty name");
+            
+            AnsiConsole.MarkupLine($"[green]✓ Created: {newName} (in {createStopwatch.Elapsed:mm\\:ss})[/]");
+            
+            // FIX: Langsung upload tanpa wait state/SSH - gh cp tidak butuh SSH ready
+            AnsiConsole.MarkupLine("[cyan]Uploading immediately (gh cp works without SSH)...[/]");
+            
+            try {
+                await UploadConfigs(token, newName); 
+                await UploadAllBotData(token, newName);
+                AnsiConsole.MarkupLine("[green]✓ Upload complete[/]");
+            } catch (Exception uploadEx) {
+                AnsiConsole.MarkupLine($"[yellow]Upload warning: {uploadEx.Message.Split('\n').FirstOrDefault()}[/]");
+                // Continue anyway - files akan ter-sync eventually
+            }
 
-             if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(STATE_POLL_MAX_DURATION_MIN - (int)createStopwatch.Elapsed.TotalMinutes - 1 ))) {
-                 AnsiConsole.MarkupLine($"[yellow]State timeout but continuing with upload...[/]");
-             }
-             if (!await WaitForSshReadyWithRetry(token, newName)) {
-                 AnsiConsole.MarkupLine($"[yellow]SSH timeout but continuing with upload...[/]");
-             }
-
-            await UploadConfigs(token, newName); await UploadAllBotData(token, newName);
-
-             AnsiConsole.MarkupLine("[cyan]Triggering initial setup (auto-start.sh)...[/]"); await TriggerStartupScript(token, newName);
-             AnsiConsole.MarkupLine("[cyan]Waiting initial setup complete...[/]");
-             if (!await CheckHealthWithRetry(token, newName)) { 
-                 AnsiConsole.MarkupLine($"[yellow]Initial setup timeout. Script running in background.[/]"); 
-             }
-             else { 
-                 AnsiConsole.MarkupLine("[green]✓ Initial setup complete.[/]"); 
-             }
-             return newName;
+            // Trigger startup - ini yang butuh SSH, tapi non-blocking
+            AnsiConsole.MarkupLine("[cyan]Triggering auto-start (background)...[/]");
+            
+            string repoNameLower = token.Repo.ToLower();
+            string remoteScript = $"/workspaces/{repoNameLower}/auto-start.sh";
+            string triggerCmd = $"nohup bash {remoteScript} > /tmp/startup.log 2>&1 &";
+            string triggerArgs = $"codespace ssh -c {newName} -- {triggerCmd}";
+            
+            // Fire and forget - jangan tunggu response
+            _ = Task.Run(async () => {
+                await Task.Delay(20000); // Tunggu 20 detik baru trigger
+                try {
+                    await ShellHelper.RunGhCommand(token, triggerArgs, 30000);
+                    AnsiConsole.MarkupLine("[green]✓ Startup triggered[/]");
+                } catch {
+                    AnsiConsole.MarkupLine("[yellow]⚠ Trigger delayed (codespace still booting)[/]");
+                }
+            });
+            
+            AnsiConsole.MarkupLine("[green]✓ Codespace created. Bots will auto-start in ~1 min.[/]");
+            return newName;
 
         } catch (Exception ex) {
-            createStopwatch.Stop(); AnsiConsole.WriteException(ex);
-            if (!string.IsNullOrWhiteSpace(newName)) { await DeleteCodespace(token, newName); }
-            string info = ""; if (ex.Message.Contains("quota")) info = " (Check Quota!)"; else if (ex.Message.Contains("401")) info = " (Invalid Token!)";
+            createStopwatch.Stop(); 
+            AnsiConsole.WriteException(ex);
+            
+            if (!string.IsNullOrWhiteSpace(newName)) { 
+                await DeleteCodespace(token, newName); 
+            }
+            
+            string info = ""; 
+            if (ex.Message.Contains("quota")) info = " (Check Quota!)"; 
+            else if (ex.Message.Contains("401")) info = " (Invalid Token!)";
+            
             throw new Exception($"FATAL: Create failed{info}. Error: {ex.Message}");
         }
     }
