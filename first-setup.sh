@@ -16,22 +16,25 @@ cd "${CODESPACE_VSCODE_FOLDER:-/workspaces/automation-hub}" || exit 1
 echo "[1/1] Menginstal dependensi dasar (proxysync)..."
 if [ -f "proxysync/requirements.txt" ]; then
     # Gunakan --user agar tidak perlu sudo dan lebih aman jika base image berubah
-    pip install --user --no-cache-dir --upgrade -r "proxysync/requirements.txt"
+    # Pastikan pip ada dan terupdate
+    python3 -m ensurepip --upgrade
+    python3 -m pip install --user --no-cache-dir --upgrade pip
+    python3 -m pip install --user --no-cache-dir --upgrade -r "proxysync/requirements.txt"
     # Pastikan direktori bin user ada di PATH (biasanya sudah otomatis di Codespace)
-    export PATH="$HOME/.local/bin:$PATH"
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+        export PATH="$HOME/.local/bin:$PATH" # Apply for current session
+        echo "   (Added ~/.local/bin to PATH)"
+    fi
     echo "   ✓ Dependensi proxysync terinstal/update."
 else
     echo "   ⚠️  proxysync/requirements.txt tidak ditemukan. Lewati."
 fi
 
-# Tambahan: Pastikan tmux terinstall (meskipun biasanya sudah ada di base image)
-if ! command -v tmux &> /dev/null; then
-    echo "   Menginstal tmux..."
-    sudo apt-get update && sudo apt-get install -y tmux
-fi
 
 echo "========================================="
 echo "  FIRST SETUP SELESAI"
 echo "========================================="
 
 # Jangan lupa chmod +x first-setup.sh setelah membuat file ini
+
