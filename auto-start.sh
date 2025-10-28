@@ -18,33 +18,37 @@ echo "=================================================="
 
 cd "$WORKDIR"
 
-echo "[1/4] Melakukan self-update (git pull)..."
+echo "[1/5] Melakukan self-update (git pull)..."
 git pull
 
-echo "[2/4] Menginstal dependensi deployer (Python)..."
-# Kita butuh 'rich' dan 'requests' dari proxysync untuk deploy_bots.py
+# === PERUBAHAN URUTAN ===
+echo "[2/5] Menginstal/Update dependensi ProxySync..."
+# Kita butuh 'rich' dan 'requests' dari proxysync
 if [ -f "$WORKDIR/proxysync/requirements.txt" ]; then
-    pip install --no-cache-dir -r "$WORKDIR/proxysync/requirements.txt"
+    pip install --no-cache-dir --upgrade -r "$WORKDIR/proxysync/requirements.txt"
 else
     echo "WARNING: proxysync/requirements.txt tidak ditemukan. Lanjut..."
 fi
 
-echo "[3/4] Memeriksa file konfigurasi..."
-# TUI lokal bertanggung jawab meng-upload file-file ini sebelum memanggil auto-start
+echo "[3/5] Menjalankan ProxySync (IP Auth, Download, Test)..."
+# Menjalankan proxysync dalam mode non-interaktif
+python3 "$WORKDIR/proxysync/main.py" --full-auto
+echo "   ProxySync selesai. File 'success_proxy.txt' telah diperbarui."
+# === AKHIR PERUBAHAN ===
+
+echo "[4/5] Memeriksa file konfigurasi..."
+# TUI lokal bertanggung jawab meng-upload file-file ini saat 'create'
 if [ ! -f "$WORKDIR/config/bots_config.json" ]; then
     echo "FATAL: config/bots_config.json tidak ditemukan!"
     echo "Pastikan TUI lokal sudah 'gh codespace cp' file config."
     exit 1
 fi
 
-if [ ! -f "$WORKDIR/config/proxy.txt" ]; then
-    echo "WARNING: config/proxy.txt tidak ditemukan. Bot akan berjalan tanpa proxy."
-fi
-
-echo "[4/4] Menjalankan skrip deployer utama (deploy_bots.py)..."
+echo "[5/5] Menjalankan skrip deployer utama (deploy_bots.py)..."
+# deploy_bots.py sekarang akan 'smart install' dan baca 'success_proxy.txt'
 python3 "$WORKDIR/deploy_bots.py"
 
 echo "=================================================="
 echo "  AUTO-START SCRIPT SELESAI"
-echo "  Cek 'tmux ls' untuk melihat bot yang berjalan."
+echo "  Gunakan 'Menu 4 (Attach)' di TUI untuk monitor."
 echo "=================================================="
