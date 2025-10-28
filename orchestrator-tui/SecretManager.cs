@@ -13,19 +13,16 @@ public static class SecretCleanup
         using var client = TokenManager.CreateHttpClient(token);
         int totalDeleted = 0;
 
-        // 1. User Codespace Secrets (CRITICAL - ini yang bikin 50KB limit)
         totalDeleted += await DeleteSecretsFromEndpoint(client, 
             "https://api.github.com/user/codespaces/secrets", 
             "user/codespaces/secrets", 
             silent: true);
 
-        // 2. Repository Codespace Secrets
         totalDeleted += await DeleteSecretsFromEndpoint(client, 
             $"https://api.github.com/repos/{token.Owner}/{token.Repo}/codespaces/secrets", 
             $"repos/{token.Owner}/{token.Repo}/codespaces/secrets",
             silent: true);
 
-        // 3. Repository Action Secrets (just in case)
         totalDeleted += await DeleteSecretsFromEndpoint(client, 
             $"https://api.github.com/repos/{token.Owner}/{token.Repo}/actions/secrets", 
             $"repos/{token.Owner}/{token.Repo}/actions/secrets",
@@ -34,7 +31,7 @@ public static class SecretCleanup
         if (totalDeleted > 0)
         {
             AnsiConsole.MarkupLine($"[green]✓ Cleaned {totalDeleted} old secrets[/]");
-            await Task.Delay(2000); // Wait for GitHub API to sync
+            await Task.Delay(2000);
         }
         else
         {
