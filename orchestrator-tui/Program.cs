@@ -76,7 +76,8 @@ internal static class Program
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
-                        "5. Refresh All Configs",
+                        "5. Deploy Secrets (Manual Upload)",
+                        "6. [RED] Delete ALL GitHub Secrets (Cleanup)",
                         "0. Exit"
                     }));
 
@@ -101,7 +102,7 @@ internal static class Program
                         Pause("Press Enter to continue...", cancellationToken);
                         break;
                     case "6": 
-                        TokenManager.ReloadAllConfigs(); 
+                        await SecretCleanup.DeleteAllCodespaceSecrets();
                         Pause("Press Enter to continue...", cancellationToken); 
                         break;
                     case "0": 
