@@ -199,9 +199,6 @@ private static async Task<string> CreateNewCodespace(TokenEntry token, string re
     AnsiConsole.MarkupLine($"\n[cyan]═══ Creating New Codespace ═══[/]");
     AnsiConsole.MarkupLine($"[dim]Machine: {MACHINE_TYPE}, Display: {CODESPACE_DISPLAY_NAME}[/]");
     
-    // Sesuai permintaan, fitur pre-flight delete DIHAPUS
-    AnsiConsole.MarkupLine("\n[yellow]Pre-flight secret check skipped (as requested).[/]");
-    
     string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
     Stopwatch createStopwatch = Stopwatch.StartNew(); 
     string newName = "";
