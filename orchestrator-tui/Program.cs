@@ -76,7 +76,7 @@ internal static class Program
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
-                        "5. Set Secrets (Auto Read Bot Configs)",
+                        "5. Deploy Secrets (Upload via SSH)",
                         "6. Refresh All Configs",
                         "0. Exit"
                     }));
@@ -98,7 +98,7 @@ internal static class Program
                         await ShowAttachMenuAsync(cancellationToken);
                         break;
                     case "5":
-                        await SecretManager.SetSecretsForActiveToken(); // GANTI METHOD NYA
+                        await SecretManager.SetSecretsForActiveToken();
                         Pause("Press Enter to continue...", cancellationToken);
                         break;
                     case "6": 
@@ -260,9 +260,10 @@ internal static class Program
 
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) 
     {
-        Console.WriteLine("═══════════════════════════════════════");
-        Console.WriteLine("  ORCHESTRATOR LOOP STARTED");
-        Console.WriteLine("═══════════════════════════════════════");
+        AnsiConsole.Clear();
+        AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
+        AnsiConsole.MarkupLine("[cyan]   ORCHESTRATOR LOOP STARTED[/]");
+        AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
         
         const int MAX_CONSECUTIVE_ERRORS = 3;
         int consecutiveErrors = 0;
@@ -274,19 +275,19 @@ internal static class Program
             string? activeCodespace = currentState.ActiveCodespaceName;
             
             var username = currentToken.Username ?? "unknown";
-            Console.WriteLine($"\n{'═',50}");
-            Console.WriteLine($"  TOKEN #{currentState.CurrentIndex + 1}: @{username}");
-            Console.WriteLine($"{'═',50}");
+            AnsiConsole.MarkupLine($"\n[cyan]═══════════════════════════════════════════════════════════════[/]");
+            AnsiConsole.MarkupLine($"[cyan]   TOKEN #{currentState.CurrentIndex + 1}: @{username}[/]");
+            AnsiConsole.MarkupLine($"[cyan]═══════════════════════════════════════════════════════════════[/]");
             
             try 
             { 
-                Console.WriteLine("Checking billing quota...");
+                AnsiConsole.MarkupLine("Checking billing quota...");
                 var billingInfo = await BillingManager.GetBillingInfo(currentToken); 
                 BillingManager.DisplayBilling(billingInfo, currentToken.Username ?? "unknown");
                 
                 if (!billingInfo.IsQuotaOk) 
                 { 
-                    Console.WriteLine("⚠ Quota insufficient. Rotating to next token...");
+                    AnsiConsole.MarkupLine("[yellow]⚠ Quota insufficient. Rotating to next token...[/]");
                     
                     if (!string.IsNullOrEmpty(activeCodespace)) 
                     { 
@@ -301,7 +302,7 @@ internal static class Program
                     continue; 
                 }
                 
-                Console.WriteLine("Ensuring healthy codespace...");
+                AnsiConsole.MarkupLine("Ensuring healthy codespace...");
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken);
                 
                 bool isNewOrRecreatedCodespace = currentState.ActiveCodespaceName != activeCodespace;
@@ -311,67 +312,66 @@ internal static class Program
                 
                 if (isNewOrRecreatedCodespace) 
                 { 
-                    Console.WriteLine($"✓ New codespace activated: {activeCodespace}");
-                    Console.WriteLine("Bots are starting automatically via auto-start.sh");
+                    AnsiConsole.MarkupLine($"[green]✓ New codespace activated: {activeCodespace}[/]");
+                    AnsiConsole.MarkupLine("[dim]Bots are starting automatically via auto-start.sh[/]");
                 } 
                 else 
                 { 
-                    Console.WriteLine($"✓ Reusing existing codespace: {activeCodespace}");
+                    AnsiConsole.MarkupLine($"[green]✓ Reusing existing codespace: {activeCodespace}[/]");
                 }
                 
                 consecutiveErrors = 0;
                 
-                Console.WriteLine($"\n⏱ Keep-Alive: Sleeping for {KeepAliveInterval.TotalHours:F1} hours...");
-                Console.WriteLine($"   Next check at: {DateTime.Now.Add(KeepAliveInterval):yyyy-MM-dd HH:mm:ss}");
+                AnsiConsole.MarkupLine($"\n[yellow]⏱ Keep-Alive:[/] Sleeping for {KeepAliveInterval.TotalHours:F1} hours...");
+                AnsiConsole.MarkupLine($"[dim]Next check at: {DateTime.Now.Add(KeepAliveInterval):yyyy-MM-dd HH:mm:ss}[/]");
                 
                 await Task.Delay(KeepAliveInterval, cancellationToken);
                 
-                // Refresh state after sleep
                 currentState = TokenManager.GetState(); 
                 activeCodespace = currentState.ActiveCodespaceName; 
                 
                 if (string.IsNullOrEmpty(activeCodespace)) 
                 { 
-                    Console.WriteLine("⚠ No active codespace after sleep. Will recreate next cycle.");
+                    AnsiConsole.MarkupLine("[yellow]⚠ No active codespace after sleep. Will recreate next cycle.[/]");
                     continue; 
                 }
                 
-                Console.WriteLine("\n⏱ Keep-Alive Check: Verifying codespace health...");
+                AnsiConsole.MarkupLine("\n[yellow]⏱ Keep-Alive Check:[/] Verifying codespace health...");
                 
                 if (!await CodespaceManager.CheckHealthWithRetry(currentToken, activeCodespace)) 
                 { 
-                    Console.WriteLine("✗ Keep-Alive: Health check FAILED!");
-                    Console.WriteLine("Marking codespace for recreation...");
+                    AnsiConsole.MarkupLine("[red]✗ Keep-Alive: Health check FAILED![/]");
+                    AnsiConsole.MarkupLine("[yellow]Marking codespace for recreation...[/]");
                     currentState.ActiveCodespaceName = null; 
                     TokenManager.SaveState(currentState);
                 } 
                 else 
                 { 
-                    Console.WriteLine("✓ Keep-Alive: Health check OK.");
+                    AnsiConsole.MarkupLine("[green]✓ Keep-Alive: Health check OK.[/]");
                     
                     try
                     {
-                        Console.WriteLine("Triggering startup script (git pull & restart bots)...");
+                        AnsiConsole.MarkupLine("[dim]Triggering startup script (git pull & restart bots)...[/]");
                         await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace);
-                        Console.WriteLine("✓ Startup script triggered successfully");
+                        AnsiConsole.MarkupLine("[green]✓ Startup script triggered successfully[/]");
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"⚠ Warning: Keep-alive startup trigger failed: {ex.Message}");
-                        Console.WriteLine("Continuing anyway (bots may still be running)...");
+                        AnsiConsole.MarkupLine($"[yellow]⚠ Warning: Keep-alive startup trigger failed: {ex.Message}[/]");
+                        AnsiConsole.MarkupLine("[dim]Continuing anyway (bots may still be running)...[/]");
                     }
                 }
             } 
             catch (OperationCanceledException) 
             { 
-                Console.WriteLine("\n⚠ Loop cancelled by user.");
+                AnsiConsole.MarkupLine("\n[yellow]⚠ Loop cancelled by user.[/]");
                 break; 
             } 
             catch (Exception ex) 
             { 
                 consecutiveErrors++;
-                Console.WriteLine("\n✗ ERROR in orchestrator loop:");
-                Console.WriteLine(ex.ToString());
+                AnsiConsole.MarkupLine("\n[red]✗ ERROR in orchestrator loop:[/]");
+                AnsiConsole.MarkupLine($"[dim]{ex.Message}[/]");
                 
                 if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS)
                 {
@@ -398,15 +398,15 @@ internal static class Program
                 }
                 else
                 {
-                    Console.WriteLine($"⚠ Retrying in {ErrorRetryDelay.TotalMinutes} minutes... (Error {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS})");
+                    AnsiConsole.MarkupLine($"[yellow]⚠ Retrying in {ErrorRetryDelay.TotalMinutes} minutes... (Error {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS})[/]");
                     await Task.Delay(ErrorRetryDelay, cancellationToken);
                 }
             }
         }
         
-        Console.WriteLine("\n═══════════════════════════════════════");
-        Console.WriteLine("  ORCHESTRATOR LOOP STOPPED");
-        Console.WriteLine("═══════════════════════════════════════");
+        AnsiConsole.MarkupLine("\n[cyan]═══════════════════════════════════════════════════════════════[/]");
+        AnsiConsole.MarkupLine("[cyan]   ORCHESTRATOR LOOP STOPPED[/]");
+        AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
     }
 
     private static void Pause(string message, CancellationToken cancellationToken)
