@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# auto-start.sh (Smart Mode v3 - Secret Support)
+# auto-start.sh (Smart Mode v4 - Smart Secret Extract)
 # Dijalankan MANUAL oleh TUI via SSH SETELAH SSH ready.
-# Fokus: git pull, extract secrets, proxysync, deploy_bots (SKIP jika sudah jalan).
+# Fokus: git pull, extract secrets (smart), proxysync, deploy_bots.
 #
 
 WORKDIR="/workspaces/automation-hub"
@@ -15,7 +15,7 @@ FIRST_RUN_FLAG="/tmp/auto_start_first_run"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "========================================="
-echo "  AUTO START SCRIPT (Smart v3)"
+echo "  AUTO START SCRIPT (Smart v4)"
 echo "  $(date)"
 echo "========================================="
 
@@ -36,33 +36,46 @@ fi
 echo "[1/4] Self-update (git pull)..."
 git pull || { echo "   ⚠️  WARNING: git pull failed, continuing with existing code..."; }
 
-echo "[2/4] Extracting secrets from GitHub Codespaces..."
-# Fungsi untuk extract secret dari environment variable
-extract_secret() {
+echo "[2/4] Extracting secrets from GitHub Codespaces (Smart Mode)..."
+
+# Fungsi untuk extract secret dengan format baru: BOTNAME_FILENAME
+# Contoh: GRASS_BOT_PK_TXT, NODEPAY_TOKEN_JSON
+extract_secret_smart() {
     local bot_name="$1"
-    local secret_suffix="$2"
-    local target_file="$3"
-    local target_dir="$4"
+    local target_dir="$2"
     
-    # Format: BOTNAME_SECRETSUFFIX (contoh: GRASS_ENV_FILE)
+    # Sanitize bot name (sama seperti di C#)
     local sanitized_bot=$(echo "$bot_name" | tr -cs '[:alnum:]' '_' | tr '[:lower:]' '[:upper:]')
-    local var_name="${sanitized_bot}_${secret_suffix}"
     
-    # Cek apakah environment variable ada
-    if [ -n "${!var_name}" ]; then
-        mkdir -p "$target_dir"
-        echo "${!var_name}" > "$target_dir/$target_file"
-        echo "   ✓ Extracted: $target_file for $bot_name"
-        return 0
+    # Cari semua env var yang match pattern BOTNAME_*
+    local extracted_count=0
+    
+    for var_name in $(compgen -e | grep "^${sanitized_bot}_"); do
+        # Ambil filename dari var name (hapus prefix botname)
+        # Contoh: GRASS_BOT_PK_TXT -> PK_TXT -> pk.txt
+        local filename_part="${var_name#${sanitized_bot}_}"
+        local filename=$(echo "$filename_part" | tr '[:upper:]' '[:lower:]' | tr '_' '.')
+        
+        # Extract value
+        local var_value="${!var_name}"
+        
+        if [ -n "$var_value" ]; then
+            mkdir -p "$target_dir"
+            echo "$var_value" > "$target_dir/$filename"
+            echo "   ✓ Extracted: $filename for $bot_name"
+            ((extracted_count++))
+        fi
+    done
+    
+    if [ $extracted_count -eq 0 ]; then
+        echo "   ○ No secrets for $bot_name"
     fi
-    return 1
 }
 
 # Baca config dan extract secrets untuk setiap bot
 if [ -f "$WORKDIR/config/bots_config.json" ]; then
     echo "   Reading bots_config.json..."
     
-    # Parse JSON dan extract secrets (membutuhkan jq)
     if command -v jq &> /dev/null; then
         while IFS= read -r bot_entry; do
             bot_name=$(echo "$bot_entry" | jq -r '.name')
@@ -74,21 +87,11 @@ if [ -f "$WORKDIR/config/bots_config.json" ]; then
             fi
             
             target_dir="$WORKDIR/$bot_path"
-            
-            # Coba extract berbagai secret files
-            extract_secret "$bot_name" "ENV_FILE" ".env" "$target_dir"
-            extract_secret "$bot_name" "PK_FILE" "pk.txt" "$target_dir"
-            extract_secret "$bot_name" "PRIVATEKEY_FILE" "privatekey.txt" "$target_dir"
-            extract_secret "$bot_name" "WALLET_FILE" "wallet.txt" "$target_dir"
-            extract_secret "$bot_name" "TOKEN_FILE" "token.txt" "$target_dir"
-            extract_secret "$bot_name" "DATA_FILE" "data.json" "$target_dir"
-            extract_secret "$bot_name" "CONFIG_FILE" "config.json" "$target_dir"
-            extract_secret "$bot_name" "SETTINGS_FILE" "settings.json" "$target_dir"
-            extract_secret "$bot_name" "ACCOUNTS_FILE" "accounts.txt" "$target_dir"
+            extract_secret_smart "$bot_name" "$target_dir"
             
         done < <(jq -c '.bots_and_tools[]' "$WORKDIR/config/bots_config.json")
         
-        echo "   ✓ Secret extraction completed"
+        echo "   ✓ Smart secret extraction completed"
     else
         echo "   ⚠️  jq not found. Secrets not extracted (install via first-setup.sh)"
     fi
