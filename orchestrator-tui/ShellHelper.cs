@@ -7,20 +7,23 @@ namespace Orchestrator;
 
 public static class ShellHelper
 {
-    private const int DEFAULT_TIMEOUT_MS = 120000; // Naikkan default timeout
+    private const int DEFAULT_TIMEOUT_MS = 120000;
     private const int MAX_RETRY_ON_PROXY_ERROR = 2;
-    private const int MAX_RETRY_ON_NETWORK_ERROR = 2; // Tambah retry network
-    private const int MAX_RETRY_ON_TIMEOUT = 1; // Retry timeout sekali
+    private const int MAX_RETRY_ON_NETWORK_ERROR = 2;
+    private const int MAX_RETRY_ON_TIMEOUT = 1;
 
     public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
     {
+        // === FIX: Gunakan "gh" langsung, jangan hardcode path ===
         var startInfo = CreateStartInfo("gh", args, token);
+        // === AKHIR FIX ===
+
         int proxyRetryCount = 0;
         int networkRetryCount = 0;
         int timeoutRetryCount = 0;
         Exception? lastException = null;
 
-        while (true) // Loop tak terbatas, break atau throw di dalam
+        while (true) // Loop until success or fatal error
         {
             try
             {
@@ -32,7 +35,7 @@ public static class ShellHelper
                     bool isAuthError = stderr.Contains("Bad credentials") || stderr.Contains("401");
                     bool isProxyError = stderr.Contains("407") || stderr.Contains("Proxy Authentication Required");
                     bool isNetworkError = stderr.Contains("dial tcp") || stderr.Contains("connection refused") || stderr.Contains("i/o timeout") || stderr.Contains("error connecting to http");
-                    bool isNotFoundError = stderr.Contains("404") || stderr.Contains("Could not find"); // Handle 404
+                    bool isNotFoundError = stderr.Contains("404") || stderr.Contains("Could not find");
 
                     if (isProxyError && proxyRetryCount < MAX_RETRY_ON_PROXY_ERROR)
                     {
@@ -52,51 +55,46 @@ public static class ShellHelper
                     if (isRateLimit || isAuthError) {
                         string errorType = isRateLimit ? "Rate Limit/403" : "Auth/401";
                         AnsiConsole.MarkupLine($"[red]Error ({errorType}). Token rotation needed?[/]");
-                        lastException = new Exception($"GH Fail ({errorType}): {stderr.Split('\n').FirstOrDefault()}");
-                        break; // Keluar loop untuk throw
+                        lastException = new Exception($"GH Fail ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim()}");
+                        break; // Exit loop to throw
                     }
 
                      if (isNotFoundError) {
-                        // Jangan retry 404, langsung throw
-                        lastException = new Exception($"GH Not Found (404): {stderr.Split('\n').FirstOrDefault()}");
-                        break;
+                        lastException = new Exception($"GH Not Found (404): {stderr.Split('\n').FirstOrDefault()?.Trim()}");
+                        break; // Exit loop to throw 404
                     }
 
-                    // Error lain, jangan retry
-                    lastException = new Exception($"gh command failed (Exit Code: {exitCode}): {stderr.Split('\n').FirstOrDefault()}");
-                    break;
+                    // Other errors, do not retry
+                    lastException = new Exception($"gh command failed (Exit Code: {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim()}");
+                    break; // Exit loop to throw other errors
                 }
-                return stdout; // Sukses, keluar loop
+                return stdout; // Success, exit loop
             }
             catch (TaskCanceledException ex) // Timeout
             {
                 if (timeoutRetryCount < MAX_RETRY_ON_TIMEOUT) {
                     timeoutRetryCount++;
-                    AnsiConsole.MarkupLine($"[yellow]Command timeout. Retrying... ({timeoutRetryCount}/{MAX_RETRY_ON_TIMEOUT})[/]");
+                    AnsiConsole.MarkupLine($"[yellow]Command timeout ({timeoutMilliseconds / 1000}s). Retrying... ({timeoutRetryCount}/{MAX_RETRY_ON_TIMEOUT})[/]");
                     await Task.Delay(5000); continue;
                 }
                 lastException = new Exception($"Command timed out after {timeoutMilliseconds}ms and {MAX_RETRY_ON_TIMEOUT} retry.", ex);
-                break; // Keluar loop untuk throw timeout
+                break; // Exit loop to throw timeout
             }
             catch (Exception ex)
             {
-                // === FIX CS1717 Warning ===
-                // Ganti `lastException = lastException;` dengan assignment yang benar
-                lastException = ex;
-                // === AKHIR FIX ===
-
-                // Coba retry sekali untuk error tak terduga (misal file not found gh)
-                if (networkRetryCount == 0 && proxyRetryCount == 0 && timeoutRetryCount == 0) { // Hanya retry jika belum retry karena hal lain
-                    networkRetryCount++; // Anggap sbg network error
-                     AnsiConsole.MarkupLine($"[yellow]Unexpected command fail: {ex.Message.Split('\n').FirstOrDefault()}. Retrying once...[/]");
+                lastException = ex; // Store the exception
+                // Retry once for unexpected errors (like gh not found initially)
+                if (networkRetryCount == 0 && proxyRetryCount == 0 && timeoutRetryCount == 0) {
+                    networkRetryCount++; // Count as a network retry attempt
+                     AnsiConsole.MarkupLine($"[yellow]Unexpected command fail: {ex.Message.Split('\n').FirstOrDefault()?.Trim()}. Retrying once...[/]");
                      await Task.Delay(3000); continue;
                 }
-                break; // Keluar loop jika sudah retry atau error fatal lain
+                break; // Exit loop if already retried or other fatal error
             }
         } // End While
 
-        // Jika keluar loop karena break, throw exception terakhir
-        throw lastException ?? new Exception("GH command failed due to an unknown error after retries.");
+        // Throw the last recorded exception if loop exited via break
+        throw lastException ?? new Exception("GH command failed after retries.");
     }
 
 
@@ -141,23 +139,34 @@ public static class ShellHelper
             var cancellationTcs = new TaskCompletionSource<bool>(); using var reg = cancellationToken.Register(() => cancellationTcs.TrySetResult(true));
             var completedTask = await Task.WhenAny(processExitedTcs.Task, cancellationTcs.Task);
 
-            if (completedTask == cancellationTcs.Task) { // Dibatalkan
+            if (completedTask == cancellationTcs.Task) { // Cancelled
                 try { if (!process.HasExited) { AnsiConsole.MarkupLine("\n[yellow]Sending termination...[/]"); process.Kill(true); await Task.Delay(1500); } } catch { }
                 AnsiConsole.MarkupLine("[yellow]"+ new string('═', 60) +"[/]"); AnsiConsole.MarkupLine("[yellow]✓ Bot stopped by user (Ctrl+C)[/]");
-                throw new OperationCanceledException(); // Dilempar agar Program.cs bisa handle
+                throw new OperationCanceledException(); // Rethrow for Program.cs to handle
             }
-            // Selesai normal
+            // Exited normally
             await Task.Delay(500); AnsiConsole.MarkupLine("[yellow]"+ new string('═', 60) +"[/]");
             if (process.ExitCode == 0) AnsiConsole.MarkupLine($"[green]✓ Bot exited OK (Code: {process.ExitCode})[/]");
-            else if (process.ExitCode == -1) AnsiConsole.MarkupLine($"[yellow]⚠ Bot terminated (Code: {process.ExitCode})[/]");
+            else if (process.ExitCode == -1 || cancellationToken.IsCancellationRequested) AnsiConsole.MarkupLine($"[yellow]⚠ Bot terminated (Code: {process.ExitCode})[/]"); // Treat -1 as terminated
             else AnsiConsole.MarkupLine($"[red]✗ Bot exited ERR (Code: {process.ExitCode})[/]");
             AnsiConsole.MarkupLine("\n[dim]Press Enter to return...[/]"); Console.ReadLine();
-        } catch (OperationCanceledException) { try { if (!process.HasExited) {process.Kill(true); await Task.Delay(1000);} } catch { } AnsiConsole.MarkupLine("\n[dim]Press Enter to return...[/]"); Console.ReadLine(); throw; }
+        } catch (OperationCanceledException) { try { if (!process.HasExited) {process.Kill(true); await Task.Delay(1000);} } catch { } AnsiConsole.MarkupLine("\n[dim]Press Enter to return...[/]"); Console.ReadLine(); throw; } // Let Program.cs show the cancelled message
         catch (Exception ex) { AnsiConsole.MarkupLine("\n[yellow]"+ new string('═', 60) +"[/]"); AnsiConsole.MarkupLine($"[red]✗ Err run bot: {ex.Message.EscapeMarkup()}[/]"); try { if (!process.HasExited) process.Kill(true); } catch { } AnsiConsole.MarkupLine("\n[dim]Press Enter to return...[/]"); Console.ReadLine(); throw; }
     }
 
     private static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token) {
-        var startInfo = new ProcessStartInfo { FileName = FindExecutable(command), Arguments = args, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
+        // === FIX: Gunakan FindExecutable untuk mencari di PATH ===
+        var startInfo = new ProcessStartInfo {
+            FileName = FindExecutable(command), // Cari 'gh' atau command lain di PATH
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+        // === AKHIR FIX ===
         if (token != null) SetEnvironmentVariables(startInfo, token);
         return startInfo;
     }
@@ -165,25 +174,25 @@ public static class ShellHelper
      private static void SetEnvironmentVariables(ProcessStartInfo startInfo, TokenEntry token) {
         startInfo.EnvironmentVariables["GH_TOKEN"] = token.Token;
         if (!string.IsNullOrEmpty(token.Proxy)) {
-            // Set proxy untuk gh CLI dan tools lain (lowercase & uppercase)
             startInfo.EnvironmentVariables["https_proxy"] = token.Proxy; startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
             startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy; startInfo.EnvironmentVariables["HTTP_PROXY"] = token.Proxy;
-            // Set NO_PROXY untuk localhost agar tidak terganggu jika ada
             startInfo.EnvironmentVariables["NO_PROXY"] = "localhost,127.0.0.1"; startInfo.EnvironmentVariables["no_proxy"] = "localhost,127.0.0.1";
         }
     }
 
     private static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
          if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
-            startInfo.FileName = "cmd.exe";
-            // Quote command jika ada spasi, tapi args jangan di-double quote
-            string quotedCommand = command.Contains(' ') ? $"\"{command}\"" : command;
+            startInfo.FileName = FindExecutable("cmd.exe"); // Cari cmd.exe di PATH
+            string targetExe = FindExecutable(command); // Cari target command (misal python.exe) di PATH
+            string quotedCommand = targetExe.Contains(' ') ? $"\"{targetExe}\"" : targetExe;
             startInfo.Arguments = $"/c {quotedCommand} {args}";
         } else {
-            startInfo.FileName = "/bin/bash"; // Lebih robust dari command langsung
-            // Escape args untuk bash shell
-            string escapedArgs = args.Replace("\"", "\\\""); // Escape double quotes
-            startInfo.Arguments = $"-c \"{command} {escapedArgs}\"";
+            startInfo.FileName = "/bin/bash"; // Common path for bash
+            string targetExe = FindExecutable(command); // Cari target command di PATH
+            // Escape args for bash shell if necessary (simple escaping here)
+            string escapedArgs = args.Replace("\"", "\\\"");
+            string escapedCommand = targetExe.Contains(' ') ? $"\\\"{targetExe}\\\"" : targetExe; // Quote if path has spaces
+            startInfo.Arguments = $"-c \"{escapedCommand} {escapedArgs}\"";
         }
     }
 
@@ -193,24 +202,86 @@ public static class ShellHelper
         var tcs = new TaskCompletionSource<(string, string, int)>();
         process.EnableRaisingEvents = true;
         process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
-        process.ErrorDataReceived += (s, e) => { if (e.Data != null) { stderrBuilder.AppendLine(e.Data); if (!string.IsNullOrWhiteSpace(e.Data) && !e.Data.Contains("Flag shorthand") && !e.Data.StartsWith("✓")) AnsiConsole.MarkupLine($"[grey]ERR: {e.Data.EscapeMarkup()}[/]"); } };
-        process.Exited += (s, e) => { Task.Delay(100).ContinueWith(_ => tcs.TrySetResult((stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim(), process.ExitCode))); };
+        process.ErrorDataReceived += (s, e) => { if (e.Data != null) { stderrBuilder.AppendLine(e.Data); /* Optional: Log non-empty stderr lines */ if (!string.IsNullOrWhiteSpace(e.Data)) AnsiConsole.MarkupLine($"[grey]stderr: {e.Data.EscapeMarkup()}[/]"); } };
+        process.Exited += (s, e) => {
+            // Beri waktu sedikit agar output/error stream selesai dibaca
+            Task.Delay(200).ContinueWith(_ => tcs.TrySetResult((stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim(), process.ExitCode)));
+        };
+        CancellationTokenSource? timeoutCts = null;
         try {
-            if (!File.Exists(startInfo.FileName) && !(startInfo.FileName=="cmd.exe" || startInfo.FileName=="/bin/bash")) { throw new FileNotFoundException($"Executable not found: {startInfo.FileName}"); }
-            process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
-            using var timeoutCts = new CancellationTokenSource(timeoutMilliseconds);
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token); // Kita tidak perlu main token di sini
-            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(-1, linkedCts.Token));
-            if (completedTask == tcs.Task) { timeoutCts.Cancel(); return await tcs.Task; }
-            else { throw new TaskCanceledException($"Process timed out after {timeoutMilliseconds / 1000}s"); }
-        } catch (TaskCanceledException ex) { AnsiConsole.MarkupLine($"[red]Timeout ({timeoutMilliseconds / 1000}s): {startInfo.FileName} {startInfo.Arguments}[/]"); try { process.Kill(true); } catch { } throw; }
-        catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Failed run '{startInfo.FileName}': {ex.Message}[/]"); try { if (!process.HasExited) process.Kill(true); } catch { } return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim() + "\n" + ex.Message, -1); }
+            if (!File.Exists(startInfo.FileName)) {
+                 throw new FileNotFoundException($"Executable not found: {startInfo.FileName}. Ensure it's in your PATH.");
+            }
+            process.Start();
+            process.BeginOutputReadLine(); process.BeginErrorReadLine();
+
+            timeoutCts = new CancellationTokenSource(timeoutMilliseconds);
+            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, timeoutCts.Token));
+
+            if (completedTask != tcs.Task) { // Timeout occurred
+                 throw new TaskCanceledException($"Process timed out after {timeoutMilliseconds / 1000}s");
+             }
+             // Process finished before timeout
+             return await tcs.Task; // Return result
+
+        } catch (TaskCanceledException) { // Catch timeout specifically
+            AnsiConsole.MarkupLine($"[red]Timeout ({timeoutMilliseconds / 1000}s): {startInfo.FileName} {startInfo.Arguments}[/]");
+            try { process.Kill(true); } catch { /* Ignore kill errors */ }
+            // Rethrow agar RunGhCommand bisa handle retry timeout
+            throw;
+        } catch (Exception ex) {
+            AnsiConsole.MarkupLine($"[red]Failed run '{startInfo.FileName}': {ex.Message}[/]");
+            try { if (!process.HasExited) process.Kill(true); } catch { /* Ignore kill errors */ }
+             // Kembalikan error message di stderr
+            return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim() + "\n" + ex.Message, process.HasExited ? process.ExitCode : -1);
+        } finally {
+            timeoutCts?.Dispose();
+        }
     }
 
-    private static string FindExecutable(string command) {
-        if (Path.IsPathFullyQualified(command) && File.Exists(command)) return command;
-        var paths = Environment.GetEnvironmentVariable("PATH"); var extensions = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? new[] { "", ".exe", ".cmd", ".bat" } : new[] { "" };
-        foreach (var path in paths?.Split(Path.PathSeparator) ?? Array.Empty<string>()) { foreach (var ext in extensions) { var fullPath = Path.Combine(path, command + ext); if (File.Exists(fullPath)) return fullPath; } }
-        AnsiConsole.MarkupLine($"[yellow]Warn: Cannot find '{command}' in PATH. Using command name directly.[/]"); return command; // Fallback
+    // === PERBAIKAN: Fungsi FindExecutable (Lebih Robust) ===
+    private static string FindExecutable(string command)
+    {
+        // 1. Jika path absolut, langsung return
+        if (Path.IsPathFullyQualified(command) && File.Exists(command)) {
+            return command;
+        }
+
+        // 2. Cek apakah command itu sendiri adalah path file (misal './script.sh')
+        if (File.Exists(command)) {
+             return Path.GetFullPath(command);
+        }
+
+        // 3. Cari di PATH Environment Variable
+        var paths = Environment.GetEnvironmentVariable("PATH");
+        var extensions = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? (Environment.GetEnvironmentVariable("PATHEXT")?.Split(Path.PathSeparator) ?? new[] { ".COM", ".EXE", ".BAT", ".CMD" })
+            : new[] { "" }; // Linux/macOS tidak perlu extension
+
+        if (paths != null) {
+            foreach (var path in paths.Split(Path.PathSeparator)) {
+                foreach (var ext in extensions) {
+                    // Pastikan ext dimulai dengan "." jika perlu (Windows)
+                    string effectiveExt = (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !string.IsNullOrEmpty(ext) && !ext.StartsWith(".")) ? "." + ext : ext;
+                    var fullPath = Path.Combine(path, command + effectiveExt);
+                    try {
+                        if (File.Exists(fullPath)) {
+                            // AnsiConsole.MarkupLine($"[grey]FindExecutable: Found '{command}' at '{fullPath}'[/]"); // Debug log
+                            return fullPath;
+                        }
+                    } catch (System.Security.SecurityException) {
+                        // Abaikan path yang tidak bisa diakses
+                    } catch (UnauthorizedAccessException) {
+                        // Abaikan path yang tidak bisa diakses
+                    }
+                }
+            }
+        }
+
+        // 4. Jika tidak ketemu, return nama command asli (biarkan OS yang handle/error)
+        AnsiConsole.MarkupLine($"[yellow]Warn: Cannot find '{command}' in PATH. Using command name directly. Ensure '{command}' is accessible.[/]");
+        return command;
     }
+    // === AKHIR PERBAIKAN ===
 }
+
