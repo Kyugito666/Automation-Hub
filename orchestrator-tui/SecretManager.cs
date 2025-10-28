@@ -1,128 +1,57 @@
 using Spectre.Console;
-using System.IO.Compression;
-using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Orchestrator;
 
-public static class SecretManager
+public static class SecretCleanup
 {
-    private static readonly string ProjectRoot = GetProjectRoot();
-    private static readonly string LocalBotRoot = @"D:\SC";
-    private static readonly string TempArchivePath = Path.Combine(Path.GetTempPath(), "bot-secrets.zip");
-
-    private static readonly string[] CommonSecretPatterns = new[]
+    public static async Task<bool> AutoCleanupBeforeCreate(TokenEntry token)
     {
-        "*.env",
-        "pk.txt", "privatekey.txt", "private_key.txt",
-        "token.txt", "tokens.txt", "token.json", "tokens.json",
-        "data.txt", "data.json",
-        "wallet.txt", "wallets.txt", "wallet.json",
-        "accounts.txt", "accounts.json", "account.json",
-        "cookies.txt", "cookie.txt",
-        "bearer.txt", "bearer.json",
-        "mnemonics.txt", "mnemonic.txt", "seed.txt",
-        "auth.txt", "auth.json",
-        "credentials.txt", "credentials.json"
-    };
+        AnsiConsole.MarkupLine("\n[yellow]⚠ Pre-flight: Checking for existing secrets...[/]");
+        
+        using var client = TokenManager.CreateHttpClient(token);
+        int totalDeleted = 0;
 
-    private static string GetProjectRoot()
-    {
-        var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
-        int maxDepth = 10;
-        int currentDepth = 0;
+        // 1. User Codespace Secrets (CRITICAL - ini yang bikin 50KB limit)
+        totalDeleted += await DeleteSecretsFromEndpoint(client, 
+            "https://api.github.com/user/codespaces/secrets", 
+            "user/codespaces/secrets", 
+            silent: true);
 
-        while (currentDir != null && currentDepth < maxDepth)
+        // 2. Repository Codespace Secrets
+        totalDeleted += await DeleteSecretsFromEndpoint(client, 
+            $"https://api.github.com/repos/{token.Owner}/{token.Repo}/codespaces/secrets", 
+            $"repos/{token.Owner}/{token.Repo}/codespaces/secrets",
+            silent: true);
+
+        // 3. Repository Action Secrets (just in case)
+        totalDeleted += await DeleteSecretsFromEndpoint(client, 
+            $"https://api.github.com/repos/{token.Owner}/{token.Repo}/actions/secrets", 
+            $"repos/{token.Owner}/{token.Repo}/actions/secrets",
+            silent: true);
+
+        if (totalDeleted > 0)
         {
-            var configDir = Path.Combine(currentDir.FullName, "config");
-            var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
-
-            if (Directory.Exists(configDir) && File.Exists(gitignore))
-                return currentDir.FullName;
-
-            currentDir = currentDir.Parent;
-            currentDepth++;
+            AnsiConsole.MarkupLine($"[green]✓ Cleaned {totalDeleted} old secrets[/]");
+            await Task.Delay(2000); // Wait for GitHub API to sync
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[dim]✓ No old secrets found[/]");
         }
 
-        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        return true;
     }
 
-    public static async Task<bool> AutoDeploySecrets(TokenEntry token, string codespaceName)
-    {
-        try
-        {
-            AnsiConsole.MarkupLine("\n[cyan]═══ Auto-Deploy Secrets ═══[/]");
-
-            var config = BotConfig.Load();
-            if (config == null)
-            {
-                AnsiConsole.MarkupLine("[yellow]⚠ Failed to load bots_config.json, skipping secrets[/]");
-                return false;
-            }
-
-            var secretFiles = new Dictionary<string, string>();
-
-            foreach (var bot in config.BotsAndTools)
-            {
-                if (!bot.Enabled) continue;
-
-                var localBotPath = BotConfig.GetLocalBotPath(bot.Path);
-                if (!Directory.Exists(localBotPath)) continue;
-
-                var files = DetectSecretFilesInDirectory(localBotPath);
-                foreach (var file in files)
-                {
-                    var relativePath = Path.Combine(bot.Path, Path.GetFileName(file)).Replace('\\', '/');
-                    secretFiles[relativePath] = file;
-                }
-            }
-
-            if (!secretFiles.Any())
-            {
-                AnsiConsole.MarkupLine("[dim]○ No secrets found, skipping upload[/]");
-                return true;
-            }
-
-            var totalSize = secretFiles.Sum(kvp => new FileInfo(kvp.Value).Length);
-            AnsiConsole.MarkupLine($"[yellow]Found:[/] {secretFiles.Count} files ({totalSize / 1024.0:F1} KB)");
-
-            AnsiConsole.MarkupLine("[dim]Creating ZIP archive...[/]");
-            CreateTarGz(secretFiles, TempArchivePath);
-
-            string remotePath = "/tmp/bot-secrets.zip";
-            AnsiConsole.MarkupLine("[dim]Uploading via SSH...[/]");
-            string scpArgs = $"codespace cp -c {codespaceName} \"{TempArchivePath}\" remote:{remotePath}";
-            await ShellHelper.RunGhCommand(token, scpArgs, 300000);
-
-            AnsiConsole.MarkupLine("[dim]Extracting in codespace...[/]");
-            string extractCmd = $"cd /workspaces/automation-hub && unzip -o {remotePath} && rm {remotePath}";
-            string sshArgs = $"codespace ssh -c {codespaceName} -- \"{extractCmd}\"";
-            await ShellHelper.RunGhCommand(token, sshArgs, 120000);
-
-            File.Delete(TempArchivePath);
-
-            AnsiConsole.MarkupLine($"[green]✓ Secrets deployed ({secretFiles.Count} files)[/]");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]✗ Secret deployment failed: {ex.Message}[/]");
-            if (File.Exists(TempArchivePath))
-            {
-                try { File.Delete(TempArchivePath); } catch { }
-            }
-            return false;
-        }
-    }
-
-    public static async Task SetSecretsForActiveToken()
+    public static async Task DeleteAllSecrets()
     {
         AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
-        AnsiConsole.MarkupLine("[cyan]   Deploy Secrets via SSH (Direct Upload)[/]");
+        AnsiConsole.MarkupLine("[red]   DELETE ALL GITHUB SECRETS (FIX 200KB ERROR)[/]");
         AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
 
         var currentToken = TokenManager.GetCurrentToken();
-        var state = TokenManager.GetState();
-
+        
         if (string.IsNullOrEmpty(currentToken.Username))
         {
             AnsiConsole.MarkupLine("[red]✗ Active token has no username![/]");
@@ -130,156 +59,132 @@ public static class SecretManager
             return;
         }
 
-        var activeCodespace = state.ActiveCodespaceName;
-        if (string.IsNullOrEmpty(activeCodespace))
-        {
-            AnsiConsole.MarkupLine("[red]✗ No active codespace found![/]");
-            AnsiConsole.MarkupLine("[yellow]→ Run Menu 1 to create codespace first.[/]");
-            return;
-        }
+        var owner = currentToken.Owner;
+        var repo = currentToken.Repo;
 
-        AnsiConsole.MarkupLine($"[yellow]Target:[/] [cyan]@{currentToken.Username}[/] → [green]{activeCodespace}[/]");
+        AnsiConsole.MarkupLine($"[yellow]User:[/] [cyan]@{currentToken.Username}[/]");
+        AnsiConsole.MarkupLine($"[yellow]Repo:[/] [cyan]{owner}/{repo}[/]");
         AnsiConsole.MarkupLine($"[dim]Proxy: {TokenManager.MaskProxy(currentToken.Proxy)}[/]");
+        AnsiConsole.MarkupLine("\n[yellow]Will delete:[/]");
+        AnsiConsole.MarkupLine("[dim]  1. User Codespace Secrets (causes 200KB error)[/]");
+        AnsiConsole.MarkupLine("[dim]  2. Repository Action Secrets[/]");
+        AnsiConsole.MarkupLine("[dim]  3. Repository Codespace Secrets[/]");
 
-        var config = BotConfig.Load();
-        if (config == null)
-        {
-            AnsiConsole.MarkupLine("[red]✗ Failed to load bots_config.json[/]");
-            return;
-        }
-
-        var secretFiles = new Dictionary<string, string>();
-
-        await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
-            .StartAsync("[yellow]Scanning bot secrets...[/]", async ctx =>
-            {
-                foreach (var bot in config.BotsAndTools)
-                {
-                    if (!bot.Enabled) continue;
-
-                    ctx.Status($"[yellow]Scanning {bot.Name}...[/]");
-                    
-                    var localBotPath = BotConfig.GetLocalBotPath(bot.Path);
-                    if (!Directory.Exists(localBotPath)) continue;
-
-                    var files = DetectSecretFilesInDirectory(localBotPath);
-                    foreach (var file in files)
-                    {
-                        var relativePath = Path.Combine(bot.Path, Path.GetFileName(file)).Replace('\\', '/');
-                        secretFiles[relativePath] = file;
-                        AnsiConsole.MarkupLine($"[green]✓[/] [dim]{relativePath}[/]");
-                    }
-                }
-                await Task.Delay(100);
-            });
-
-        if (!secretFiles.Any())
-        {
-            AnsiConsole.MarkupLine("[yellow]○ No secret files found in D:\\SC[/]");
-            return;
-        }
-
-        var totalSize = secretFiles.Sum(kvp => new FileInfo(kvp.Value).Length);
-        
-        AnsiConsole.MarkupLine($"\n[cyan]───────────────────────────────────────────────────────────────[/]");
-        AnsiConsole.MarkupLine($"[yellow]Files:[/] [cyan]{secretFiles.Count}[/] | [yellow]Size:[/] [cyan]{totalSize / 1024.0:F1} KB[/]");
-        AnsiConsole.MarkupLine($"[cyan]───────────────────────────────────────────────────────────────[/]");
-        
-        if (!AnsiConsole.Confirm("\n[yellow]Upload secrets to codespace?[/]", false))
+        if (!AnsiConsole.Confirm("\n[red]⚠️  Delete ALL secrets?[/]", false))
         {
             AnsiConsole.MarkupLine("[yellow]✗ Cancelled by user.[/]");
             return;
         }
 
-        try
+        using var client = TokenManager.CreateHttpClient(currentToken);
+        int totalDeleted = 0;
+
+        AnsiConsole.MarkupLine("\n[cyan]═══ [[1/3]] User Codespace Secrets ═══[/]");
+        totalDeleted += await DeleteSecretsFromEndpoint(client, 
+            "https://api.github.com/user/codespaces/secrets", 
+            "user/codespaces/secrets");
+
+        AnsiConsole.MarkupLine("\n[cyan]═══ [[2/3]] Repository Action Secrets ═══[/]");
+        totalDeleted += await DeleteSecretsFromEndpoint(client, 
+            $"https://api.github.com/repos/{owner}/{repo}/actions/secrets", 
+            $"repos/{owner}/{repo}/actions/secrets");
+
+        AnsiConsole.MarkupLine("\n[cyan]═══ [[3/3]] Repository Codespace Secrets ═══[/]");
+        totalDeleted += await DeleteSecretsFromEndpoint(client, 
+            $"https://api.github.com/repos/{owner}/{repo}/codespaces/secrets", 
+            $"repos/{owner}/{repo}/codespaces/secrets");
+
+        AnsiConsole.MarkupLine("\n[cyan]═══════════════════════════════════════════════════════════════[/]");
+        if (totalDeleted > 0)
         {
-            AnsiConsole.MarkupLine("\n[cyan]Step 1/3:[/] Creating archive...");
-            CreateTarGz(secretFiles, TempArchivePath);
-            AnsiConsole.MarkupLine($"[green]✓[/] Archive: [dim]{new FileInfo(TempArchivePath).Length / 1024.0:F1} KB[/]");
-
-            AnsiConsole.MarkupLine("\n[cyan]Step 2/3:[/] Uploading via SSH...");
-            string remotePath = "/tmp/bot-secrets.zip";
-            string scpArgs = $"codespace cp -c {activeCodespace} \"{TempArchivePath}\" remote:{remotePath}";
-            await ShellHelper.RunGhCommand(currentToken, scpArgs, 300000);
-            AnsiConsole.MarkupLine($"[green]✓[/] Uploaded to [dim]{remotePath}[/]");
-
-            AnsiConsole.MarkupLine("\n[cyan]Step 3/3:[/] Extracting in codespace...");
-            string extractCmd = $"cd /workspaces/automation-hub && unzip -o {remotePath} && rm {remotePath}";
-            string sshArgs = $"codespace ssh -c {activeCodespace} -- \"{extractCmd}\"";
-            await ShellHelper.RunGhCommand(currentToken, sshArgs, 120000);
-            AnsiConsole.MarkupLine($"[green]✓[/] Extracted to [dim]/workspaces/automation-hub/[/]");
-
-            File.Delete(TempArchivePath);
-
-            AnsiConsole.MarkupLine("\n[cyan]═══════════════════════════════════════════════════════════════[/]");
-            AnsiConsole.MarkupLine($"[green]✓ Secrets deployed successfully![/]");
-            AnsiConsole.MarkupLine($"[dim]Uploaded {secretFiles.Count} files ({totalSize / 1024.0:F1} KB)[/]");
-            AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
+            AnsiConsole.MarkupLine($"[green]✓ Cleanup complete! Deleted {totalDeleted} secrets total[/]");
+            AnsiConsole.MarkupLine("[yellow]Now try creating codespace again (Menu 1)[/]");
         }
-        catch (Exception ex)
+        else
         {
-            AnsiConsole.MarkupLine($"\n[red]✗ Deployment failed: {ex.Message}[/]");
-            if (File.Exists(TempArchivePath))
-            {
-                try { File.Delete(TempArchivePath); } catch { }
-            }
+            AnsiConsole.MarkupLine("[green]✓ No secrets found (already clean)[/]");
         }
+        AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
     }
 
-    private static void CreateTarGz(Dictionary<string, string> files, string outputPath)
+    private static async Task<int> DeleteSecretsFromEndpoint(HttpClient client, string listUrl, string deleteUrlBase, bool silent = false)
     {
-        var tempZip = Path.Combine(Path.GetTempPath(), "bot-secrets.zip");
-        
         try
         {
-            if (File.Exists(tempZip))
-                File.Delete(tempZip);
+            if (!silent) AnsiConsole.Markup($"[dim]Checking {listUrl.Split('/').Last()}... [/]");
             
-            using (var zip = ZipFile.Open(tempZip, ZipArchiveMode.Create))
+            var listResponse = await client.GetAsync(listUrl);
+
+            if (!listResponse.IsSuccessStatusCode)
             {
-                foreach (var kvp in files)
-                {
-                    zip.CreateEntryFromFile(kvp.Value, kvp.Key.Replace('\\', '/'));
-                }
+                if (!silent) AnsiConsole.MarkupLine($"[yellow]SKIP ({listResponse.StatusCode})[/]");
+                return 0;
             }
-            
-            if (File.Exists(outputPath))
-                File.Delete(outputPath);
-            
-            File.Move(tempZip, outputPath);
-        }
-        finally
-        {
-            if (File.Exists(tempZip))
-                File.Delete(tempZip);
-        }
-    }
 
-    private static List<string> DetectSecretFilesInDirectory(string directory)
-    {
-        var foundFiles = new List<string>();
+            var json = await listResponse.Content.ReadAsStringAsync();
+            var secretList = JsonSerializer.Deserialize<GitHubSecretList>(json);
 
-        try
-        {
-            foreach (var pattern in CommonSecretPatterns)
+            if (secretList?.Secrets == null || !secretList.Secrets.Any())
+            {
+                if (!silent) AnsiConsole.MarkupLine("[dim]None found[/]");
+                return 0;
+            }
+
+            if (!silent) AnsiConsole.MarkupLine($"[yellow]{secretList.Secrets.Count} found[/]");
+
+            int deleted = 0;
+            foreach (var secret in secretList.Secrets)
             {
                 try
                 {
-                    var files = Directory.GetFiles(directory, pattern, SearchOption.TopDirectoryOnly);
-                    foundFiles.AddRange(files);
+                    var deleteUrl = $"https://api.github.com/{deleteUrlBase}/{secret.Name}";
+                    var deleteResponse = await client.DeleteAsync(deleteUrl);
+
+                    if (deleteResponse.IsSuccessStatusCode || deleteResponse.StatusCode == System.Net.HttpStatusCode.NoContent)
+                    {
+                        if (!silent) AnsiConsole.MarkupLine($"  [green]✓[/] [dim]{secret.Name}[/]");
+                        deleted++;
+                    }
+                    else
+                    {
+                        if (!silent) AnsiConsole.MarkupLine($"  [red]✗[/] [dim]{secret.Name} ({deleteResponse.StatusCode})[/]");
+                    }
+
+                    await Task.Delay(silent ? 100 : 300);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    if (!silent) AnsiConsole.MarkupLine($"  [red]✗[/] [dim]{secret.Name}: {ex.Message}[/]");
+                }
             }
 
-            foundFiles = foundFiles.Distinct().Where(f => 
-            {
-                var fileName = Path.GetFileName(f).ToLowerInvariant();
-                return !fileName.Contains("config") && !fileName.Contains("setting");
-            }).ToList();
+            return deleted;
         }
-        catch { }
+        catch (Exception ex)
+        {
+            if (!silent) AnsiConsole.MarkupLine($"[red]ERROR: {ex.Message}[/]");
+            return 0;
+        }
+    }
 
-        return foundFiles;
+    private class GitHubSecretList
+    {
+        [JsonPropertyName("total_count")]
+        public int TotalCount { get; set; }
+
+        [JsonPropertyName("secrets")]
+        public List<GitHubSecret> Secrets { get; set; } = new();
+    }
+
+    private class GitHubSecret
+    {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("created_at")]
+        public string CreatedAt { get; set; } = string.Empty;
+
+        [JsonPropertyName("updated_at")]
+        public string UpdatedAt { get; set; } = string.Empty;
     }
 }
