@@ -209,47 +209,47 @@ private static async Task<string> CreateNewCodespace(TokenEntry token, string re
         AnsiConsole.MarkupLine($"[green]✓ Created: {newName}[/] [dim]({createStopwatch.Elapsed:mm\\:ss})[/]");
         
         AnsiConsole.MarkupLine("\n[cyan]═══ First Boot Optimization ═══[/]");
-        AnsiConsole.MarkupLine("[yellow]Waiting for initial boot to complete...[/]");
-        
-        // === FIX: Tambah delay lebih lama untuk ensure workspace ready ===
-        await Task.Delay(30000); // 30 detik (naik dari 20)
-        // === AKHIR FIX ===
-        
-        var currentState = await GetCodespaceState(token, newName);
-        AnsiConsole.MarkupLine($"[dim]Current state: {currentState}[/]");
-        
-        if (currentState == "Available") {
-            AnsiConsole.MarkupLine("[yellow]Codespace is Available. Performing stop->start to ensure clean boot...[/]");
-            
-            await StopCodespace(token, newName);
-            await Task.Delay(5000);
-            await StartCodespace(token, newName);
-            
-            AnsiConsole.MarkupLine("[cyan]Waiting for Available state...[/]");
-            if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(4))) {
-                AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
-            }
-        } else {
-            AnsiConsole.MarkupLine($"[dim]Skipping restart (state: {currentState}). Waiting for Available...[/]");
-            if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(5))) {
-                AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
-            }
-        }
-        
-        AnsiConsole.MarkupLine("[cyan]Waiting for SSH ready...[/]");
-        if (!await WaitForSshReadyWithRetry(token, newName)) {
-            throw new Exception("SSH failed after initialization");
-        }
-        
-        // === FIX: Tambah delay setelah SSH ready sebelum check script ===
-        AnsiConsole.MarkupLine("[dim]Ensuring workspace fully initialized...[/]");
-        await Task.Delay(10000); // 10 detik extra
-        // === AKHIR FIX ===
-        
-        AnsiConsole.MarkupLine("[green]✓ Codespace ready for use[/]");
-        
-        AnsiConsole.MarkupLine("\n[cyan]═══ Triggering Auto-Start ═══[/]");
-        await TriggerStartupScript(token, newName);
+AnsiConsole.MarkupLine("[yellow]Waiting for codespace initialization...[/]");
+
+// === FIX: Delay lebih lama untuk ensure clone complete ===
+await Task.Delay(45000); // 45 detik (naik dari 30)
+// === AKHIR FIX ===
+
+var currentState = await GetCodespaceState(token, newName);
+AnsiConsole.MarkupLine($"[dim]Current state: {currentState}[/]");
+
+if (currentState == "Available") {
+    AnsiConsole.MarkupLine("[yellow]Performing restart for clean boot...[/]");
+    
+    await StopCodespace(token, newName);
+    await Task.Delay(8000); // 8 detik (naik dari 5)
+    await StartCodespace(token, newName);
+    
+    AnsiConsole.MarkupLine("[cyan]Waiting for Available state...[/]");
+    if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(4))) {
+        AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
+    }
+} else {
+    AnsiConsole.MarkupLine($"[dim]Waiting for Available (current: {currentState})...[/]");
+    if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(5))) {
+        AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
+    }
+}
+
+AnsiConsole.MarkupLine("[cyan]Waiting for SSH ready...[/]");
+if (!await WaitForSshReadyWithRetry(token, newName)) {
+    throw new Exception("SSH failed after initialization");
+}
+
+// === FIX: Delay lebih lama setelah SSH ===
+AnsiConsole.MarkupLine("[dim]Finalizing workspace setup...[/]");
+await Task.Delay(15000); // 15 detik (naik dari 10)
+// === AKHIR FIX ===
+
+AnsiConsole.MarkupLine("[green]✓ Codespace ready for use[/]");
+
+AnsiConsole.MarkupLine("\n[cyan]═══ Triggering Auto-Start ═══[/]");
+await TriggerStartupScript(token, newName);
         
         AnsiConsole.MarkupLine("[green]✓ Codespace created & initialized successfully[/]");
         AnsiConsole.MarkupLine("[dim]Bots will start automatically. Use Menu 4 to monitor.[/]");
