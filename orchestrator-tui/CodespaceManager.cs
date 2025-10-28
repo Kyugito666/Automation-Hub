@@ -343,61 +343,70 @@ public static class CodespaceManager
         return false;
     }
 
-    public static async Task UploadConfigs(TokenEntry token, string codespaceName) {
-        AnsiConsole.MarkupLine("\n[cyan]Uploading CORE configs...[/]");
-        string remoteDir = $"/workspaces/{token.Repo}/config";
-        
-        try { 
-            string mkdirArgs=$"codespace ssh -c {codespaceName} -- mkdir -p {remoteDir}"; 
-            await ShellHelper.RunGhCommand(token, mkdirArgs, 15000); 
-        } catch { }
-        
-        await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "bots_config.json"), $"{remoteDir}/bots_config.json");
-        await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "apilist.txt"), $"{remoteDir}/apilist.txt");
-        await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "paths.txt"), $"{remoteDir}/paths.txt");
+public static async Task UploadConfigs(TokenEntry token, string codespaceName) {
+    AnsiConsole.MarkupLine("\n[cyan]Uploading CORE configs...[/]");
+    
+    // FIX: Gunakan lowercase untuk konsistensi dengan Codespace filesystem
+    string repoNameLower = token.Repo.ToLower();
+    string remoteDir = $"/workspaces/{repoNameLower}/config";
+    
+    AnsiConsole.Markup("[dim]  Ensure remote dir... [/]");
+    try { 
+        string mkdirArgs=$"codespace ssh -c {codespaceName} -- mkdir -p {remoteDir}"; 
+        await ShellHelper.RunGhCommand(token, mkdirArgs, 15000); 
+        AnsiConsole.MarkupLine("[green]OK[/]");
+    } catch (Exception ex) { 
+        AnsiConsole.MarkupLine($"[yellow]Warn (mkdir): {ex.Message.Split('\n').FirstOrDefault()}[/]"); 
     }
+    
+    await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "bots_config.json"), $"{remoteDir}/bots_config.json");
+    await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "apilist.txt"), $"{remoteDir}/apilist.txt");
+    await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "paths.txt"), $"{remoteDir}/paths.txt");
+}
 
-    public static async Task UploadAllBotData(TokenEntry token, string codespaceName) {
-        AnsiConsole.MarkupLine("\n[cyan]Uploading secrets from D:\\SC...[/]"); 
-        var config=BotConfig.Load(); 
-        if (config == null) return;
+public static async Task UploadAllBotData(TokenEntry token, string codespaceName) {
+    AnsiConsole.MarkupLine("\n[cyan]Uploading secrets from D:\\SC...[/]"); 
+    var config=BotConfig.Load(); 
+    if (config == null) return;
+    
+    // FIX: Gunakan lowercase untuk konsistensi
+    string repoNameLower = token.Repo.ToLower();
+    string remoteRepoRoot=$"/workspaces/{repoNameLower}"; 
+    int filesUploaded=0;
+    
+    foreach (var bot in config.BotsAndTools) {
+        string localBotPath=BotConfig.GetLocalBotPath(bot.Path); 
+        string remoteBotPath=$"{remoteRepoRoot}/{bot.Path.Replace('\\', '/')}";
         
-        string remoteRepoRoot=$"/workspaces/{token.Repo}"; 
-        int filesUploaded=0;
+        if (!Directory.Exists(localBotPath)) continue;
         
-        foreach (var bot in config.BotsAndTools) {
-            string localBotPath=BotConfig.GetLocalBotPath(bot.Path); 
-            string remoteBotPath=$"{remoteRepoRoot}/{bot.Path.Replace('\\', '/')}";
+        bool botDirCreated=false; 
+        
+        foreach (var secretFileName in SecretFileNames) {
+            string localFilePath=Path.Combine(localBotPath, secretFileName);
             
-            if (!Directory.Exists(localBotPath)) continue;
-            
-            bool botDirCreated=false; 
-            
-            foreach (var secretFileName in SecretFileNames) {
-                string localFilePath=Path.Combine(localBotPath, secretFileName);
-                
-                if (File.Exists(localFilePath)) {
-                    if (!botDirCreated) {
-                        try { 
-                            string mkdirArgs=$"codespace ssh -c {codespaceName} -- mkdir -p {remoteBotPath}"; 
-                            await ShellHelper.RunGhCommand(token, mkdirArgs, 15000); 
-                            botDirCreated=true; 
-                        } catch { 
-                            goto NextBot; 
-                        }
+            if (File.Exists(localFilePath)) {
+                if (!botDirCreated) {
+                    try { 
+                        string mkdirArgs=$"codespace ssh -c {codespaceName} -- mkdir -p {remoteBotPath}"; 
+                        await ShellHelper.RunGhCommand(token, mkdirArgs, 15000); 
+                        botDirCreated=true; 
+                    } catch { 
+                        goto NextBot; 
                     }
-                    
-                    string remoteFilePath=$"{remoteBotPath}/{secretFileName}";
-                    await UploadFile(token, codespaceName, localFilePath, remoteFilePath, silent: true);
-                    filesUploaded++;
                 }
-            } 
-            
-            NextBot:;
+                
+                string remoteFilePath=$"{remoteBotPath}/{secretFileName}";
+                await UploadFile(token, codespaceName, localFilePath, remoteFilePath, silent: true);
+                filesUploaded++;
+            }
         } 
         
-        AnsiConsole.MarkupLine($"[green]   ✓ Uploaded {filesUploaded} files.[/]");
-    }
+        NextBot:;
+    } 
+    
+    AnsiConsole.MarkupLine($"[green]   ✓ Uploaded {filesUploaded} files.[/]");
+}
 
     private static async Task UploadFile(TokenEntry token, string csName, string localPath, string remotePath, bool silent = false) {
         if (!File.Exists(localPath)) return;
@@ -408,27 +417,33 @@ public static class CodespaceManager
         } catch { }
     }
 
-    public static async Task TriggerStartupScript(TokenEntry token, string codespaceName) {
-        string remoteScript=$"/workspaces/{token.Repo}/auto-start.sh";
-        
-        try { 
-            string checkArgs=$"codespace ssh -c {codespaceName} -- ls {remoteScript}"; 
-            await ShellHelper.RunGhCommand(token, checkArgs, 10000); 
-        } catch (Exception ex) { 
-            AnsiConsole.MarkupLine($"[red]Script not found: {ex.Message}[/]"); 
-            throw; 
-        }
-        
-        string cmd=$"nohup bash {remoteScript} > /tmp/startup.log 2>&1 &"; 
-        string args=$"codespace ssh -c {codespaceName} -- {cmd}";
-        
-        try { 
-            await ShellHelper.RunGhCommand(token, args, 20000); 
-        } catch (Exception ex) { 
-            AnsiConsole.MarkupLine($"[red]Trigger failed: {ex.Message.Split('\n').FirstOrDefault()}[/]"); 
-            throw; 
-        }
+public static async Task TriggerStartupScript(TokenEntry token, string codespaceName) {
+    // FIX: Gunakan lowercase untuk konsistensi
+    string repoNameLower = token.Repo.ToLower();
+    string remoteScript=$"/workspaces/{repoNameLower}/auto-start.sh";
+    
+    AnsiConsole.Markup("[dim]  Verify... [/]");
+    try { 
+        string checkArgs=$"codespace ssh -c {codespaceName} -- ls {remoteScript}"; 
+        await ShellHelper.RunGhCommand(token, checkArgs, 10000); 
+        AnsiConsole.MarkupLine("[green]OK[/]");
+    } catch (Exception ex) { 
+        AnsiConsole.MarkupLine($"[red]FAIL: {ex.Message}[/]"); 
+        throw; 
     }
+    
+    AnsiConsole.Markup("[dim]  Exec (detached)... [/]");
+    string cmd=$"nohup bash {remoteScript} > /tmp/startup.log 2>&1 &"; 
+    string args=$"codespace ssh -c {codespaceName} -- {cmd}";
+    
+    try { 
+        await ShellHelper.RunGhCommand(token, args, 20000); 
+        AnsiConsole.MarkupLine("[green]OK[/]");
+    } catch (Exception ex) { 
+        AnsiConsole.MarkupLine($"[red]FAIL: {ex.Message.Split('\n').FirstOrDefault()}[/]"); 
+        throw; 
+    }
+}
 
     public static async Task DeleteCodespace(TokenEntry token, string codespaceName) {
         AnsiConsole.MarkupLine($"[yellow]Deleting {codespaceName}...[/]");
