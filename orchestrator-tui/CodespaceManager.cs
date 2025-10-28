@@ -209,23 +209,37 @@ private static async Task<string> CreateNewCodespace(TokenEntry token, string re
         AnsiConsole.MarkupLine($"[green]✓ Created: {newName}[/] [dim]({createStopwatch.Elapsed:mm\\:ss})[/]");
         
         AnsiConsole.MarkupLine("\n[cyan]═══ First Boot Optimization ═══[/]");
-        AnsiConsole.MarkupLine("[yellow]New codespace detected. Performing stop->start cycle...[/]");
-        AnsiConsole.MarkupLine("[dim](This forces proper initialization)[/]");
+        AnsiConsole.MarkupLine("[yellow]Checking if codespace needs restart...[/]");
         
-        await Task.Delay(15000);
+        // Tunggu codespace selesai boot pertama
+        await Task.Delay(20000);
         
-        await StopCodespace(token, newName);
-        await Task.Delay(5000);
-        await StartCodespace(token, newName);
+        // Cek state dulu
+        var currentState = await GetCodespaceState(token, newName);
+        AnsiConsole.MarkupLine($"[dim]Current state: {currentState}[/]");
         
-        AnsiConsole.MarkupLine("[cyan]Waiting for Available state...[/]");
-        if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(4))) {
-            AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
+        // Hanya restart jika codespace sudah Available (bukan Starting/Queued)
+        if (currentState == "Available") {
+            AnsiConsole.MarkupLine("[yellow]Codespace is Available. Performing stop->start to ensure clean boot...[/]");
+            
+            await StopCodespace(token, newName);
+            await Task.Delay(5000);
+            await StartCodespace(token, newName);
+            
+            AnsiConsole.MarkupLine("[cyan]Waiting for Available state...[/]");
+            if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(4))) {
+                AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
+            }
+        } else {
+            AnsiConsole.MarkupLine($"[dim]Skipping restart (state: {currentState}). Waiting for Available...[/]");
+            if (!await WaitForState(token, newName, "Available", TimeSpan.FromMinutes(5))) {
+                AnsiConsole.MarkupLine("[yellow]State timeout, checking SSH anyway...[/]");
+            }
         }
         
         AnsiConsole.MarkupLine("[cyan]Waiting for SSH ready...[/]");
         if (!await WaitForSshReadyWithRetry(token, newName)) {
-            throw new Exception("SSH failed after stop->start cycle");
+            throw new Exception("SSH failed after initialization");
         }
         
         AnsiConsole.MarkupLine("[green]✓ Codespace ready for use[/]");
@@ -337,36 +351,36 @@ private static async Task<string> CreateNewCodespace(TokenEntry token, string re
         await Task.Delay(3000);
     }
 
-    private static async Task StopCodespace(TokenEntry token, string codespaceName) 
-    {
-        AnsiConsole.Markup($"[dim]Stopping {codespaceName}... [/]");
-        try {
-            string args = $"codespace stop -c {codespaceName}";
-            await ShellHelper.RunGhCommand(token, args, STOP_TIMEOUT_MS);
-            AnsiConsole.MarkupLine("[green]OK[/]");
-        } catch (Exception ex) {
-            if (ex.Message.Contains("already stopped"))
-                AnsiConsole.MarkupLine("[dim]Already stopped[/]");
-            else
-                AnsiConsole.MarkupLine($"[yellow]Stop error (continuing): {ex.Message.Split('\n').FirstOrDefault()}[/]");
-        }
-        await Task.Delay(2000);
+private static async Task StopCodespace(TokenEntry token, string codespaceName) 
+{
+    AnsiConsole.Markup($"[dim]Stopping {codespaceName}... [/]");
+    try {
+        string args = $"codespace stop --codespace {codespaceName}";
+        await ShellHelper.RunGhCommand(token, args, STOP_TIMEOUT_MS);
+        AnsiConsole.MarkupLine("[green]OK[/]");
+    } catch (Exception ex) {
+        if (ex.Message.Contains("already stopped") || ex.Message.Contains("not running"))
+            AnsiConsole.MarkupLine("[dim]Already stopped[/]");
+        else
+            AnsiConsole.MarkupLine($"[yellow]Stop error (continuing): {ex.Message.Split('\n').FirstOrDefault()}[/]");
     }
+    await Task.Delay(2000);
+}
 
-    private static async Task StartCodespace(TokenEntry token, string codespaceName) 
-    {
-        AnsiConsole.Markup($"[dim]Starting {codespaceName}... [/]");
-        try { 
-            await ShellHelper.RunGhCommand(token, $"codespace start -c {codespaceName}", START_TIMEOUT_MS); 
-            AnsiConsole.MarkupLine("[green]OK[/]");
-        }
-        catch (Exception ex) { 
-            if(!ex.Message.Contains("is already available")) 
-                AnsiConsole.MarkupLine($"[yellow]Start warning: {ex.Message.Split('\n').FirstOrDefault()}[/]"); 
-            else 
-                AnsiConsole.MarkupLine($"[dim]Already available[/]"); 
-        }
+private static async Task StartCodespace(TokenEntry token, string codespaceName) 
+{
+    AnsiConsole.Markup($"[dim]Starting {codespaceName}... [/]");
+    try { 
+        await ShellHelper.RunGhCommand(token, $"codespace start --codespace {codespaceName}", START_TIMEOUT_MS); 
+        AnsiConsole.MarkupLine("[green]OK[/]");
     }
+    catch (Exception ex) { 
+        if(!ex.Message.Contains("is already available")) 
+            AnsiConsole.MarkupLine($"[yellow]Start warning: {ex.Message.Split('\n').FirstOrDefault()}[/]"); 
+        else 
+            AnsiConsole.MarkupLine($"[dim]Already available[/]"); 
+    }
+}
 
     private static async Task<bool> WaitForState(TokenEntry token, string codespaceName, string targetState, TimeSpan timeout) 
     {
