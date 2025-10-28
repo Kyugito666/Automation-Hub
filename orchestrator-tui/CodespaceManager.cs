@@ -66,7 +66,20 @@ public static class CodespaceManager
                          await DeleteCodespace(token, codespace.Name); codespace = null; break;
                     }
                     AnsiConsole.MarkupLine("[green]  ✓ SSH Ready. Triggering auto-start & checking health...[/]");
-                    await TriggerStartupScript(token, codespace.Name);
+                    
+                    // FIX: Cek script dulu, delete jika not found (repo update)
+                    try {
+                        await TriggerStartupScript(token, codespace.Name);
+                    } catch (Exception scriptEx) {
+                        if (scriptEx.Message.Contains("Script not found")) {
+                            AnsiConsole.MarkupLine("[red]  ✗ Script not found (repo update?). Deleting & recreating...[/]");
+                            await DeleteCodespace(token, codespace.Name);
+                            codespace = null;
+                            break;
+                        }
+                        throw; // Rethrow jika error lain
+                    }
+                    
                     if (await CheckHealthWithRetry(token, codespace.Name)) {
                         AnsiConsole.MarkupLine("[green]  ✓ Health check PASSED. Reusing.[/]");
                         stopwatch.Stop(); return codespace.Name;
