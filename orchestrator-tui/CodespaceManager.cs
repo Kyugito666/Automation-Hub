@@ -188,7 +188,7 @@ public static class CodespaceManager
         }
     }
 
-    private static async Task<string> CreateNewCodespace(TokenEntry token, string repoFullName) 
+     private static async Task<string> CreateNewCodespace(TokenEntry token, string repoFullName) 
     {
         AnsiConsole.MarkupLine($"\n[cyan]═══ Creating New Codespace ═══[/]");
         AnsiConsole.MarkupLine($"[dim]Machine: {MACHINE_TYPE}, Display: {CODESPACE_DISPLAY_NAME}[/]");
@@ -200,7 +200,10 @@ public static class CodespaceManager
         try {
             newName = await ShellHelper.RunGhCommand(token, createArgs, CREATE_TIMEOUT_MS); 
             createStopwatch.Stop();
-            
+       await SecretCleanup.AutoCleanupBeforeCreate(token);
+             string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
+             Stopwatch createStopwatch = Stopwatch.StartNew(); 
+             string newName = "";
             if (string.IsNullOrWhiteSpace(newName)) 
                 throw new Exception("gh create returned empty name");
             
