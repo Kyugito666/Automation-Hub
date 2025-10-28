@@ -1,8 +1,6 @@
 #!/bin/bash
 #
-# auto-start.sh (Smart Mode v4 - Smart Secret Extract)
-# Dijalankan MANUAL oleh TUI via SSH SETELAH SSH ready.
-# Fokus: git pull, extract secrets (smart), proxysync, deploy_bots.
+# auto-start.sh (Smart Mode v5 - Handle Split Secrets)
 #
 
 WORKDIR="/workspaces/automation-hub"
@@ -15,7 +13,7 @@ FIRST_RUN_FLAG="/tmp/auto_start_first_run"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "========================================="
-echo "  AUTO START SCRIPT (Smart v4)"
+echo "  AUTO START SCRIPT (Smart v5)"
 echo "  $(date)"
 echo "========================================="
 
@@ -38,25 +36,23 @@ git pull || { echo "   ⚠️  WARNING: git pull failed, continuing with existin
 
 echo "[2/4] Extracting secrets from GitHub Codespaces (Smart Mode)..."
 
-# Fungsi untuk extract secret dengan format baru: BOTNAME_FILENAME
-# Contoh: GRASS_BOT_PK_TXT, NODEPAY_TOKEN_JSON
 extract_secret_smart() {
     local bot_name="$1"
     local target_dir="$2"
     
-    # Sanitize bot name (sama seperti di C#)
     local sanitized_bot=$(echo "$bot_name" | tr -cs '[:alnum:]' '_' | tr '[:lower:]' '[:upper:]')
     
-    # Cari semua env var yang match pattern BOTNAME_*
     local extracted_count=0
     
     for var_name in $(compgen -e | grep "^${sanitized_bot}_"); do
-        # Ambil filename dari var name (hapus prefix botname)
-        # Contoh: GRASS_BOT_PK_TXT -> PK_TXT -> pk.txt
+        # Skip PART variables for now (will be merged later)
+        if [[ "$var_name" =~ _PART[0-9]+$ ]]; then
+            continue
+        fi
+        
         local filename_part="${var_name#${sanitized_bot}_}"
         local filename=$(echo "$filename_part" | tr '[:upper:]' '[:lower:]' | tr '_' '.')
         
-        # Extract value
         local var_value="${!var_name}"
         
         if [ -n "$var_value" ]; then
@@ -67,12 +63,40 @@ extract_secret_smart() {
         fi
     done
     
+    # Merge PART files if exist
+    for var_name in $(compgen -e | grep "^${sanitized_bot}_.*_PART1$"); do
+        local base_name="${var_name%_PART1}"
+        local filename_part="${base_name#${sanitized_bot}_}"
+        local filename=$(echo "$filename_part" | tr '[:upper:]' '[:lower:]' | tr '_' '.')
+        
+        local merged_content=""
+        local part_num=1
+        
+        while true; do
+            local part_var="${base_name}_PART${part_num}"
+            local part_value="${!part_var}"
+            
+            if [ -z "$part_value" ]; then
+                break
+            fi
+            
+            merged_content="${merged_content}${part_value}"
+            ((part_num++))
+        done
+        
+        if [ -n "$merged_content" ]; then
+            mkdir -p "$target_dir"
+            echo "$merged_content" > "$target_dir/$filename"
+            echo "   ✓ Merged: $filename for $bot_name (${part_num} parts)"
+            ((extracted_count++))
+        fi
+    done
+    
     if [ $extracted_count -eq 0 ]; then
         echo "   ○ No secrets for $bot_name"
     fi
 }
 
-# Baca config dan extract secrets untuk setiap bot
 if [ -f "$WORKDIR/config/bots_config.json" ]; then
     echo "   Reading bots_config.json..."
     
