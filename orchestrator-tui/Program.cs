@@ -12,7 +12,6 @@ namespace Orchestrator;
 internal static class Program
 {
     private static CancellationTokenSource _mainCts = new CancellationTokenSource();
-    
     private static CancellationTokenSource? _interactiveCts;
 
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromHours(3);
@@ -25,17 +24,17 @@ internal static class Program
             
             if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested)
             {
-                AnsiConsole.MarkupLine("\n[yellow]Ctrl+C detected. Requesting interactive session shutdown...[/]");
+                AnsiConsole.MarkupLine("\n[yellow]Ctrl+C detected. Stopping interactive session...[/]");
                 _interactiveCts.Cancel();
             }
             else if (!_mainCts.IsCancellationRequested)
             {
-                AnsiConsole.MarkupLine("\n[red]Ctrl+C detected. Requesting main shutdown...[/]");
+                AnsiConsole.MarkupLine("\n[red]Ctrl+C detected. Shutting down...[/]");
                 _mainCts.Cancel();
             } 
             else 
             { 
-                AnsiConsole.MarkupLine("[yellow]Shutdown already requested...[/]"); 
+                AnsiConsole.MarkupLine("[yellow]Shutdown already in progress...[/]"); 
             }
         };
 
@@ -55,7 +54,7 @@ internal static class Program
             AnsiConsole.WriteException(ex);
         }
         finally { 
-            AnsiConsole.MarkupLine("\n[dim]Orchestrator shutting down.[/]"); 
+            AnsiConsole.MarkupLine("\n[dim]Orchestrator shutdown complete.[/]"); 
         }
     }
 
@@ -77,7 +76,8 @@ internal static class Program
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
-                        "5. Refresh All Configs",
+                        "5. Set Secrets (Auto Read Bot Configs)",
+                        "6. Refresh All Configs",
                         "0. Exit"
                     }));
 
@@ -97,7 +97,11 @@ internal static class Program
                     case "4": 
                         await ShowAttachMenuAsync(cancellationToken);
                         break;
-                    case "5": 
+                    case "5":
+                        await SecretManager.SetSecretsForAll();
+                        Pause("Press Enter to continue...", cancellationToken);
+                        break;
+                    case "6": 
                         TokenManager.ReloadAllConfigs(); 
                         Pause("Press Enter to continue...", cancellationToken); 
                         break;
@@ -221,9 +225,9 @@ internal static class Program
         if (selectedBot == backOption) return;
 
         AnsiConsole.MarkupLine($"\n[cyan]Attaching to [yellow]{selectedBot}[/].[/]");
-        AnsiConsole.MarkupLine("[dim]   (Gunakan [bold]Ctrl+B[/] lalu [bold]D[/] untuk detach dari session)[/]");
-        AnsiConsole.MarkupLine("[dim]   (Gunakan [bold]Ctrl+B[/] lalu [bold]N[/] (next) / [bold]P[/] (prev) untuk ganti bot)[/]");
-        AnsiConsole.MarkupLine("[yellow]   Press Ctrl+C to force-quit this attach session.[/]");
+        AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]D[/] to detach from session)[/]");
+        AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]N[/] (next) / [bold]P[/] (prev) to switch bot)[/]");
+        AnsiConsole.MarkupLine("[yellow]Press Ctrl+C to force-quit this attach session.[/]");
 
         _interactiveCts = new CancellationTokenSource();
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_interactiveCts.Token, mainCancellationToken);
@@ -256,7 +260,9 @@ internal static class Program
 
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) 
     {
-        Console.WriteLine("Starting Orchestrator Loop...");
+        Console.WriteLine("═══════════════════════════════════════");
+        Console.WriteLine("  ORCHESTRATOR LOOP STARTED");
+        Console.WriteLine("═══════════════════════════════════════");
         
         const int MAX_CONSECUTIVE_ERRORS = 3;
         int consecutiveErrors = 0;
@@ -268,17 +274,19 @@ internal static class Program
             string? activeCodespace = currentState.ActiveCodespaceName;
             
             var username = currentToken.Username ?? "unknown";
-            Console.WriteLine($"\n========== Token #{currentState.CurrentIndex + 1} (@{username}) ==========");
+            Console.WriteLine($"\n{'═',50}");
+            Console.WriteLine($"  TOKEN #{currentState.CurrentIndex + 1}: @{username}");
+            Console.WriteLine($"{'═',50}");
             
             try 
             { 
-                Console.WriteLine("Checking billing..."); 
+                Console.WriteLine("Checking billing quota...");
                 var billingInfo = await BillingManager.GetBillingInfo(currentToken); 
                 BillingManager.DisplayBilling(billingInfo, currentToken.Username ?? "unknown");
                 
                 if (!billingInfo.IsQuotaOk) 
                 { 
-                    Console.WriteLine("Quota insufficient. Rotating..."); 
+                    Console.WriteLine("⚠ Quota insufficient. Rotating to next token...");
                     
                     if (!string.IsNullOrEmpty(activeCodespace)) 
                     { 
@@ -293,84 +301,82 @@ internal static class Program
                     continue; 
                 }
                 
-                Console.WriteLine("Ensuring codespace...");
-                
+                Console.WriteLine("Ensuring healthy codespace...");
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken);
                 
                 bool isNewOrRecreatedCodespace = currentState.ActiveCodespaceName != activeCodespace;
                 
+                currentState.ActiveCodespaceName = activeCodespace; 
+                TokenManager.SaveState(currentState);
+                
                 if (isNewOrRecreatedCodespace) 
                 { 
-                    currentState.ActiveCodespaceName = activeCodespace; 
-                    TokenManager.SaveState(currentState); 
-                    
-                    Console.WriteLine($"Active CS: {activeCodespace}");
-                    Console.WriteLine("New/Recreated CS detected. Uploading core configs..."); 
-                    
-                    await CodespaceManager.UploadConfigs(currentToken, activeCodespace);
-                    
-                    await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace);
-                    Console.WriteLine("Initial startup complete."); 
+                    Console.WriteLine($"✓ New codespace activated: {activeCodespace}");
+                    Console.WriteLine("Bots are starting automatically via auto-start.sh");
                 } 
                 else 
                 { 
-                    Console.WriteLine("Codespace healthy (reusing existing 'Available' or 'Stopped')."); 
+                    Console.WriteLine($"✓ Reusing existing codespace: {activeCodespace}");
                 }
                 
                 consecutiveErrors = 0;
                 
-                Console.WriteLine($"Sleeping for Keep-Alive ({KeepAliveInterval.TotalMinutes} min)..."); 
+                Console.WriteLine($"\n⏱ Keep-Alive: Sleeping for {KeepAliveInterval.TotalHours:F1} hours...");
+                Console.WriteLine($"   Next check at: {DateTime.Now.Add(KeepAliveInterval):yyyy-MM-dd HH:mm:ss}");
+                
                 await Task.Delay(KeepAliveInterval, cancellationToken);
                 
+                // Refresh state after sleep
                 currentState = TokenManager.GetState(); 
                 activeCodespace = currentState.ActiveCodespaceName; 
                 
                 if (string.IsNullOrEmpty(activeCodespace)) 
                 { 
-                    Console.WriteLine("No active codespace in state. Will recreate next cycle."); 
+                    Console.WriteLine("⚠ No active codespace after sleep. Will recreate next cycle.");
                     continue; 
                 }
                 
-                Console.WriteLine("Keep-Alive: Checking SSH..."); 
+                Console.WriteLine("\n⏱ Keep-Alive Check: Verifying codespace health...");
                 
-                // === FIX: Ganti CheckSshHealthWithRetry dengan CheckHealthWithRetry ===
                 if (!await CodespaceManager.CheckHealthWithRetry(currentToken, activeCodespace)) 
                 { 
-                    Console.WriteLine("Keep-Alive: Health check FAILED!"); 
+                    Console.WriteLine("✗ Keep-Alive: Health check FAILED!");
+                    Console.WriteLine("Marking codespace for recreation...");
                     currentState.ActiveCodespaceName = null; 
-                    TokenManager.SaveState(currentState); 
-                    Console.WriteLine("Will recreate next cycle."); 
+                    TokenManager.SaveState(currentState);
                 } 
                 else 
                 { 
-                    Console.WriteLine("Keep-Alive: Health check OK.");
+                    Console.WriteLine("✓ Keep-Alive: Health check OK.");
                     
                     try
                     {
-                        Console.WriteLine("Keep-Alive: Re-triggering startup script (git pull & restart bots)...");
+                        Console.WriteLine("Triggering startup script (git pull & restart bots)...");
                         await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace);
+                        Console.WriteLine("✓ Startup script triggered successfully");
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Warning: Keep-alive startup trigger failed: {ex.Message}");
+                        Console.WriteLine($"⚠ Warning: Keep-alive startup trigger failed: {ex.Message}");
+                        Console.WriteLine("Continuing anyway (bots may still be running)...");
                     }
                 }
             } 
             catch (OperationCanceledException) 
             { 
-                Console.WriteLine("Loop cancelled by user."); 
+                Console.WriteLine("\n⚠ Loop cancelled by user.");
                 break; 
             } 
             catch (Exception ex) 
             { 
                 consecutiveErrors++;
-                Console.WriteLine("ERROR loop:"); 
+                Console.WriteLine("\n✗ ERROR in orchestrator loop:");
                 Console.WriteLine(ex.ToString());
                 
                 if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS)
                 {
-                    AnsiConsole.MarkupLine($"[red]CRITICAL: {MAX_CONSECUTIVE_ERRORS} consecutive errors detected![/]");
-                    AnsiConsole.MarkupLine("[yellow]Attempting token rotation and full reset...[/]");
+                    AnsiConsole.MarkupLine($"\n[red]CRITICAL: {MAX_CONSECUTIVE_ERRORS} consecutive errors![/]");
+                    AnsiConsole.MarkupLine("[yellow]Attempting full recovery (token rotation + codespace reset)...[/]");
                     
                     if (!string.IsNullOrEmpty(currentState.ActiveCodespaceName))
                     {
@@ -392,11 +398,15 @@ internal static class Program
                 }
                 else
                 {
-                    Console.WriteLine($"Retrying in {ErrorRetryDelay.TotalMinutes} minutes... (Error {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS})");
+                    Console.WriteLine($"⚠ Retrying in {ErrorRetryDelay.TotalMinutes} minutes... (Error {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS})");
                     await Task.Delay(ErrorRetryDelay, cancellationToken);
                 }
             }
         }
+        
+        Console.WriteLine("\n═══════════════════════════════════════");
+        Console.WriteLine("  ORCHESTRATOR LOOP STOPPED");
+        Console.WriteLine("═══════════════════════════════════════");
     }
 
     private static void Pause(string message, CancellationToken cancellationToken)
