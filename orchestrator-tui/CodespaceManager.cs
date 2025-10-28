@@ -242,7 +242,7 @@ public static class CodespaceManager
     // === AKHIR PEROMBAKAN WAIT FOR SSH ===
 
     // === HEALTH CHECK BARU (Niru Nexus) ===
-    private static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName) {
+    public static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName) {
         const int maxHealthAttempts = 3;
         const int healthRetryDelaySec = 10;
         AnsiConsole.MarkupLine($"[cyan]Performing health check on '{codespaceName}'...[/]");
