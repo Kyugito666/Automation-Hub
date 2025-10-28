@@ -240,10 +240,11 @@ public static class SecretManager
             if (skippedCount > 0)
                 AnsiConsole.MarkupLine($"   Skipped: [yellow]{skippedCount}[/] (too large even after split)");
             AnsiConsole.MarkupLine("[dim]Secrets will be available in codespace via auto-start.sh extraction[/]");
+            AnsiConsole.MarkupLine("\n[yellow]NOTE: Restart codespace or run auto-start.sh to apply secrets.[/]");
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"\n[red]Error: {ex.Message}[/]");
             AnsiConsole.WriteException(ex);
         }
     }
