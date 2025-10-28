@@ -77,7 +77,7 @@ internal static class Program
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
                         "5. Deploy Secrets (Manual Upload)",
-                        "6. [RED] Delete ALL GitHub Secrets (Cleanup)",
+                        "6. Delete ALL GitHub Secrets (Cleanup)",
                         "0. Exit"
                     }));
 
