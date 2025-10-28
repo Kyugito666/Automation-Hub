@@ -46,9 +46,23 @@ public static class SecretManager
         return fallbackPath;
     }
 
-    public static async Task SetSecretsForAll()
+    public static async Task SetSecretsForActiveToken()
     {
-        AnsiConsole.MarkupLine("[cyan]═══ Auto Setting Secrets (Smart Read) ═══[/]");
+        AnsiConsole.MarkupLine("[cyan]═══ Set Secrets (Active Token Only) ═══[/]");
+
+        // AMBIL TOKEN YANG LAGI ACTIVE AJA
+        var currentToken = TokenManager.GetCurrentToken();
+        var state = TokenManager.GetState();
+
+        if (string.IsNullOrEmpty(currentToken.Username))
+        {
+            AnsiConsole.MarkupLine("[red]Active token belum punya username![/]");
+            AnsiConsole.MarkupLine("[yellow]Run Menu 2 -> Validate Tokens dulu.[/]");
+            return;
+        }
+
+        AnsiConsole.MarkupLine($"[yellow]Active Token: #{state.CurrentIndex + 1} - @{currentToken.Username}[/]");
+        AnsiConsole.MarkupLine($"[dim]Proxy: {TokenManager.MaskProxy(currentToken.Proxy)}[/]");
 
         var config = BotConfig.Load();
         if (config == null)
@@ -56,16 +70,6 @@ public static class SecretManager
             AnsiConsole.MarkupLine("[red]Failed to load bots_config.json[/]");
             return;
         }
-
-        var allTokens = TokenManager.GetAllTokenEntries();
-        if (!allTokens.Any())
-        {
-            AnsiConsole.MarkupLine("[red]No tokens configured in config/github_tokens.txt[/]");
-            return;
-        }
-
-        var owner = allTokens.First().Owner;
-        var repo = allTokens.First().Repo;
 
         // Kumpulkan semua secret yang dibutuhkan per bot
         var botSecrets = new Dictionary<string, Dictionary<string, string>>();
@@ -78,7 +82,7 @@ public static class SecretManager
             
             if (!Directory.Exists(localBotPath))
             {
-                AnsiConsole.MarkupLine($"[dim]Skip {bot.Name} (local path not found)[/]");
+                AnsiConsole.MarkupLine($"[dim]Skip {bot.Name} (local path not found: {localBotPath})[/]");
                 continue;
             }
 
@@ -121,105 +125,108 @@ public static class SecretManager
             if (secrets.Any())
             {
                 botSecrets[bot.Name] = secrets;
-                AnsiConsole.MarkupLine($"[green]✓ Found {secrets.Count} secrets for {bot.Name}[/]");
-            }
-            else
-            {
-                AnsiConsole.MarkupLine($"[dim]No secrets found for {bot.Name}[/]");
+                AnsiConsole.MarkupLine($"[green]✓ Found {secrets.Count} secret(s) for {bot.Name}[/]");
             }
         }
 
         if (!botSecrets.Any())
         {
-            AnsiConsole.MarkupLine("[yellow]No secrets to set (all bots have no secret files)[/]");
+            AnsiConsole.MarkupLine("[yellow]No secrets to set (all bots have no secret files in D:\\SC)[/]");
             return;
         }
 
-        // Set secrets untuk setiap token
-        int successCount = 0, failCount = 0;
-
-        foreach (var tokenEntry in allTokens)
+        // Hitung total secrets
+        int totalSecrets = botSecrets.Sum(kvp => kvp.Value.Count);
+        
+        AnsiConsole.MarkupLine($"\n[yellow]═══ SUMMARY ═══[/]");
+        AnsiConsole.MarkupLine($"Target: [cyan]@{currentToken.Username}[/]");
+        AnsiConsole.MarkupLine($"Bots: [cyan]{botSecrets.Count}[/]");
+        AnsiConsole.MarkupLine($"Total Secrets: [cyan]{totalSecrets}[/]");
+        
+        // KONFIRMASI DULU BIAR GA BRUTAL
+        if (!AnsiConsole.Confirm("\n[yellow]Proceed to set secrets?[/]", false))
         {
-            if (string.IsNullOrEmpty(tokenEntry.Username))
-            {
-                AnsiConsole.MarkupLine($"[yellow]Skip token without username (run Validate Tokens first)[/]");
-                continue;
-            }
-
-            AnsiConsole.MarkupLine($"\n[cyan]Processing @{tokenEntry.Username}...[/]");
-
-            try
-            {
-                using var client = TokenManager.CreateHttpClient(tokenEntry);
-
-                // Get Repo ID
-                AnsiConsole.Markup("[dim]Getting repo ID... [/]");
-                var repoUrl = $"https://api.github.com/repos/{owner}/{repo}";
-                var repoResponse = await client.GetAsync(repoUrl);
-                if (!repoResponse.IsSuccessStatusCode)
-                {
-                    AnsiConsole.MarkupLine($"[red]Failed: {repoResponse.StatusCode}[/]");
-                    failCount++; 
-                    continue;
-                }
-                var repoJson = await repoResponse.Content.ReadFromJsonAsync<JsonElement>();
-                var repoId = repoJson.GetProperty("id").GetInt32();
-                AnsiConsole.MarkupLine("[green]OK[/]");
-
-                // Get Public Key
-                AnsiConsole.Markup("[dim]Getting public key... [/]");
-                var pubKeyResponse = await client.GetAsync("https://api.github.com/user/codespaces/secrets/public-key");
-                if (!pubKeyResponse.IsSuccessStatusCode)
-                {
-                    AnsiConsole.MarkupLine($"[red]Failed: {pubKeyResponse.StatusCode}[/]");
-                    failCount++; 
-                    continue;
-                }
-                var pubKey = await pubKeyResponse.Content.ReadFromJsonAsync<PublicKeyResponse>();
-                if (pubKey == null)
-                {
-                    AnsiConsole.MarkupLine("[red]Invalid public key response[/]");
-                    failCount++; 
-                    continue;
-                }
-                AnsiConsole.MarkupLine("[green]OK[/]");
-
-                int secretsSuccessfullySet = 0;
-
-                // Set secrets untuk setiap bot
-                foreach (var (botName, secrets) in botSecrets)
-                {
-                    foreach (var (secretName, secretValue) in secrets)
-                    {
-                        // Format: BOTNAME_SECRETNAME (contoh: GRASS_ENV_FILE)
-                        var fullSecretName = $"{SanitizeName(botName)}_{secretName}".ToUpper();
-                        
-                        if (await SetSecret(client, fullSecretName, secretValue, pubKey, repoId))
-                            secretsSuccessfullySet++;
-                    }
-                }
-
-                if (secretsSuccessfullySet > 0)
-                {
-                    AnsiConsole.MarkupLine($"[green]✓ Set {secretsSuccessfullySet} secrets for @{tokenEntry.Username}[/]");
-                    successCount++;
-                }
-                else
-                {
-                    AnsiConsole.MarkupLine($"[yellow]No secrets set for @{tokenEntry.Username}[/]");
-                }
-            }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"[red]Error processing @{tokenEntry.Username}: {ex.Message.Split('\n').FirstOrDefault()}[/]");
-                failCount++;
-            }
-
-            await Task.Delay(1000);
+            AnsiConsole.MarkupLine("[yellow]Cancelled by user.[/]");
+            return;
         }
 
-        AnsiConsole.MarkupLine($"\n[green]✓ Secret setting completed.[/] Success: {successCount}, Failed: {failCount}");
-        AnsiConsole.MarkupLine("[dim]Secrets are now available as environment variables in codespace[/]");
+        var owner = currentToken.Owner;
+        var repo = currentToken.Repo;
+
+        try
+        {
+            // PAKE HttpClient DARI TokenManager BIAR ADA PROXY NYA
+            using var client = TokenManager.CreateHttpClient(currentToken);
+
+            // Get Repo ID
+            AnsiConsole.Markup("[dim]Getting repo ID... [/]");
+            var repoUrl = $"https://api.github.com/repos/{owner}/{repo}";
+            var repoResponse = await client.GetAsync(repoUrl);
+            if (!repoResponse.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[red]Failed: {repoResponse.StatusCode}[/]");
+                var errorBody = await repoResponse.Content.ReadAsStringAsync();
+                AnsiConsole.MarkupLine($"[dim]{errorBody.Split('\n').FirstOrDefault()}[/]");
+                return;
+            }
+            var repoJson = await repoResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var repoId = repoJson.GetProperty("id").GetInt32();
+            AnsiConsole.MarkupLine("[green]OK[/]");
+
+            // Get Public Key
+            AnsiConsole.Markup("[dim]Getting public key... [/]");
+            var pubKeyResponse = await client.GetAsync("https://api.github.com/user/codespaces/secrets/public-key");
+            if (!pubKeyResponse.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[red]Failed: {pubKeyResponse.StatusCode}[/]");
+                var errorBody = await pubKeyResponse.Content.ReadAsStringAsync();
+                AnsiConsole.MarkupLine($"[dim]{errorBody.Split('\n').FirstOrDefault()}[/]");
+                return;
+            }
+            var pubKey = await pubKeyResponse.Content.ReadFromJsonAsync<PublicKeyResponse>();
+            if (pubKey == null)
+            {
+                AnsiConsole.MarkupLine("[red]Invalid public key response[/]");
+                return;
+            }
+            AnsiConsole.MarkupLine("[green]OK[/]");
+
+            int secretsSuccessfullySet = 0;
+            int secretsFailed = 0;
+
+            // Set secrets untuk setiap bot
+            foreach (var (botName, secrets) in botSecrets)
+            {
+                AnsiConsole.MarkupLine($"\n[cyan]Processing {botName}...[/]");
+                
+                foreach (var (secretName, secretValue) in secrets)
+                {
+                    // Format: BOTNAME_SECRETNAME (contoh: GRASS_ENV_FILE)
+                    var fullSecretName = $"{SanitizeName(botName)}_{secretName}".ToUpper();
+                    
+                    if (await SetSecret(client, fullSecretName, secretValue, pubKey, repoId))
+                    {
+                        secretsSuccessfullySet++;
+                    }
+                    else
+                    {
+                        secretsFailed++;
+                    }
+                    
+                    // Jeda antar request biar ga kena rate limit
+                    await Task.Delay(500);
+                }
+            }
+
+            AnsiConsole.MarkupLine($"\n[green]✓ Secret setting completed for @{currentToken.Username}[/]");
+            AnsiConsole.MarkupLine($"   Success: [green]{secretsSuccessfullySet}[/], Failed: [red]{secretsFailed}[/]");
+            AnsiConsole.MarkupLine("[dim]Secrets are now available as environment variables in codespace[/]");
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error processing @{currentToken.Username}: {ex.Message}[/]");
+            AnsiConsole.WriteException(ex);
+        }
     }
 
     private static string SanitizeName(string name)
@@ -235,7 +242,7 @@ public static class SecretManager
         PublicKeyResponse pubKey,
         int repoId)
     {
-        AnsiConsole.Markup($"[dim]Setting {secretName}... [/]");
+        AnsiConsole.Markup($"[dim]   Setting {secretName}... [/]");
         try
         {
             var encrypted = EncryptSecret(pubKey.Key, secretValue);
@@ -264,7 +271,9 @@ public static class SecretManager
             }
             else
             {
+                var errorBody = await response.Content.ReadAsStringAsync();
                 AnsiConsole.MarkupLine($"[red]Failed ({response.StatusCode})[/]");
+                AnsiConsole.MarkupLine($"[dim]      {errorBody.Split('\n').FirstOrDefault()}[/]");
                 return false;
             }
         }
@@ -276,6 +285,7 @@ public static class SecretManager
     }
 
     // PLACEHOLDER ENCRYPTION - HARUS DIGANTI DENGAN LIBSODIUM
+    // Tapi untuk sekarang cukup untuk testing
     private static string EncryptSecret(string publicKeyBase64, string secretValue)
     {
         try {
@@ -299,7 +309,7 @@ public static class SecretManager
             
             return Convert.ToBase64String(ms.ToArray());
         } catch (Exception ex) {
-            AnsiConsole.MarkupLine($"[yellow]Encryption warning: {ex.Message}. Using Base64 fallback...[/]");
+            AnsiConsole.MarkupLine($"[yellow]   Encryption warning: {ex.Message}. Using Base64 fallback...[/]");
             return Convert.ToBase64String(Encoding.UTF8.GetBytes(secretValue));
         }
     }
