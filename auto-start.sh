@@ -18,10 +18,14 @@ echo "=================================================="
 
 cd "$WORKDIR"
 
+# === HAPUS FILE HEALTH CHECK LAMA (JIKA ADA) ===
+rm -f /tmp/auto_start_done
+echo "Previous health check file removed (if existed)."
+# === AKHIR HAPUS ===
+
 echo "[1/5] Melakukan self-update (git pull)..."
 git pull
 
-# === PERUBAHAN URUTAN ===
 echo "[2/5] Menginstal/Update dependensi ProxySync..."
 # Kita butuh 'rich' dan 'requests' dari proxysync
 if [ -f "$WORKDIR/proxysync/requirements.txt" ]; then
@@ -34,13 +38,14 @@ echo "[3/5] Menjalankan ProxySync (IP Auth, Download, Test)..."
 # Menjalankan proxysync dalam mode non-interaktif
 python3 "$WORKDIR/proxysync/main.py" --full-auto
 echo "   ProxySync selesai. File 'success_proxy.txt' telah diperbarui."
-# === AKHIR PERUBAHAN ===
 
 echo "[4/5] Memeriksa file konfigurasi..."
 # TUI lokal bertanggung jawab meng-upload file-file ini saat 'create'
 if [ ! -f "$WORKDIR/config/bots_config.json" ]; then
     echo "FATAL: config/bots_config.json tidak ditemukan!"
     echo "Pastikan TUI lokal sudah 'gh codespace cp' file config."
+    # === TAMBAHAN: Buat file penanda GAGAL ===
+    touch /tmp/auto_start_failed_config
     exit 1
 fi
 
@@ -52,3 +57,9 @@ echo "=================================================="
 echo "  AUTO-START SCRIPT SELESAI"
 echo "  Gunakan 'Menu 4 (Attach)' di TUI untuk monitor."
 echo "=================================================="
+
+# === TAMBAHAN: Buat file penanda selesai ===
+touch /tmp/auto_start_done
+echo "Health check file created: /tmp/auto_start_done"
+# === AKHIR TAMBAHAN ===
+
