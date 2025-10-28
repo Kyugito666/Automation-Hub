@@ -2,6 +2,7 @@
 """
 deploy_bots.py - Remote Environment Orchestrator
 Fitur: Self-healing, Proxy distribution, Git sync, Dependency install, Tmux launch
+(Versi 2: Smart Install & Prioritas Success Proxy)
 """
 
 import os
@@ -14,7 +15,12 @@ from pathlib import Path
 # --- KONSTANTA ---
 CONFIG_FILE = "config/bots_config.json"
 PATHS_FILE = "config/paths.txt"
-MASTER_PROXY_FILE = "config/proxy.txt"
+
+# === PERUBAHAN: Gunakan proxy yang sudah lolos tes ===
+MASTER_PROXY_FILE = "proxysync/success_proxy.txt"
+FALLBACK_PROXY_FILE = "config/proxy.txt" # Jika success_proxy.txt gagal
+# === AKHIR PERUBAHAN ===
+
 TMUX_SESSION = "automation_hub_bots"
 WORKDIR = "/workspaces/automation-hub"
 
@@ -44,15 +50,30 @@ def run_cmd(command, cwd=None, env=None, capture=False):
 
 # --- PROXY DISTRIBUSI ---
 
-def load_proxies(file_path):
-    """Memuat proxy master list."""
-    if not Path(file_path).exists():
-        print(f"  [Proxy] ⚠️  '{file_path}' tidak ditemukan.")
+# === PERUBAHAN: Logika load proxy baru ===
+def load_proxies():
+    """Memuat proxy master list (prioritaskan success_proxy.txt)."""
+    
+    # Prioritas 1: success_proxy.txt
+    if Path(MASTER_PROXY_FILE).exists() and Path(MASTER_PROXY_FILE).stat().st_size > 0:
+        file_to_load = MASTER_PROXY_FILE
+    # Prioritas 2: fallback (jika success N/A tapi proxy.txt lama ada)
+    elif Path(FALLBACK_PROXY_FILE).exists() and Path(FALLBACK_PROXY_FILE).stat().st_size > 0:
+        file_to_load = FALLBACK_PROXY_FILE
+        print(f"  [Proxy] ⚠️  '{MASTER_PROXY_FILE}' tidak ada/kosong. Pakai fallback '{FALLBACK_PROXY_FILE}'.")
+    else:
+        print(f"  [Proxy] ⚠️  Tidak ada file proxy ditemukan ('{MASTER_PROXY_FILE}' atau '{FALLBACK_PROXY_FILE}').")
         return []
-    with open(file_path, "r") as f:
-        proxies = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-    print(f"  [Proxy] ✅ {len(proxies)} proxy dimuat.")
-    return proxies
+
+    try:
+        with open(file_to_load, "r") as f:
+            proxies = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        print(f"  [Proxy] ✅ {len(proxies)} proxy dimuat dari '{file_to_load}'.")
+        return proxies
+    except Exception as e:
+        print(f"  [Proxy] 🔴 Gagal baca '{file_to_load}': {e}")
+        return []
+# === AKHIR PERUBAHAN ===
 
 def load_paths(file_path):
     """Memuat daftar path target distribusi."""
@@ -77,21 +98,27 @@ def distribute_proxies(proxies, paths):
     for path_str in paths:
         path = Path(path_str)
         if not path.is_dir():
-            print(f"    🟡 Lewati: {path_str}")
+            print(f"    🟡 Lewati (path invalid): {path_str}")
             continue
         
+        # Tentukan file proxy target (proxies.txt atau proxy.txt)
         proxy_file = path / "proxies.txt"
+        target_filename = "proxies.txt"
         if not proxy_file.exists():
-            proxy_file = path / "proxy.txt"
+            # Cek jika targetnya pakai 'proxy.txt'
+            if (path / "proxy.txt").exists():
+                 proxy_file = path / "proxy.txt"
+                 target_filename = "proxy.txt"
+            # Jika tidak ada keduanya, default buat 'proxies.txt'
             
         proxies_shuffled = random.sample(proxies, len(proxies))
         try:
             with open(proxy_file, "w") as f:
                 for proxy in proxies_shuffled:
                     f.write(proxy + "\n")
-            print(f"    🟢 {proxy_file}")
+            print(f"    🟢 {path.name}/{target_filename}")
         except IOError as e:
-            print(f"    🔴 Gagal: {proxy_file} → {e}")
+            print(f"    🔴 Gagal: {path.name}/{target_filename} → {e}")
 
 # --- VENV & DEPS ---
 
@@ -116,36 +143,47 @@ def get_venv_executable(venv_path, exe_name):
             return str(exe_path_win)
     return None
 
+# === PERUBAHAN: Smart Install ===
 def install_dependencies(bot_path, bot_type):
-    """Install dependencies (pip/npm)."""
+    """Install dependencies (pip/npm) HANYA JIKA DIPERLUKAN."""
     bot_name = Path(bot_path).name
     print(f"    [Deps] 🔧 Cek dependensi '{bot_name}'...")
     
     if bot_type == "python":
         req_file = Path(bot_path) / "requirements.txt"
         if not req_file.exists():
-            print("    [Deps] ⏭️  requirements.txt tidak ada.")
+            print("    [Deps] ⏭️  requirements.txt tidak ada. Skip.")
             return
 
         venv_path = get_active_venv_path(bot_path)
         
         if not venv_path:
-            print(f"    [Deps] 🆕 Buat venv '{DEFAULT_VENV_NAME}'...")
+            print(f"    [Deps] 🆕 Venv tidak ditemukan. Buat '{DEFAULT_VENV_NAME}'...")
             venv_path = str(Path(bot_path) / DEFAULT_VENV_NAME)
             run_cmd(f"python3 -m venv \"{venv_path}\"", cwd=bot_path)
-        
-        pip_exe = get_venv_executable(venv_path, "pip") or "pip"
-        print(f"    [Deps] 📦 pip install...")
-        run_cmd(f"\"{pip_exe}\" install --no-cache-dir -r requirements.txt", cwd=bot_path)
+            
+            # Karena venv baru, kita WAJIB install
+            pip_exe = get_venv_executable(venv_path, "pip") or "pip"
+            print(f"    [Deps] 📦 pip install (Run Pertama)...")
+            run_cmd(f"\"{pip_exe}\" install --no-cache-dir -r requirements.txt", cwd=bot_path)
+        else:
+            print(f"    [Deps] ✅ Venv ditemukan di '{Path(venv_path).name}'. Skip install.")
+            # Opsi: jalankan 'pip install' jika requirements.txt lebih baru dari venv?
+            # Untuk saat ini, kita skip demi kecepatan.
 
     elif bot_type == "javascript":
         pkg_file = Path(bot_path) / "package.json"
         if not pkg_file.exists():
-            print("    [Deps] ⏭️  package.json tidak ada.")
+            print("    [Deps] ⏭️  package.json tidak ada. Skip.")
             return
             
-        print("    [Deps] 📦 npm install...")
-        run_cmd("npm install --silent --no-progress", cwd=bot_path)
+        node_modules_dir = Path(bot_path) / "node_modules"
+        if not node_modules_dir.is_dir():
+            print(f"    [Deps] 🆕 node_modules tidak ditemukan. Menjalankan 'npm install'...")
+            run_cmd("npm install --silent --no-progress", cwd=bot_path)
+        else:
+            print(f"    [Deps] ✅ node_modules ditemukan. Skip install.")
+# === AKHIR PERUBAHAN ===
 
 def get_run_command(bot_path, bot_type):
     """Deteksi perintah eksekusi."""
@@ -156,11 +194,12 @@ def get_run_command(bot_path, bot_type):
         python_exe = "python3"
         
         if venv_path:
-            python_exe = get_venv_executable(venv_path, "python") or get_venv_executable(venv_path, "python3") or "python3"
-            if python_exe == "python3":
-                print(f"    [Run] 🟡 Venv ada tapi python tidak, fallback global.")
-            else:
+            python_exe_in_venv = get_venv_executable(venv_path, "python") or get_venv_executable(venv_path, "python3")
+            if python_exe_in_venv:
+                python_exe = python_exe_in_venv
                 print(f"    [Run] 🟢 Venv python: {python_exe}")
+            else:
+                print(f"    [Run] 🟡 Venv ada tapi python tidak, fallback global.")
         
         for entry in ["run.py", "main.py", "bot.py"]:
             if (bot_path / entry).exists():
@@ -204,6 +243,8 @@ def sync_bot_repo(name, path_str, repo_url):
     
     if git_dir.is_dir():
         print(f"  [Sync] 🔄 git pull...")
+        # Coba reset dulu jika ada file lokal (seperti config.json)
+        # Tapi .gitignore bot harusnya handle ini. Kita coba pull standar.
         run_cmd("git pull --rebase", cwd=str(bot_path))
     else:
         print(f"  [Sync] 📥 git clone...")
@@ -216,7 +257,9 @@ def sync_bot_repo(name, path_str, repo_url):
 def launch_in_tmux(name, bot_path, executor, args):
     """Launch bot di tmux window."""
     print(f"    [Tmux] 🚀 Launch '{name}'...")
-    cmd = f"tmux new-window -t {TMUX_SESSION} -n \"{name}\" -c \"{bot_path}\" \"{executor} {args}\""
+    # Pastikan nama tidak mengandung karakter aneh untuk tmux
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', name)
+    cmd = f"tmux new-window -t {TMUX_SESSION} -n \"{safe_name}\" -c \"{bot_path}\" \"{executor} {args}\""
     run_cmd(cmd)
 
 # --- MAIN ---
@@ -233,7 +276,8 @@ def main():
 
     # 2. Distribusi Proxy
     print("\n[2/4] 📡 Distribusi Proxy...")
-    master_proxies = load_proxies(MASTER_PROXY_FILE)
+    # === PERUBAHAN: Panggil load_proxies() tanpa arg ===
+    master_proxies = load_proxies() 
     target_paths = load_paths(PATHS_FILE)
     distribute_proxies(master_proxies, target_paths)
 
@@ -276,7 +320,7 @@ def main():
         if not success:
             continue
             
-        # Install Deps
+        # Install Deps (Sekarang 'Smart')
         install_dependencies(bot_path, bot_type)
         
         # Get Run Command
@@ -291,7 +335,7 @@ def main():
 
     print("\n" + "=" * 50)
     print("  ✅ DEPLOYER SELESAI")
-    print(f"  💡 'tmux a -t {TMUX_SESSION}' untuk monitor")
+    print(f"  💡 'tmux a -t {TMUX_SESSION}' atau Menu 4 TUI untuk monitor")
     print("=" * 50)
 
 if __name__ == "__main__":
