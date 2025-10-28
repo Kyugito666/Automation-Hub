@@ -45,19 +45,19 @@ public static class SecretCleanup
         int totalDeleted = 0;
 
         // 1. User Codespace Secrets (PENTING - ini yang bikin error 200KB)
-        AnsiConsole.MarkupLine("\n[cyan]═══ [1/3] User Codespace Secrets ═══[/]");
+        AnsiConsole.MarkupLine("\n[cyan]═══ [[1/3]] User Codespace Secrets ═══[/]");
         totalDeleted += await DeleteSecretsFromEndpoint(client, 
             "https://api.github.com/user/codespaces/secrets", 
             "user/codespaces/secrets");
 
         // 2. Repository Action Secrets
-        AnsiConsole.MarkupLine("\n[cyan]═══ [2/3] Repository Action Secrets ═══[/]");
+        AnsiConsole.MarkupLine("\n[cyan]═══ [[2/3]] Repository Action Secrets ═══[/]");
         totalDeleted += await DeleteSecretsFromEndpoint(client, 
             $"https://api.github.com/repos/{owner}/{repo}/actions/secrets", 
             $"repos/{owner}/{repo}/actions/secrets");
 
         // 3. Repository Codespace Secrets
-        AnsiConsole.MarkupLine("\n[cyan]═══ [3/3] Repository Codespace Secrets ═══[/]");
+        AnsiConsole.MarkupLine("\n[cyan]═══ [[3/3]] Repository Codespace Secrets ═══[/]");
         totalDeleted += await DeleteSecretsFromEndpoint(client, 
             $"https://api.github.com/repos/{owner}/{repo}/codespaces/secrets", 
             $"repos/{owner}/{repo}/codespaces/secrets");
