@@ -98,7 +98,7 @@ internal static class Program
                         await ShowAttachMenuAsync(cancellationToken);
                         break;
                     case "5":
-                        await SecretManager.SetSecretsForAll();
+                        await SecretManager.SetSecretsForActiveToken(); // GANTI METHOD NYA
                         Pause("Press Enter to continue...", cancellationToken);
                         break;
                     case "6": 
