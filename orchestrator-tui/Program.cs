@@ -77,9 +77,7 @@ internal static class Program
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
                         "5. Deploy Secrets (Manual Upload)",
-                        "6. DELETE USER Codespace Secrets (FIX 200KB ERROR)",
-                        "7. Delete Repository Secrets",
-                        "8. Delete Repo Codespace Secrets",
+                        "6. Delete ALL GitHub Secrets (Fix 200KB Error)",
                         "0. Exit"
                     }));
 
@@ -104,11 +102,7 @@ internal static class Program
                         Pause("Press Enter to continue...", cancellationToken);
                         break;
                     case "6": 
-                        await SecretCleanup.DeleteAllRepositorySecrets();
-                        Pause("Press Enter to continue...", cancellationToken); 
-                        break;
-                    case "7": 
-                        await SecretCleanup.DeleteAllCodespaceSecrets();
+                        await SecretCleanup.DeleteAllSecrets();
                         Pause("Press Enter to continue...", cancellationToken); 
                         break;
                     case "0": 
