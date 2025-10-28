@@ -19,7 +19,8 @@ public class PublicKeyResponse
 public static class SecretManager
 {
     private static readonly string ProjectRoot = GetProjectRoot();
-    private static readonly string LocalBotRoot = @"D:\SC";
+    private static readonly int MAX_SECRET_SIZE = 45000; // 45KB safe limit (GitHub limit 50KB)
+    private static readonly int MAX_BATCH_SIZE = 10; // Process max 10 secrets per batch
 
     private static readonly string[] CommonSecretPatterns = new[]
     {
@@ -116,12 +117,24 @@ public static class SecretManager
             return;
         }
 
-        int totalSecrets = botSecretMappings.Sum(kvp => kvp.Value.Count);
+        // Check total size & split files if needed
+        var allSecrets = botSecretMappings.SelectMany(kvp => kvp.Value.Select(m => new { Bot = kvp.Key, Mapping = m })).ToList();
+        var oversizedSecrets = allSecrets.Where(s => s.Mapping.FileSize > MAX_SECRET_SIZE).ToList();
+
+        if (oversizedSecrets.Any())
+        {
+            AnsiConsole.MarkupLine("\n[yellow]⚠ WARNING: Some files exceed 45KB limit and will be split:[/]");
+            foreach (var os in oversizedSecrets)
+                AnsiConsole.MarkupLine($"[yellow]   - {os.Bot}/{os.Mapping.FileName} ({os.Mapping.FileSize} bytes)[/]");
+        }
+
+        int totalSecrets = allSecrets.Count + oversizedSecrets.Sum(s => (s.Mapping.FileSize / MAX_SECRET_SIZE) + 1);
         
         AnsiConsole.MarkupLine($"\n[yellow]═══ SUMMARY ═══[/]");
         AnsiConsole.MarkupLine($"Target: [cyan]@{currentToken.Username}[/]");
         AnsiConsole.MarkupLine($"Bots: [cyan]{botSecretMappings.Count}[/]");
-        AnsiConsole.MarkupLine($"Total Secrets: [cyan]{totalSecrets}[/]");
+        AnsiConsole.MarkupLine($"Total Secrets: [cyan]{totalSecrets}[/] (incl. splits)");
+        AnsiConsole.MarkupLine($"[dim]Batch Size: {MAX_BATCH_SIZE} secrets per request[/]");
         
         if (!AnsiConsole.Confirm("\n[yellow]Proceed to set secrets?[/]", false))
         {
@@ -165,6 +178,8 @@ public static class SecretManager
 
             int successCount = 0;
             int failCount = 0;
+            int skippedCount = 0;
+            int batchCount = 0;
 
             foreach (var (botName, mappings) in botSecretMappings)
             {
@@ -172,19 +187,58 @@ public static class SecretManager
                 
                 foreach (var mapping in mappings)
                 {
-                    var secretName = $"{SanitizeName(botName)}_{SanitizeName(mapping.FileName)}".ToUpper();
-                    
-                    if (await SetSecret(client, secretName, mapping.Content, pubKey, repoId))
-                        successCount++;
+                    if (mapping.FileSize > MAX_SECRET_SIZE)
+                    {
+                        // Split file into chunks
+                        var chunks = SplitContent(mapping.Content, MAX_SECRET_SIZE);
+                        for (int i = 0; i < chunks.Count; i++)
+                        {
+                            var chunkName = $"{SanitizeName(botName)}_{SanitizeName(mapping.FileName)}_PART{i + 1}".ToUpper();
+                            
+                            if (await SetSecret(client, chunkName, chunks[i], pubKey, repoId))
+                                successCount++;
+                            else
+                                failCount++;
+                            
+                            batchCount++;
+                            if (batchCount % MAX_BATCH_SIZE == 0)
+                            {
+                                AnsiConsole.MarkupLine($"[dim]   (Batch pause 2s...)[/]");
+                                await Task.Delay(2000);
+                            }
+                            else
+                            {
+                                await Task.Delay(500);
+                            }
+                        }
+                    }
                     else
-                        failCount++;
-                    
-                    await Task.Delay(500);
+                    {
+                        var secretName = $"{SanitizeName(botName)}_{SanitizeName(mapping.FileName)}".ToUpper();
+                        
+                        if (await SetSecret(client, secretName, mapping.Content, pubKey, repoId))
+                            successCount++;
+                        else
+                            failCount++;
+                        
+                        batchCount++;
+                        if (batchCount % MAX_BATCH_SIZE == 0)
+                        {
+                            AnsiConsole.MarkupLine($"[dim]   (Batch pause 2s...)[/]");
+                            await Task.Delay(2000);
+                        }
+                        else
+                        {
+                            await Task.Delay(500);
+                        }
+                    }
                 }
             }
 
             AnsiConsole.MarkupLine($"\n[green]✓ Secret setting completed for @{currentToken.Username}[/]");
             AnsiConsole.MarkupLine($"   Success: [green]{successCount}[/], Failed: [red]{failCount}[/]");
+            if (skippedCount > 0)
+                AnsiConsole.MarkupLine($"   Skipped: [yellow]{skippedCount}[/] (too large even after split)");
             AnsiConsole.MarkupLine("[dim]Secrets will be available in codespace via auto-start.sh extraction[/]");
         }
         catch (Exception ex)
@@ -192,6 +246,31 @@ public static class SecretManager
             AnsiConsole.MarkupLine($"[red]Error: {ex.Message}[/]");
             AnsiConsole.WriteException(ex);
         }
+    }
+
+    private static List<string> SplitContent(string content, int maxSize)
+    {
+        var chunks = new List<string>();
+        var lines = content.Split('\n');
+        var currentChunk = new StringBuilder();
+        
+        foreach (var line in lines)
+        {
+            if (Encoding.UTF8.GetByteCount(currentChunk.ToString() + line + "\n") > maxSize)
+            {
+                if (currentChunk.Length > 0)
+                {
+                    chunks.Add(currentChunk.ToString());
+                    currentChunk.Clear();
+                }
+            }
+            currentChunk.AppendLine(line);
+        }
+        
+        if (currentChunk.Length > 0)
+            chunks.Add(currentChunk.ToString());
+        
+        return chunks;
     }
 
     private static async Task<List<SecretMapping>> AnalyzeBotSecrets(BotEntry bot)
@@ -215,7 +294,7 @@ public static class SecretManager
                     {
                         FileName = Path.GetFileName(filePath),
                         Content = content,
-                        FileSize = content.Length
+                        FileSize = Encoding.UTF8.GetByteCount(content)
                     });
                 }
             }
