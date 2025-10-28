@@ -1,9 +1,9 @@
 using System.Net.Http.Json;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
+using Sodium;
 
 namespace Orchestrator;
 
@@ -20,9 +20,7 @@ public static class SecretManager
 {
     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string LocalBotRoot = @"D:\SC";
-    private static readonly string TempCloneDir = Path.Combine(Path.GetTempPath(), "automation-hub-temp-clones");
 
-    // File patterns yang umum dibutuhin bot (case-insensitive)
     private static readonly string[] CommonSecretPatterns = new[]
     {
         "*.env",
@@ -41,7 +39,7 @@ public static class SecretManager
     private static string GetProjectRoot()
     {
         var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
-        int maxDepth = 10; 
+        int maxDepth = 10;
         int currentDepth = 0;
 
         while (currentDir != null && currentDepth < maxDepth)
@@ -50,9 +48,7 @@ public static class SecretManager
             var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
 
             if (Directory.Exists(configDir) && File.Exists(gitignore))
-            {
                 return currentDir.FullName;
-            }
 
             currentDir = currentDir.Parent;
             currentDepth++;
@@ -85,13 +81,6 @@ public static class SecretManager
             return;
         }
 
-        // Prepare temp clone directory
-        if (Directory.Exists(TempCloneDir))
-        {
-            try { Directory.Delete(TempCloneDir, true); } catch { }
-        }
-        Directory.CreateDirectory(TempCloneDir);
-
         var botSecretMappings = new Dictionary<string, List<SecretMapping>>();
 
         await AnsiConsole.Status()
@@ -112,9 +101,7 @@ public static class SecretManager
                         AnsiConsole.MarkupLine($"[green]✓ {bot.Name}: Found {secretMappings.Count} secret file(s)[/]");
                         
                         foreach (var mapping in secretMappings)
-                        {
                             AnsiConsole.MarkupLine($"[dim]   - {mapping.FileName} ({mapping.FileSize} bytes)[/]");
-                        }
                     }
                     else
                     {
@@ -122,9 +109,6 @@ public static class SecretManager
                     }
                 }
             });
-
-        // Cleanup temp clones
-        try { Directory.Delete(TempCloneDir, true); } catch { }
 
         if (!botSecretMappings.Any())
         {
@@ -188,17 +172,12 @@ public static class SecretManager
                 
                 foreach (var mapping in mappings)
                 {
-                    // Format: BOTNAME_FILENAME (contoh: GRASS_PK_TXT, NODEPAY_TOKEN_JSON)
                     var secretName = $"{SanitizeName(botName)}_{SanitizeName(mapping.FileName)}".ToUpper();
                     
                     if (await SetSecret(client, secretName, mapping.Content, pubKey, repoId))
-                    {
                         successCount++;
-                    }
                     else
-                    {
                         failCount++;
-                    }
                     
                     await Task.Delay(500);
                 }
@@ -218,49 +197,33 @@ public static class SecretManager
     private static async Task<List<SecretMapping>> AnalyzeBotSecrets(BotEntry bot)
     {
         var mappings = new List<SecretMapping>();
-        
-        // Get local bot path
         var localBotPath = BotConfig.GetLocalBotPath(bot.Path);
         
         if (!Directory.Exists(localBotPath))
-        {
-            return mappings; // Empty
-        }
+            return mappings;
 
-        // Method 1: Detect from LOCAL files (fast)
         var localSecretFiles = DetectSecretFilesInDirectory(localBotPath);
         
-        if (localSecretFiles.Any())
+        foreach (var filePath in localSecretFiles)
         {
-            foreach (var filePath in localSecretFiles)
+            try
             {
-                try
+                var content = await File.ReadAllTextAsync(filePath);
+                if (!string.IsNullOrWhiteSpace(content))
                 {
-                    var content = await File.ReadAllTextAsync(filePath);
-                    if (!string.IsNullOrWhiteSpace(content))
+                    mappings.Add(new SecretMapping
                     {
-                        mappings.Add(new SecretMapping
-                        {
-                            FileName = Path.GetFileName(filePath),
-                            Content = content,
-                            FileSize = content.Length
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    AnsiConsole.MarkupLine($"[yellow]   Warning: Failed to read {Path.GetFileName(filePath)}: {ex.Message}[/]");
+                        FileName = Path.GetFileName(filePath),
+                        Content = content,
+                        FileSize = content.Length
+                    });
                 }
             }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[yellow]   Warning: Failed to read {Path.GetFileName(filePath)}: {ex.Message}[/]");
+            }
         }
-
-        // Method 2: Clone repo untuk detect struktur (optional - jika local kosong)
-        // NOTE: Ini bisa diaktifkan kalau mau, tapi akan lambat
-        // if (!mappings.Any())
-        // {
-        //     var clonedSecrets = await DetectSecretsFromGitClone(bot);
-        //     mappings.AddRange(clonedSecrets);
-        // }
 
         return mappings;
     }
@@ -271,7 +234,6 @@ public static class SecretManager
 
         try
         {
-            // Search dengan pattern yang umum
             foreach (var pattern in CommonSecretPatterns)
             {
                 try
@@ -282,73 +244,15 @@ public static class SecretManager
                 catch { }
             }
 
-            // Deduplicate
-            foundFiles = foundFiles.Distinct().ToList();
-
-            // Filter out config/settings files (sesuai request)
-            foundFiles = foundFiles.Where(f => 
+            foundFiles = foundFiles.Distinct().Where(f => 
             {
                 var fileName = Path.GetFileName(f).ToLowerInvariant();
-                return !fileName.Contains("config") && 
-                       !fileName.Contains("setting");
+                return !fileName.Contains("config") && !fileName.Contains("setting");
             }).ToList();
         }
         catch { }
 
         return foundFiles;
-    }
-
-    private static async Task<List<SecretMapping>> DetectSecretsFromGitClone(BotEntry bot)
-    {
-        var mappings = new List<SecretMapping>();
-        
-        if (string.IsNullOrEmpty(bot.RepoUrl))
-            return mappings;
-
-        var clonePath = Path.Combine(TempCloneDir, SanitizeName(bot.Name));
-
-        try
-        {
-            // Shallow clone
-            var cloneCmd = $"git clone --depth 1 {bot.RepoUrl} \"{clonePath}\"";
-            await ShellHelper.RunCommandAsync("git", $"clone --depth 1 {bot.RepoUrl} \"{clonePath}\"", TempCloneDir);
-
-            // Detect files in cloned repo
-            var clonedSecretFiles = DetectSecretFilesInDirectory(clonePath);
-
-            // Match dengan local files
-            var localBotPath = BotConfig.GetLocalBotPath(bot.Path);
-            
-            foreach (var clonedFile in clonedSecretFiles)
-            {
-                var fileName = Path.GetFileName(clonedFile);
-                var localFilePath = Path.Combine(localBotPath, fileName);
-
-                if (File.Exists(localFilePath))
-                {
-                    try
-                    {
-                        var content = await File.ReadAllTextAsync(localFilePath);
-                        if (!string.IsNullOrWhiteSpace(content))
-                        {
-                            mappings.Add(new SecretMapping
-                            {
-                                FileName = fileName,
-                                Content = content,
-                                FileSize = content.Length
-                            });
-                        }
-                    }
-                    catch { }
-                }
-            }
-        }
-        catch
-        {
-            // Silent fail - fallback to local detection only
-        }
-
-        return mappings;
     }
 
     private static string SanitizeName(string name)
@@ -371,7 +275,7 @@ public static class SecretManager
             {
                 encrypted_value = encrypted,
                 key_id = pubKey.KeyId,
-                selected_repository_ids = new[] { repoId.ToString() }
+                selected_repository_ids = new[] { repoId }
             };
 
             var content = new StringContent(
@@ -392,7 +296,10 @@ public static class SecretManager
             }
             else
             {
+                var errorBody = await response.Content.ReadAsStringAsync();
                 AnsiConsole.MarkupLine($"[red]Failed ({response.StatusCode})[/]");
+                if (!string.IsNullOrEmpty(errorBody))
+                    AnsiConsole.MarkupLine($"[dim]   {errorBody.Split('\n').FirstOrDefault()}[/]");
                 return false;
             }
         }
@@ -405,28 +312,19 @@ public static class SecretManager
 
     private static string EncryptSecret(string publicKeyBase64, string secretValue)
     {
-        try {
-            var keyBytes = Convert.FromBase64String(publicKeyBase64);
+        try
+        {
+            var publicKeyBytes = Convert.FromBase64String(publicKeyBase64);
             var secretBytes = Encoding.UTF8.GetBytes(secretValue);
             
-            using var aes = Aes.Create();
-            using var sha256 = SHA256.Create();
-            aes.Key = sha256.ComputeHash(keyBytes).Take(32).ToArray();
-            aes.GenerateIV();
+            var encryptedBytes = SealedPublicKeyBox.Create(secretBytes, publicKeyBytes);
             
-            using var encryptor = aes.CreateEncryptor();
-            using var ms = new MemoryStream();
-            ms.Write(aes.IV, 0, aes.IV.Length);
-            
-            using (var cs = new CryptoStream(ms, encryptor, CryptoStreamMode.Write))
-            {
-                cs.Write(secretBytes, 0, secretBytes.Length);
-                cs.FlushFinalBlock();
-            }
-            
-            return Convert.ToBase64String(ms.ToArray());
-        } catch {
-            return Convert.ToBase64String(Encoding.UTF8.GetBytes(secretValue));
+            return Convert.ToBase64String(encryptedBytes);
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Encryption error: {ex.Message}[/]");
+            throw;
         }
     }
 
