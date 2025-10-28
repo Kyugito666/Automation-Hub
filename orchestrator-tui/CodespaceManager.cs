@@ -10,12 +10,28 @@ public static class CodespaceManager
     private const string MACHINE_TYPE = "standardLinux32gb";
     private const int SSH_TIMEOUT_MS = 30000;
     private const int CREATE_TIMEOUT_MS = 600000;
+    private const int START_TIMEOUT_MS = 300000;
     private const int SSH_RETRY_MAX = 10;
     private const int SSH_RETRY_DELAY_SEC = 30;
 
     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
-    private static readonly string MasterProxyFile = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
+    // === PERBAIKAN: Hapus MasterProxyFile ===
+    // Proxy sekarang 100% di-generate di remote.
+    // private static readonly string MasterProxyFile = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
+
+    // Daftar file rahasia yang akan di-upload dari D:\SC ke remote
+    private static readonly string[] SecretFileNames = new[]
+    {
+        ".env",
+        "pk.txt",
+        "privatekey.txt",
+        "wallet.txt",
+        "token.txt",
+        "data.json",
+        "config.json",
+        "settings.json"
+    };
 
     private static string GetProjectRoot()
     {
@@ -37,14 +53,17 @@ public static class CodespaceManager
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     }
 
+    // === PEROMBAKAN TOTAL LOGIKA ===
     public static async Task<string> EnsureHealthyCodespace(TokenEntry token)
     {
         AnsiConsole.MarkupLine("\n[cyan]Inspecting existing codespaces...[/]");
         string repoFullName = $"{token.Owner}/{token.Repo}";
+        CodespaceInfo? existing = null;
         
         try
         {
-            var (existing, all) = await FindExistingCodespace(token);
+            var (found, all) = await FindExistingCodespace(token);
+            existing = found;
 
             if (existing != null)
             {
@@ -52,20 +71,41 @@ public static class CodespaceManager
 
                 if (existing.State == "Available")
                 {
+                    AnsiConsole.MarkupLine("[green]  ✓ Codespace 'Available'. Reusing.[/]");
+                    // Tetap jalankan health check
                     if (await CheckSshHealthWithRetry(token, existing.Name))
                     {
-                        AnsiConsole.MarkupLine("[green]  ✓ Health check PASSED. Reusing this codespace.[/]");
                         return existing.Name;
                     }
-                    
                     AnsiConsole.MarkupLine("[red]  ✗ Health check FAILED. Deleting unhealthy codespace...[/]");
+                }
+                else if (existing.State == "Stopped")
+                {
+                    AnsiConsole.MarkupLine("[yellow]  Codespace 'Stopped'. Starting...[/]");
+                    await StartCodespace(token, existing.Name);
+                    AnsiConsole.MarkupLine("[green]  ✓ Codespace Started. Reusing.[/]");
+                    return existing.Name;
+                }
+                else if (existing.State.Contains("Starting") || existing.State == "Queued")
+                {
+                    AnsiConsole.MarkupLine($"[yellow]  Codespace '{existing.State}'. Waiting...[/]");
+                    if (!await WaitForSshReady(token, existing.Name))
+                    {
+                        AnsiConsole.MarkupLine("[red]  ✗ Gagal 'wake up'. Deleting...[/]");
+                    }
+                    else
+                    {
+                         AnsiConsole.MarkupLine("[green]  ✓ Codespace 'Available'. Reusing.[/]");
+                         return existing.Name;
+                    }
                 }
                 else
                 {
-                    AnsiConsole.MarkupLine($"[yellow]  Codespace state is '{existing.State}', not 'Available'. Deleting...[/]");
+                    AnsiConsole.MarkupLine($"[yellow]  Codespace state is '{existing.State}'. Deleting...[/]");
                 }
 
                 await DeleteCodespace(token, existing.Name);
+                existing = null; // Tandai sebagai sudah dihapus
             }
             else
             {
@@ -79,13 +119,12 @@ public static class CodespaceManager
                 await DeleteCodespace(token, cs.Name);
             }
 
-            // Create new codespace
+            // --- BUAT BARU ---
             AnsiConsole.MarkupLine($"[cyan]Creating new '{CODESPACE_DISPLAY_NAME}' ({MACHINE_TYPE})...[/]");
-            AnsiConsole.MarkupLine("[dim]This may take several minutes (creation + boot time)...[/]");
+            AnsiConsole.MarkupLine("[dim]This may take several minutes...[/]");
             
-            // FIXED: Gunakan -R bukan -r
-            string args = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
-            var newName = await ShellHelper.RunGhCommand(token, args, CREATE_TIMEOUT_MS);
+            string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m";
+            var newName = await ShellHelper.RunGhCommand(token, createArgs, CREATE_TIMEOUT_MS);
             
             if (string.IsNullOrWhiteSpace(newName))
             {
@@ -100,6 +139,11 @@ public static class CodespaceManager
                 throw new Exception($"Codespace '{newName}' created but SSH never became ready");
             }
             
+            // --- INI LOGIKA BARU: UPLOAD SEMUA DATA ---
+            // Hanya dijalankan saat create baru
+            AnsiConsole.MarkupLine("[cyan]New codespace detected. Uploading all bot data (pk.txt, .env, etc...)[/]");
+            await UploadAllBotData(token, newName);
+            
             return newName;
         }
         catch (Exception ex)
@@ -110,6 +154,22 @@ public static class CodespaceManager
                  AnsiConsole.MarkupLine("[red]Ini kemungkinan besar masalah kuota. Coba rotasi token.[/]");
             }
             throw;
+        }
+    }
+    // === AKHIR PEROMBAKAN LOGIKA ===
+    
+    /// <summary>
+    /// FUNGSI BARU: Membangunkan codespace yang 'Stopped'
+    /// </summary>
+    private static async Task StartCodespace(TokenEntry token, string codespaceName)
+    {
+        string args = $"codespace start -c {codespaceName}";
+        await ShellHelper.RunGhCommand(token, args, START_TIMEOUT_MS);
+        
+        // Setelah start, tunggu SSH ready
+        if (!await WaitForSshReady(token, codespaceName))
+        {
+            throw new Exception($"Failed to start or SSH into {codespaceName}");
         }
     }
 
@@ -155,7 +215,7 @@ public static class CodespaceManager
 
     public static async Task UploadConfigs(TokenEntry token, string codespaceName)
     {
-        AnsiConsole.MarkupLine("\n[cyan]Uploading configs to codespace...[/]");
+        AnsiConsole.MarkupLine("\n[cyan]Uploading CORE configs to codespace...[/]");
         string remoteDir = $"/workspaces/{token.Repo}/config";
 
         // Ensure remote config directory exists first
@@ -174,33 +234,90 @@ public static class CodespaceManager
         await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "bots_config.json"), $"{remoteDir}/bots_config.json");
         await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "apilist.txt"), $"{remoteDir}/apilist.txt");
         await UploadFile(token, codespaceName, Path.Combine(ConfigRoot, "paths.txt"), $"{remoteDir}/paths.txt");
-        await UploadFile(token, codespaceName, MasterProxyFile, $"{remoteDir}/proxy.txt");
+        
+        // === PERBAIKAN: Hapus upload proxy.txt ===
+        // await UploadFile(token, codespaceName, MasterProxyFile, $"{remoteDir}/proxy.txt");
+    }
+    
+    // === FUNGSI BARU: Upload file rahasia (pk.txt, .env) dari D:\SC ===
+    public static async Task UploadAllBotData(TokenEntry token, string codespaceName)
+    {
+        AnsiConsole.MarkupLine("\n[cyan]Uploading ALL bot data (pk.txt, .env, etc) from local D:\\SC ...[/]");
+        var config = BotConfig.Load();
+        if (config == null)
+        {
+            AnsiConsole.MarkupLine("[red]   Failed to load bots_config.json. Skipping upload.[/]");
+            return;
+        }
+
+        string remoteRepoRoot = $"/workspaces/{token.Repo}";
+        int filesUploaded = 0;
+        int botsSkipped = 0;
+
+        foreach (var bot in config.BotsAndTools)
+        {
+            // Dapatkan path D:\SC\PrivateKey\BotName
+            string localBotPath = BotConfig.GetLocalBotPath(bot.Path);
+            // Dapatkan path /workspaces/automation-hub/bots/privatekey/BotName
+            string remoteBotPath = $"{remoteRepoRoot}/{bot.Path.Replace('\\', '/')}";
+
+            if (!Directory.Exists(localBotPath))
+            {
+                AnsiConsole.MarkupLine($"[dim]   SKIP: {bot.Name} (Local path not found: {localBotPath})[/]");
+                botsSkipped++;
+                continue;
+            }
+            
+            AnsiConsole.MarkupLine($"[dim]   Scanning {bot.Name} in {localBotPath}...[/]");
+            bool botDirCreated = false;
+
+            foreach (var secretFileName in SecretFileNames)
+            {
+                string localFilePath = Path.Combine(localBotPath, secretFileName);
+                if (File.Exists(localFilePath))
+                {
+                    // Buat direktori bot di remote (hanya sekali jika diperlukan)
+                    if (!botDirCreated)
+                    {
+                        string mkdirArgs = $"codespace ssh -c {codespaceName} -- mkdir -p {remoteBotPath}";
+                        await ShellHelper.RunGhCommand(token, mkdirArgs);
+                        botDirCreated = true;
+                    }
+
+                    string remoteFilePath = $"{remoteBotPath}/{secretFileName}";
+                    await UploadFile(token, codespaceName, localFilePath, remoteFilePath, silent: true);
+                    AnsiConsole.MarkupLine($"[green]     ✓ Uploaded {secretFileName}[/]");
+                    filesUploaded++;
+                }
+            }
+        }
+        
+        AnsiConsole.MarkupLine($"[green]   ✓ Upload complete. {filesUploaded} files uploaded. {botsSkipped} bots skipped (no local data).[/]");
     }
 
-    private static async Task UploadFile(TokenEntry token, string csName, string localPath, string remotePath)
+    private static async Task UploadFile(TokenEntry token, string csName, string localPath, string remotePath, bool silent = false)
     {
         if (!File.Exists(localPath))
         {
-            AnsiConsole.MarkupLine($"[yellow]  SKIP: {Path.GetFileName(localPath)} not found locally.[/]");
+            if (!silent) AnsiConsole.MarkupLine($"[yellow]  SKIP: {Path.GetFileName(localPath)} not found locally.[/]");
             return;
         }
         
-        AnsiConsole.Markup($"[dim]  Uploading {Path.GetFileName(localPath)}... [/]");
+        if (!silent) AnsiConsole.Markup($"[dim]  Uploading {Path.GetFileName(localPath)}... [/]");
         
-        // FIXED: Format yang benar untuk gh codespace cp
-        // Syntax: gh codespace cp <local> remote:<path> -c <name>
+        // Format: gh codespace cp <local> remote:<path> -c <name>
         string args = $"codespace cp \"{localPath}\" \"remote:{remotePath}\" -c {csName}";
         
         try
         {
             await ShellHelper.RunGhCommand(token, args);
-            AnsiConsole.MarkupLine("[green]Done[/]");
+            if (!silent) AnsiConsole.MarkupLine("[green]Done[/]");
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Failed[/]");
-            AnsiConsole.MarkupLine($"[dim]    Error: {ex.Message.Split('\n').FirstOrDefault()}[/]");
-            throw; // Re-throw untuk trigger retry di level atas
+            if (!silent) AnsiConsole.MarkupLine($"[red]Failed[/]");
+            AnsiConsole.MarkupLine($"[dim]    Error uploading {Path.GetFileName(localPath)}: {ex.Message.Split('\n').FirstOrDefault()}[/]");
+            // Don't throw, attempt to continue
         }
     }
 
@@ -220,7 +337,6 @@ public static class CodespaceManager
             {
                 AnsiConsole.MarkupLine("[red]FAILED[/]");
                 AnsiConsole.MarkupLine($"[red]  auto-start.sh not found at {remoteScript}[/]");
-                AnsiConsole.MarkupLine("[yellow]  Codespace may be in wrong directory or repo not cloned properly[/]");
                 throw new Exception("Startup script not found");
             }
             
@@ -239,7 +355,7 @@ public static class CodespaceManager
 
         await ShellHelper.RunGhCommand(token, args);
         AnsiConsole.MarkupLine("[green]Done[/]");
-        AnsiConsole.MarkupLine("[dim]   Use 'gh codespace ssh' to monitor 'tmux ls' or 'tail -f /tmp/startup.log'[/]");
+        AnsiConsole.MarkupLine($"[dim]   Use 'Menu 4 (Attach)' or 'gh codespace ssh -c {codespaceName} -- tail -f /tmp/startup.log'[/]");
     }
 
     public static async Task DeleteCodespace(TokenEntry token, string codespaceName)
@@ -257,9 +373,6 @@ public static class CodespaceManager
         }
     }
 
-    /// <summary>
-    /// Enhanced SSH health check with retry (adopted from nexus pattern)
-    /// </summary>
     public static async Task<bool> CheckSshHealthWithRetry(TokenEntry token, string codespaceName)
     {
         const int maxAttempts = 3;
@@ -303,6 +416,28 @@ public static class CodespaceManager
         var existing = allCodespaces.FirstOrDefault(cs => cs.DisplayName == CODESPACE_DISPLAY_NAME);
         
         return (existing, allCodespaces);
+    }
+    
+    // Helper untuk 'gh codespace ssh ... tmux ls'
+    public static async Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName)
+    {
+        AnsiConsole.MarkupLine($"[dim]Fetching running bots from {codespaceName}...[/]");
+        // -F "#{window_name}" -> Hanya print nama windownya
+        string args = $"codespace ssh -c {codespaceName} -- tmux ls -F \"#{{window_name}}\"";
+        
+        try
+        {
+            string result = await ShellHelper.RunGhCommand(token, args, SSH_TIMEOUT_MS);
+            return result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                         .Where(s => s != "dashboard") // Hapus window 'dashboard'
+                         .OrderBy(s => s)
+                         .ToList();
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Failed to get tmux sessions: {ex.Message.Split('\n').FirstOrDefault()}[/]");
+            return new List<string>();
+        }
     }
     
     private class CodespaceInfo
