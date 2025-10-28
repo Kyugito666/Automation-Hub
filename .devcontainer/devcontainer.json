@@ -15,14 +15,13 @@
     }
   },
 
-  // === PERUBAHAN: Tambahkan postAttachCommand ===
-  // Ini akan menjalankan first-setup.sh SETIAP KALI container start/attach
-  // Mirip dengan postCreate tapi lebih konsisten, jalan juga pas resume.
+  // === PERUBAHAN: Gunakan postAttachCommand via shim script ===
   "postAttachCommand": "bash ./.devcontainer/post-attach.sh",
   // === AKHIR PERUBAHAN ===
 
-  // Hapus postCreateCommand lama jika ada
-  // "postCreateCommand": "sudo apt-get update && sudo apt-get install -y tmux jq",
+  // Hapus postCreateCommand jika ada
+  // "postCreateCommand": "...",
 
   "remoteUser": "vscode"
 }
+
