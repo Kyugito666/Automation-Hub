@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions; // <- Tambah ini untuk Regex
 using Spectre.Console;
 
 namespace Orchestrator;
@@ -13,7 +14,7 @@ public static class TokenManager
     private static readonly string ProjectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string TokensPath = Path.Combine(ConfigRoot, "github_tokens.txt");
     
-    // FIXED: Prioritas success_proxy.txt (hasil test yang pasti bekerja)
+    // Prioritas success_proxy.txt (hasil test yang pasti bekerja)
     private static readonly string SuccessProxyListPath = Path.Combine(ProjectRoot, "proxysync", "success_proxy.txt");
     private static readonly string FallbackProxyListPath = Path.Combine(ProjectRoot, "proxysync", "proxy.txt");
     
@@ -92,13 +93,13 @@ public static class TokenManager
     }
     
     private static void LoadProxyList() {
-        // FIXED: Prioritas success_proxy.txt (proxy yang sudah lulus test)
-        string proxyFileToLoad = File.Exists(SuccessProxyListPath) ? SuccessProxyListPath : 
+        // Prioritas success_proxy.txt
+        string proxyFileToLoad = File.Exists(SuccessProxyListPath) && new FileInfo(SuccessProxyListPath).Length > 0 ? SuccessProxyListPath : 
                                  File.Exists(FallbackProxyListPath) ? FallbackProxyListPath : null;
         
         if (proxyFileToLoad == null) {
             AnsiConsole.MarkupLine("[red]CRITICAL: Tidak ada file proxy yang tersedia![/]");
-            AnsiConsole.MarkupLine("[yellow]Jalankan ProxySync (Menu 3) untuk generate success_proxy.txt[/]");
+            AnsiConsole.MarkupLine("[yellow]Jalankan 'auto-start.sh' di remote atau Menu 3 lokal.[/]");
             _availableProxies.Clear();
             return;
         }
@@ -106,7 +107,7 @@ public static class TokenManager
         try { 
             _availableProxies = File.ReadAllLines(proxyFileToLoad)
                 .Select(l => l.Trim())
-                .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#"))
+                .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("#") && l.StartsWith("http://")) // Pastikan format http
                 .Distinct()
                 .ToList();
             
@@ -114,8 +115,12 @@ public static class TokenManager
                 AnsiConsole.MarkupLine($"[green]✓ {_availableProxies.Count} tested proxies dari success_proxy.txt[/]");
             } else {
                 AnsiConsole.MarkupLine($"[yellow]⚠ Pakai fallback proxy.txt ({_availableProxies.Count} proxies)[/]");
-                AnsiConsole.MarkupLine("[yellow]  Jalankan ProxySync untuk proxy yang sudah ditest![/]");
+                AnsiConsole.MarkupLine("[yellow]  Jalankan 'auto-start.sh' di remote untuk proxy yang sudah ditest![/]");
             }
+            if(_availableProxies.Count == 0) {
+                 AnsiConsole.MarkupLine($"[red]ERROR: File proxy '{Path.GetFileName(proxyFileToLoad)}' tidak berisi proxy valid (format http://...).[/]");
+            }
+
         } catch (Exception ex) { 
             AnsiConsole.MarkupLine($"[red]Error loading proxies: {ex.Message.EscapeMarkup()}[/]"); 
             _availableProxies.Clear(); 
@@ -181,7 +186,7 @@ public static class TokenManager
 
     public static TokenEntry GetCurrentToken() {
         if (!_tokens.Any()) throw new Exception("No tokens configured");
-        if (_state.CurrentIndex >= _tokens.Count) _state.CurrentIndex = 0;
+        if (_state.CurrentIndex >= _tokens.Count || _state.CurrentIndex < 0) _state.CurrentIndex = 0; // Tambah cek < 0
         return _tokens[_state.CurrentIndex];
     }
     
@@ -202,8 +207,10 @@ public static class TokenManager
             _proxyPool[currentTokenEntry.Token] = pool;
             
             if (pool.Count > 0) { 
+                // Peek() dulu untuk update currentTokenEntry.Proxy
+                // Dequeue() baru saat CreateHttpClient() dipanggil lagi
                 currentTokenEntry.Proxy = pool.Peek(); 
-                AnsiConsole.MarkupLine($"[dim]Pool reset. Next: {MaskProxy(currentTokenEntry.Proxy)}[/]"); 
+                AnsiConsole.MarkupLine($"[dim]Pool reset. Next proxy will be: {MaskProxy(currentTokenEntry.Proxy)}[/]"); 
                 return true; 
             } else { 
                 AnsiConsole.MarkupLine("[red]Pool reset failed (no proxies).[/]"); 
@@ -211,9 +218,14 @@ public static class TokenManager
             }
         }
         
-        var nextProxy = pool.Dequeue(); 
+        // Dequeue proxy lama, enqueue lagi ke belakang
+        var oldProxy = pool.Dequeue();
+        pool.Enqueue(oldProxy);
+        
+        // Ambil proxy baru dari depan
+        var nextProxy = pool.Peek(); 
         currentTokenEntry.Proxy = nextProxy;
-        AnsiConsole.MarkupLine($"[yellow]Proxy rotated to: {MaskProxy(nextProxy)} ({pool.Count} left)[/]");
+        AnsiConsole.MarkupLine($"[yellow]Proxy rotated to: {MaskProxy(nextProxy)} ({pool.Count} available)[/]");
         return true;
     }
 
@@ -232,82 +244,109 @@ public static class TokenManager
         
         AnsiConsole.MarkupLine($"[yellow]Token Rotated: -> #{_state.CurrentIndex + 1} (@{username.EscapeMarkup()})[/]");
         
-        if (!string.IsNullOrEmpty(current.Proxy)) { 
-            AnsiConsole.MarkupLine($"[dim]Proxy: {MaskProxy(current.Proxy)}[/]"); 
+        // Reset proxy pool index untuk token baru ini
+        if (_proxyPool.TryGetValue(current.Token, out var pool) && pool.Any())
+        {
+             current.Proxy = pool.Peek(); // Ambil proxy pertama dari pool-nya
+             AnsiConsole.MarkupLine($"[dim]Proxy: {MaskProxy(current.Proxy)}[/]"); 
+        }
+        else {
+             AnsiConsole.MarkupLine($"[yellow]Warning: No proxy pool for token {MaskToken(current.Token)}[/]");
         }
         
         return current;
     }
 
+    // === PERBAIKAN LOGIKA PARSING PROXY ===
     public static HttpClient CreateHttpClient(TokenEntry token) {
         var handler = new HttpClientHandler();
         
-        if (!string.IsNullOrEmpty(token.Proxy)) {
+        if (!string.IsNullOrEmpty(token.Proxy) && token.Proxy.StartsWith("http://")) {
             try {
-                var proxyUri = new Uri(token.Proxy); 
-                var webProxy = new WebProxy(proxyUri);
-                
-                if (!string.IsNullOrEmpty(proxyUri.UserInfo)) {
-                    var credentials = proxyUri.UserInfo.Split(':', 2);
-                    if (credentials.Length == 2) { 
-                        webProxy.Credentials = new NetworkCredential(credentials[0], credentials[1]); 
-                        webProxy.UseDefaultCredentials = false; 
-                    } else { 
-                        AnsiConsole.MarkupLine("[yellow]Warning: Failed to parse proxy credentials[/]"); 
+                // Gunakan Regex untuk mengekstrak user, pass, host, port
+                // Contoh: http://user:pass@1.2.3.4:8080
+                var match = Regex.Match(token.Proxy, @"^http://(?:([^:@]+):([^@]+)@)?([^:]+):(\d+)$");
+
+                if (match.Success)
+                {
+                    string host = match.Groups[3].Value;
+                    string port = match.Groups[4].Value;
+                    string user = match.Groups[1].Value; // Bisa kosong
+                    string pass = match.Groups[2].Value; // Bisa kosong
+                    
+                    // Buat Uri hanya dengan host dan port untuk WebProxy
+                    var proxyUriOnlyHost = new Uri($"http://{host}:{port}");
+                    var webProxy = new WebProxy(proxyUriOnlyHost);
+
+                    // Jika ada user & pass, set Credentials
+                    if (!string.IsNullOrEmpty(user) && !string.IsNullOrEmpty(pass))
+                    {
+                        webProxy.Credentials = new NetworkCredential(user, pass);
+                        webProxy.UseDefaultCredentials = false;
+                        AnsiConsole.MarkupLine($"[dim]   Using proxy {MaskProxy(token.Proxy)} with credentials[/]");
                     }
-                } else { 
-                    webProxy.UseDefaultCredentials = true; 
+                    else
+                    {
+                        webProxy.UseDefaultCredentials = true; // Atau false jika proxy tanpa auth
+                        AnsiConsole.MarkupLine($"[dim]   Using proxy {MaskProxy(token.Proxy)} without credentials[/]");
+                    }
+
+                    handler.Proxy = webProxy;
+                    handler.UseProxy = true;
                 }
-                
-                handler.Proxy = webProxy; 
-                handler.UseProxy = true;
-            } catch (UriFormatException ex) { 
-                AnsiConsole.MarkupLine($"[red]Proxy format invalid {MaskProxy(token.Proxy)}: {ex.Message.EscapeMarkup()}. Disabling proxy.[/]"); 
-                handler.Proxy = null; 
-                handler.UseProxy = false; 
-            } catch (Exception ex) { 
-                AnsiConsole.MarkupLine($"[red]Error setting proxy {MaskProxy(token.Proxy)}: {ex.Message.EscapeMarkup()}. Disabling proxy.[/]"); 
+                else
+                {
+                    throw new FormatException("Regex did not match expected proxy format.");
+                }
+            } 
+            catch (Exception ex) { 
+                AnsiConsole.MarkupLine($"[red]Proxy parsing ERROR {MaskProxy(token.Proxy)}: {ex.Message.EscapeMarkup()}. Disabling proxy for this request.[/]"); 
                 handler.Proxy = null; 
                 handler.UseProxy = false; 
             }
         } else { 
+            if (!string.IsNullOrEmpty(token.Proxy)) {
+                 AnsiConsole.MarkupLine($"[yellow]Warning: Invalid proxy format detected (must start with http://): {MaskProxy(token.Proxy)}. Disabling proxy.[/]");
+            } else {
+                 AnsiConsole.MarkupLine("[dim]   No proxy assigned for this token.[/]");
+            }
             handler.Proxy = null; 
             handler.UseProxy = false; 
         }
         
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(DEFAULT_HTTP_TIMEOUT_SEC) };
         client.DefaultRequestHeaders.Add("Authorization", $"Bearer {token.Token}"); 
-        client.DefaultRequestHeaders.Add("User-Agent", "Automation-Hub-Orchestrator/3.2"); 
+        client.DefaultRequestHeaders.Add("User-Agent", "Automation-Hub-Orchestrator/3.3"); // Versi naik
         client.DefaultRequestHeaders.Add("Accept", "application/vnd.github+json");
         
         return client;
     }
+    // === AKHIR PERBAIKAN ===
+
 
     public static string MaskToken(string token) {
         if (string.IsNullOrEmpty(token)) return "invalid-token";
         return token.Length > 10 ? token[..4] + "..." + token[^4..] : token;
     }
 
-    public static string MaskProxy(string proxy) {
+    // === PERBAIKAN MASKING PROXY ===
+    public static string MaskProxy(string? proxy) {
         if (string.IsNullOrEmpty(proxy)) return "no-proxy";
         
         try { 
-            if (Uri.TryCreate(proxy, UriKind.Absolute, out var uri)) { 
-                return $"{uri.Scheme}://{uri.Host}:{uri.Port}"; 
-            }
-            
-            var parts = proxy.Split(':'); 
-            if (parts.Length >= 2) { 
-                string hostPart = parts.Length > 2 ? parts[^2].Split('@').Last() : parts[^2]; 
-                string portPart = parts[^1]; 
-                return $"proxy://{hostPart}:{portPart}"; 
-            }
-            
-            return "masked-proxy"; 
+             // Coba parse pakai Uri class
+             if (Uri.TryCreate(proxy, UriKind.Absolute, out var uri)) { 
+                 // Tampilkan skema, host, port. User info disembunyikan.
+                 return $"{uri.Scheme}://{uri.Host}:{uri.Port}"; 
+             }
+             // Fallback jika Uri.TryCreate gagal (format aneh)
+             return "masked-proxy-invalid-format"; 
         } catch { 
-            return "invalid-proxy-format"; 
+            return "error-masking-proxy"; 
         }
     }
+    // === AKHIR PERBAIKAN ===
+
 
     public static void ShowStatus() {
         if (!_tokens.Any()) { 
@@ -327,7 +366,7 @@ public static class TokenManager
         table.AddColumn("Idx"); 
         table.AddColumn("Token"); 
         table.AddColumn("User"); 
-        table.AddColumn("Proxy"); 
+        table.AddColumn("Current Proxy"); // Nama kolom diubah
         table.AddColumn("Active");
         
         for (int i = 0; i < _tokens.Count; i++) { 
@@ -335,7 +374,7 @@ public static class TokenManager
             var act = i == _state.CurrentIndex ? "[green]Active[/]" : ""; 
             var tokD = MaskToken(t.Token); 
             var userD = t.Username ?? "[grey]unknown[/]";
-            var proxD = !string.IsNullOrEmpty(t.Proxy) ? MaskProxy(t.Proxy) : "[grey]none[/]"; 
+            var proxD = MaskProxy(t.Proxy); // Gunakan fungsi MaskProxy yang baru
             
             table.AddRow((i+1).ToString(), tokD, userD, proxD, act); 
         }
