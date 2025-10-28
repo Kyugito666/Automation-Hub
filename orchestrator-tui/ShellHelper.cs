@@ -32,7 +32,16 @@ public static class ShellHelper
                     bool isRateLimit = stderr.Contains("API rate limit exceeded") || stderr.Contains("403");
                     bool isAuthError = stderr.Contains("Bad credentials") || stderr.Contains("401");
                     bool isProxyError = stderr.Contains("407") || stderr.Contains("Proxy Authentication Required");
-                    bool isNetworkError = stderr.Contains("dial tcp") || stderr.Contains("connection refused") || stderr.Contains("i/o timeout") || stderr.Contains("error connecting to http");
+                    
+                    // === PERBAIKAN: Tambahkan deteksi error "wsarecv" / "forcibly closed" ===
+                    bool isNetworkError = stderr.Contains("dial tcp") || 
+                                          stderr.Contains("connection refused") || 
+                                          stderr.Contains("i/o timeout") || 
+                                          stderr.Contains("error connecting to http") ||
+                                          stderr.Contains("wsarecv") || // <-- TAMBAH INI
+                                          stderr.Contains("forcibly closed"); // <-- TAMBAH INI
+                    // === AKHIR PERBAIKAN ===
+                                          
                     bool isNotFoundError = stderr.Contains("404") || stderr.Contains("Could not find");
 
                     if (isProxyError && proxyRetryCount < MAX_RETRY_ON_PROXY_ERROR)
@@ -46,7 +55,7 @@ public static class ShellHelper
                     if (isNetworkError && networkRetryCount < MAX_RETRY_ON_NETWORK_ERROR)
                     {
                         networkRetryCount++;
-                        AnsiConsole.MarkupLine($"[yellow]Network error. Retrying... ({networkRetryCount}/{MAX_RETRY_ON_NETWORK_ERROR})[/]");
+                        AnsiConsole.MarkupLine($"[yellow]Network error ({stderr.Split('\n').FirstOrDefault()?.Trim()}). Retrying... ({networkRetryCount}/{MAX_RETRY_ON_NETWORK_ERROR})[/]");
                         await Task.Delay(5000); continue;
                     }
 
