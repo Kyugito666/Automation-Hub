@@ -185,78 +185,78 @@ internal static class Program
         }
     }
     
-    private static async Task ShowAttachMenuAsync(CancellationToken mainCancellationToken)
+private static async Task ShowAttachMenuAsync(CancellationToken mainCancellationToken)
+{
+    AnsiConsole.Clear();
+    AnsiConsole.Write(new FigletText("Attach").Centered().Color(Color.Blue));
+    
+    var currentToken = TokenManager.GetCurrentToken();
+    var state = TokenManager.GetState();
+    var activeCodespace = state.ActiveCodespaceName;
+
+    if (string.IsNullOrEmpty(activeCodespace))
     {
-        AnsiConsole.Clear();
-        AnsiConsole.Write(new FigletText("Attach").Centered().Color(Color.Blue));
-        
-        var currentToken = TokenManager.GetCurrentToken();
-        var state = TokenManager.GetState();
-        var activeCodespace = state.ActiveCodespaceName;
-
-        if (string.IsNullOrEmpty(activeCodespace))
-        {
-            AnsiConsole.MarkupLine("[red]Error: No active codespace found.[/]");
-            AnsiConsole.MarkupLine("[yellow]Please run 'Start/Manage Codespace' (Menu 1) first.[/]");
-            Pause("Press Enter to continue...", mainCancellationToken);
-            return;
-        }
-        
-        var sessions = await CodespaceManager.GetTmuxSessions(currentToken, activeCodespace);
-        if (!sessions.Any())
-        {
-            AnsiConsole.MarkupLine("[yellow]No running bot sessions found in tmux.[/]");
-            AnsiConsole.MarkupLine("[dim]Bots might still be starting up. Check 'auto-start.sh' log.[/]");
-            Pause("Press Enter to continue...", mainCancellationToken);
-            return;
-        }
-
-        var backOption = "[ (Back to Main Menu) ]";
-        sessions.Add(backOption);
-
-        var selectedBot = AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
-                .Title($"Select bot to attach (in [green]{activeCodespace}[/]):")
-                .PageSize(15)
-                .WrapAround(true)
-                .AddChoices(sessions)
-        );
-
-        if (selectedBot == backOption) return;
-
-        AnsiConsole.MarkupLine($"\n[cyan]Attaching to [yellow]{selectedBot}[/].[/]");
-        AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]D[/] to detach from session)[/]");
-        AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]N[/] (next) / [bold]P[/] (prev) to switch bot)[/]");
-        AnsiConsole.MarkupLine("[yellow]Press Ctrl+C to force-quit this attach session.[/]");
-
-        _interactiveCts = new CancellationTokenSource();
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_interactiveCts.Token, mainCancellationToken);
-
-        try
-        {
-            string tmuxSessionName = "automation_hub_bots";
-            string args = $"codespace ssh -c {activeCodespace} -- tmux attach-session -t {tmuxSessionName} -w \"{selectedBot}\"";
-            
-            await ShellHelper.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            if (_interactiveCts.IsCancellationRequested)
-                AnsiConsole.MarkupLine("\n[yellow]Attach session stopped by user (Ctrl+C).[/]");
-            else
-                AnsiConsole.MarkupLine("\n[yellow]Main app shutdown requested. Stopping attach...[/]");
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"\n[red]Attach session crashed: {ex.Message.EscapeMarkup()}[/]");
-            Pause("Press Enter to continue...", CancellationToken.None);
-        }
-        finally
-        {
-            _interactiveCts.Dispose();
-            _interactiveCts = null;
-        }
+        AnsiConsole.MarkupLine("[red]Error: No active codespace found.[/]");
+        AnsiConsole.MarkupLine("[yellow]Please run 'Start/Manage Codespace' (Menu 1) first.[/]");
+        Pause("Press Enter to continue...", mainCancellationToken);
+        return;
     }
+    
+    var sessions = await CodespaceManager.GetTmuxSessions(currentToken, activeCodespace);
+    if (!sessions.Any())
+    {
+        AnsiConsole.MarkupLine("[yellow]No running bot sessions found in tmux.[/]");
+        AnsiConsole.MarkupLine("[dim]Bots might still be starting up. Check 'auto-start.sh' log.[/]");
+        Pause("Press Enter to continue...", mainCancellationToken);
+        return;
+    }
+
+    var backOption = "[ (Back to Main Menu) ]";
+    sessions.Add(backOption);
+
+    var selectedBot = AnsiConsole.Prompt(
+        new SelectionPrompt<string>()
+            .Title($"Select bot to attach (in [green]{activeCodespace}[/]):")
+            .PageSize(15)
+            .WrapAround(true)
+            .AddChoices(sessions)
+    );
+
+    if (selectedBot == backOption) return;
+
+    AnsiConsole.MarkupLine($"\n[cyan]Attaching to [yellow]{selectedBot}[/].[/]");
+    AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]D[/] to detach from session)[/]");
+    AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]N[/] (next) / [bold]P[/] (prev) to switch bot)[/]");
+    AnsiConsole.MarkupLine("[red]⚠ Press Ctrl+C TWICE to force-quit if stuck.[/]");
+
+    _interactiveCts = new CancellationTokenSource();
+    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_interactiveCts.Token, mainCancellationToken);
+
+    try
+    {
+        string tmuxSessionName = "automation_hub_bots";
+        string args = $"codespace ssh --codespace {activeCodespace} -- tmux attach-session -t {tmuxSessionName} -w \"{selectedBot}\"";
+        
+        await ShellHelper.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCts.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        if (_interactiveCts.IsCancellationRequested)
+            AnsiConsole.MarkupLine("\n[yellow]✓ Detached from bot session.[/]");
+        else
+            AnsiConsole.MarkupLine("\n[yellow]Main app shutdown requested.[/]");
+    }
+    catch (Exception ex)
+    {
+        AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]");
+        Pause("Press Enter to continue...", CancellationToken.None);
+    }
+    finally
+    {
+        _interactiveCts?.Dispose();
+        _interactiveCts = null;
+    }
+}
 
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) 
     {
