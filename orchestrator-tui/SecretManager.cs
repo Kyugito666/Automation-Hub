@@ -1,26 +1,14 @@
-using System.Net.Http.Json;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Spectre.Console;
-using Sodium;
+using System.IO.Compression;
+using System.Text;
 
 namespace Orchestrator;
-
-public class PublicKeyResponse
-{
-    [JsonPropertyName("key")]
-    public string Key { get; set; } = "";
-
-    [JsonPropertyName("key_id")]
-    public string KeyId { get; set; } = "";
-}
 
 public static class SecretManager
 {
     private static readonly string ProjectRoot = GetProjectRoot();
-    private static readonly int MAX_SECRET_SIZE = 45000; // 45KB safe limit (GitHub limit 50KB)
-    private static readonly int MAX_BATCH_SIZE = 10; // Process max 10 secrets per batch
+    private static readonly string LocalBotRoot = @"D:\SC";
+    private static readonly string TempArchivePath = Path.Combine(Path.GetTempPath(), "bot-secrets.tar.gz");
 
     private static readonly string[] CommonSecretPatterns = new[]
     {
@@ -60,252 +48,160 @@ public static class SecretManager
 
     public static async Task SetSecretsForActiveToken()
     {
-        AnsiConsole.MarkupLine("[cyan]═══ Set Secrets (SMART - Auto Detect) ═══[/]");
+        AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
+        AnsiConsole.MarkupLine("[cyan]   Deploy Secrets via SSH (Direct Upload)[/]");
+        AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
 
         var currentToken = TokenManager.GetCurrentToken();
         var state = TokenManager.GetState();
 
         if (string.IsNullOrEmpty(currentToken.Username))
         {
-            AnsiConsole.MarkupLine("[red]Active token belum punya username![/]");
-            AnsiConsole.MarkupLine("[yellow]Run Menu 2 -> Validate Tokens dulu.[/]");
+            AnsiConsole.MarkupLine("[red]✗ Active token has no username![/]");
+            AnsiConsole.MarkupLine("[yellow]→ Run Menu 2 -> Validate Tokens first.[/]");
             return;
         }
 
-        AnsiConsole.MarkupLine($"[yellow]Active Token: #{state.CurrentIndex + 1} - @{currentToken.Username}[/]");
+        var activeCodespace = state.ActiveCodespaceName;
+        if (string.IsNullOrEmpty(activeCodespace))
+        {
+            AnsiConsole.MarkupLine("[red]✗ No active codespace found![/]");
+            AnsiConsole.MarkupLine("[yellow]→ Run Menu 1 to create codespace first.[/]");
+            return;
+        }
+
+        AnsiConsole.MarkupLine($"[yellow]Target:[/] [cyan]@{currentToken.Username}[/] → [green]{activeCodespace}[/]");
         AnsiConsole.MarkupLine($"[dim]Proxy: {TokenManager.MaskProxy(currentToken.Proxy)}[/]");
 
         var config = BotConfig.Load();
         if (config == null)
         {
-            AnsiConsole.MarkupLine("[red]Failed to load bots_config.json[/]");
+            AnsiConsole.MarkupLine("[red]✗ Failed to load bots_config.json[/]");
             return;
         }
 
-        var botSecretMappings = new Dictionary<string, List<SecretMapping>>();
+        var secretFiles = new Dictionary<string, string>();
 
         await AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
-            .StartAsync("[yellow]Analyzing bots...[/]", async ctx =>
+            .StartAsync("[yellow]Scanning bot secrets...[/]", async ctx =>
             {
                 foreach (var bot in config.BotsAndTools)
                 {
                     if (!bot.Enabled) continue;
 
-                    ctx.Status($"[yellow]Analyzing {bot.Name}...[/]");
+                    ctx.Status($"[yellow]Scanning {bot.Name}...[/]");
                     
-                    var secretMappings = await AnalyzeBotSecrets(bot);
-                    
-                    if (secretMappings.Any())
+                    var localBotPath = BotConfig.GetLocalBotPath(bot.Path);
+                    if (!Directory.Exists(localBotPath)) continue;
+
+                    var files = DetectSecretFilesInDirectory(localBotPath);
+                    foreach (var file in files)
                     {
-                        botSecretMappings[bot.Name] = secretMappings;
-                        AnsiConsole.MarkupLine($"[green]✓ {bot.Name}: Found {secretMappings.Count} secret file(s)[/]");
-                        
-                        foreach (var mapping in secretMappings)
-                            AnsiConsole.MarkupLine($"[dim]   - {mapping.FileName} ({mapping.FileSize} bytes)[/]");
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine($"[dim]○ {bot.Name}: No secrets found[/]");
+                        var relativePath = Path.Combine(bot.Path, Path.GetFileName(file)).Replace('\\', '/');
+                        secretFiles[relativePath] = file;
+                        AnsiConsole.MarkupLine($"[green]✓[/] [dim]{relativePath}[/]");
                     }
                 }
+                await Task.Delay(100);
             });
 
-        if (!botSecretMappings.Any())
+        if (!secretFiles.Any())
         {
-            AnsiConsole.MarkupLine("[yellow]No secrets to set (no matching files found in D:\\SC)[/]");
+            AnsiConsole.MarkupLine("[yellow]○ No secret files found in D:\\SC[/]");
             return;
         }
 
-        // Check total size & split files if needed
-        var allSecrets = botSecretMappings.SelectMany(kvp => kvp.Value.Select(m => new { Bot = kvp.Key, Mapping = m })).ToList();
-        var oversizedSecrets = allSecrets.Where(s => s.Mapping.FileSize > MAX_SECRET_SIZE).ToList();
-
-        if (oversizedSecrets.Any())
-        {
-            AnsiConsole.MarkupLine("\n[yellow]⚠ WARNING: Some files exceed 45KB limit and will be split:[/]");
-            foreach (var os in oversizedSecrets)
-                AnsiConsole.MarkupLine($"[yellow]   - {os.Bot}/{os.Mapping.FileName} ({os.Mapping.FileSize} bytes)[/]");
-        }
-
-        int totalSecrets = allSecrets.Count + oversizedSecrets.Sum(s => (s.Mapping.FileSize / MAX_SECRET_SIZE) + 1);
+        var totalSize = secretFiles.Sum(kvp => new FileInfo(kvp.Value).Length);
         
-        AnsiConsole.MarkupLine($"\n[yellow]═══ SUMMARY ═══[/]");
-        AnsiConsole.MarkupLine($"Target: [cyan]@{currentToken.Username}[/]");
-        AnsiConsole.MarkupLine($"Bots: [cyan]{botSecretMappings.Count}[/]");
-        AnsiConsole.MarkupLine($"Total Secrets: [cyan]{totalSecrets}[/] (incl. splits)");
-        AnsiConsole.MarkupLine($"[dim]Batch Size: {MAX_BATCH_SIZE} secrets per request[/]");
+        AnsiConsole.MarkupLine($"\n[cyan]───────────────────────────────────────────────────────────────[/]");
+        AnsiConsole.MarkupLine($"[yellow]Files:[/] [cyan]{secretFiles.Count}[/] | [yellow]Size:[/] [cyan]{totalSize / 1024.0:F1} KB[/]");
+        AnsiConsole.MarkupLine($"[cyan]───────────────────────────────────────────────────────────────[/]");
         
-        if (!AnsiConsole.Confirm("\n[yellow]Proceed to set secrets?[/]", false))
+        if (!AnsiConsole.Confirm("\n[yellow]Upload secrets to codespace?[/]", false))
         {
-            AnsiConsole.MarkupLine("[yellow]Cancelled by user.[/]");
+            AnsiConsole.MarkupLine("[yellow]✗ Cancelled by user.[/]");
             return;
         }
-
-        var owner = currentToken.Owner;
-        var repo = currentToken.Repo;
 
         try
         {
-            using var client = TokenManager.CreateHttpClient(currentToken);
+            AnsiConsole.MarkupLine("\n[cyan]Step 1/3:[/] Creating archive...");
+            CreateTarGz(secretFiles, TempArchivePath);
+            AnsiConsole.MarkupLine($"[green]✓[/] Archive: [dim]{new FileInfo(TempArchivePath).Length / 1024.0:F1} KB[/]");
 
-            AnsiConsole.Markup("[dim]Getting repo ID... [/]");
-            var repoUrl = $"https://api.github.com/repos/{owner}/{repo}";
-            var repoResponse = await client.GetAsync(repoUrl);
-            if (!repoResponse.IsSuccessStatusCode)
-            {
-                AnsiConsole.MarkupLine($"[red]Failed: {repoResponse.StatusCode}[/]");
-                return;
-            }
-            var repoJson = await repoResponse.Content.ReadFromJsonAsync<JsonElement>();
-            var repoId = repoJson.GetProperty("id").GetInt32();
-            AnsiConsole.MarkupLine("[green]OK[/]");
+            AnsiConsole.MarkupLine("\n[cyan]Step 2/3:[/] Uploading via SSH...");
+            string remotePath = "/tmp/bot-secrets.tar.gz";
+            string scpArgs = $"codespace cp -c {activeCodespace} \"{TempArchivePath}\" remote:{remotePath}";
+            await ShellHelper.RunGhCommand(currentToken, scpArgs, 300000);
+            AnsiConsole.MarkupLine($"[green]✓[/] Uploaded to [dim]{remotePath}[/]");
 
-            AnsiConsole.Markup("[dim]Getting public key... [/]");
-            var pubKeyResponse = await client.GetAsync("https://api.github.com/user/codespaces/secrets/public-key");
-            if (!pubKeyResponse.IsSuccessStatusCode)
-            {
-                AnsiConsole.MarkupLine($"[red]Failed: {pubKeyResponse.StatusCode}[/]");
-                return;
-            }
-            var pubKey = await pubKeyResponse.Content.ReadFromJsonAsync<PublicKeyResponse>();
-            if (pubKey == null)
-            {
-                AnsiConsole.MarkupLine("[red]Invalid public key response[/]");
-                return;
-            }
-            AnsiConsole.MarkupLine("[green]OK[/]");
+            AnsiConsole.MarkupLine("\n[cyan]Step 3/3:[/] Extracting in codespace...");
+            string extractCmd = $"cd /workspaces/automation-hub && tar -xzf {remotePath} && rm {remotePath}";
+            string sshArgs = $"codespace ssh -c {activeCodespace} -- \"{extractCmd}\"";
+            await ShellHelper.RunGhCommand(currentToken, sshArgs, 120000);
+            AnsiConsole.MarkupLine($"[green]✓[/] Extracted to [dim]/workspaces/automation-hub/[/]");
 
-            int successCount = 0;
-            int failCount = 0;
-            int skippedCount = 0;
-            int batchCount = 0;
+            File.Delete(TempArchivePath);
 
-            foreach (var (botName, mappings) in botSecretMappings)
-            {
-                AnsiConsole.MarkupLine($"\n[cyan]Processing {botName}...[/]");
-                
-                foreach (var mapping in mappings)
-                {
-                    if (mapping.FileSize > MAX_SECRET_SIZE)
-                    {
-                        // Split file into chunks
-                        var chunks = SplitContent(mapping.Content, MAX_SECRET_SIZE);
-                        for (int i = 0; i < chunks.Count; i++)
-                        {
-                            var chunkName = $"{SanitizeName(botName)}_{SanitizeName(mapping.FileName)}_PART{i + 1}".ToUpper();
-                            
-                            if (await SetSecret(client, chunkName, chunks[i], pubKey, repoId))
-                                successCount++;
-                            else
-                                failCount++;
-                            
-                            batchCount++;
-                            if (batchCount % MAX_BATCH_SIZE == 0)
-                            {
-                                AnsiConsole.MarkupLine($"[dim]   (Batch pause 2s...)[/]");
-                                await Task.Delay(2000);
-                            }
-                            else
-                            {
-                                await Task.Delay(500);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        var secretName = $"{SanitizeName(botName)}_{SanitizeName(mapping.FileName)}".ToUpper();
-                        
-                        if (await SetSecret(client, secretName, mapping.Content, pubKey, repoId))
-                            successCount++;
-                        else
-                            failCount++;
-                        
-                        batchCount++;
-                        if (batchCount % MAX_BATCH_SIZE == 0)
-                        {
-                            AnsiConsole.MarkupLine($"[dim]   (Batch pause 2s...)[/]");
-                            await Task.Delay(2000);
-                        }
-                        else
-                        {
-                            await Task.Delay(500);
-                        }
-                    }
-                }
-            }
-
-            AnsiConsole.MarkupLine($"\n[green]✓ Secret setting completed for @{currentToken.Username}[/]");
-            AnsiConsole.MarkupLine($"   Success: [green]{successCount}[/], Failed: [red]{failCount}[/]");
-            if (skippedCount > 0)
-                AnsiConsole.MarkupLine($"   Skipped: [yellow]{skippedCount}[/] (too large even after split)");
-            AnsiConsole.MarkupLine("[dim]Secrets will be available in codespace via auto-start.sh extraction[/]");
-            AnsiConsole.MarkupLine("\n[yellow]NOTE: Restart codespace or run auto-start.sh to apply secrets.[/]");
+            AnsiConsole.MarkupLine("\n[cyan]═══════════════════════════════════════════════════════════════[/]");
+            AnsiConsole.MarkupLine($"[green]✓ Secrets deployed successfully![/]");
+            AnsiConsole.MarkupLine($"[dim]Uploaded {secretFiles.Count} files ({totalSize / 1024.0:F1} KB)[/]");
+            AnsiConsole.MarkupLine("[cyan]═══════════════════════════════════════════════════════════════[/]");
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"\n[red]Error: {ex.Message}[/]");
-            AnsiConsole.WriteException(ex);
+            AnsiConsole.MarkupLine($"\n[red]✗ Deployment failed: {ex.Message}[/]");
+            if (File.Exists(TempArchivePath))
+            {
+                try { File.Delete(TempArchivePath); } catch { }
+            }
         }
     }
 
-    private static List<string> SplitContent(string content, int maxSize)
+    private static void CreateTarGz(Dictionary<string, string> files, string outputPath)
     {
-        var chunks = new List<string>();
-        var lines = content.Split('\n');
-        var currentChunk = new StringBuilder();
-        
-        foreach (var line in lines)
-        {
-            if (Encoding.UTF8.GetByteCount(currentChunk.ToString() + line + "\n") > maxSize)
-            {
-                if (currentChunk.Length > 0)
-                {
-                    chunks.Add(currentChunk.ToString());
-                    currentChunk.Clear();
-                }
-            }
-            currentChunk.AppendLine(line);
-        }
-        
-        if (currentChunk.Length > 0)
-            chunks.Add(currentChunk.ToString());
-        
-        return chunks;
-    }
+        var tempDir = Path.Combine(Path.GetTempPath(), "bot-secrets-temp");
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, true);
+        Directory.CreateDirectory(tempDir);
 
-    private static async Task<List<SecretMapping>> AnalyzeBotSecrets(BotEntry bot)
-    {
-        var mappings = new List<SecretMapping>();
-        var localBotPath = BotConfig.GetLocalBotPath(bot.Path);
-        
-        if (!Directory.Exists(localBotPath))
-            return mappings;
-
-        var localSecretFiles = DetectSecretFilesInDirectory(localBotPath);
-        
-        foreach (var filePath in localSecretFiles)
+        try
         {
-            try
+            foreach (var kvp in files)
             {
-                var content = await File.ReadAllTextAsync(filePath);
-                if (!string.IsNullOrWhiteSpace(content))
-                {
-                    mappings.Add(new SecretMapping
-                    {
-                        FileName = Path.GetFileName(filePath),
-                        Content = content,
-                        FileSize = Encoding.UTF8.GetByteCount(content)
-                    });
-                }
+                var targetPath = Path.Combine(tempDir, kvp.Key);
+                var targetDir = Path.GetDirectoryName(targetPath);
+                if (!string.IsNullOrEmpty(targetDir))
+                    Directory.CreateDirectory(targetDir);
+                File.Copy(kvp.Value, targetPath, true);
             }
-            catch (Exception ex)
+
+            if (File.Exists(outputPath))
+                File.Delete(outputPath);
+
+            string tarArgs = $"-czf \"{outputPath}\" -C \"{tempDir}\" .";
+            var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
-                AnsiConsole.MarkupLine($"[yellow]   Warning: Failed to read {Path.GetFileName(filePath)}: {ex.Message}[/]");
+                FileName = "tar",
+                Arguments = tarArgs,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+
+            process?.WaitForExit();
+            if (process?.ExitCode != 0)
+            {
+                throw new Exception("tar command failed");
             }
         }
-
-        return mappings;
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
     }
 
     private static List<string> DetectSecretFilesInDirectory(string directory)
@@ -333,85 +229,5 @@ public static class SecretManager
         catch { }
 
         return foundFiles;
-    }
-
-    private static string SanitizeName(string name)
-    {
-        return System.Text.RegularExpressions.Regex.Replace(name, @"[^a-zA-Z0-9]", "_");
-    }
-
-    private static async Task<bool> SetSecret(
-        HttpClient client,
-        string secretName,
-        string secretValue,
-        PublicKeyResponse pubKey,
-        int repoId)
-    {
-        AnsiConsole.Markup($"[dim]   Setting {secretName}... [/]");
-        try
-        {
-            var encrypted = EncryptSecret(pubKey.Key, secretValue);
-            var payload = new
-            {
-                encrypted_value = encrypted,
-                key_id = pubKey.KeyId,
-                selected_repository_ids = new[] { repoId }
-            };
-
-            var content = new StringContent(
-                JsonSerializer.Serialize(payload),
-                Encoding.UTF8,
-                "application/json"
-            );
-
-            var response = await client.PutAsync(
-                $"https://api.github.com/user/codespaces/secrets/{secretName}",
-                content
-            );
-
-            if (response.IsSuccessStatusCode)
-            {
-                AnsiConsole.MarkupLine("[green]OK[/]");
-                return true;
-            }
-            else
-            {
-                var errorBody = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[red]Failed ({response.StatusCode})[/]");
-                if (!string.IsNullOrEmpty(errorBody))
-                    AnsiConsole.MarkupLine($"[dim]   {errorBody.Split('\n').FirstOrDefault()}[/]");
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Err: {ex.Message.Split('\n').FirstOrDefault()}[/]");
-            return false;
-        }
-    }
-
-    private static string EncryptSecret(string publicKeyBase64, string secretValue)
-    {
-        try
-        {
-            var publicKeyBytes = Convert.FromBase64String(publicKeyBase64);
-            var secretBytes = Encoding.UTF8.GetBytes(secretValue);
-            
-            var encryptedBytes = SealedPublicKeyBox.Create(secretBytes, publicKeyBytes);
-            
-            return Convert.ToBase64String(encryptedBytes);
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Encryption error: {ex.Message}[/]");
-            throw;
-        }
-    }
-
-    private class SecretMapping
-    {
-        public string FileName { get; set; } = "";
-        public string Content { get; set; } = "";
-        public int FileSize { get; set; }
     }
 }
