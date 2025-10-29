@@ -293,35 +293,46 @@ internal static class Program
                 var billingInfo = await BillingManager.GetBillingInfo(currentToken);
                 BillingManager.DisplayBilling(billingInfo, currentToken.Username ?? "unknown");
 
+                // === PERBAIKAN LOGIKA ERROR BILLING ===
                 if (!billingInfo.IsQuotaOk)
                 {
-                    if (billingInfo.Error == BillingManager.PersistentProxyError)
+                    // Prioritas: Cek apakah error karena proxy bandel
+                    if (billingInfo.Error == BillingManager.PersistentProxyError) // <-- FIX CS0117 (tambah public di BillingManager)
                     {
                         AnsiConsole.MarkupLine("[magenta]Persistent proxy error detected during billing check.[/]");
                         AnsiConsole.MarkupLine("[magenta]Attempting automatic IP Authorization...[/]");
                         bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync(cancellationToken);
-                        if (ipAuthSuccess) {
+
+                        if (ipAuthSuccess)
+                        {
                             AnsiConsole.MarkupLine("[green]IP Authorization finished successfully.[/]");
                             AnsiConsole.MarkupLine("[magenta]Attempting automatic Proxy Test & Save...[/]");
                             bool testSuccess = await ProxyManager.RunProxyTestAndSaveAsync(cancellationToken);
-                            if(testSuccess) {
+
+                            if(testSuccess)
+                            {
                                 AnsiConsole.MarkupLine("[green]Proxy Test & Save finished. Reloading configurations...[/]");
                                 TokenManager.ReloadAllConfigs();
                                 currentToken = TokenManager.GetCurrentToken(); // Re-get token
                                 AnsiConsole.MarkupLine("[yellow]Retrying operation with the same token and refreshed proxies...[/]");
                                 await Task.Delay(5000, cancellationToken);
                                 continue; // Coba lagi billing check
-                            } else {
+                            }
+                            else
+                            {
                                 AnsiConsole.MarkupLine("[red]Automatic Proxy Test & Save failed.[/]");
                                 AnsiConsole.MarkupLine("[yellow]Proceeding with token rotation as fallback...[/]");
                             }
-                        } else {
+                        }
+                        else
+                        {
                             AnsiConsole.MarkupLine("[red]Automatic IP Authorization failed.[/]");
                             AnsiConsole.MarkupLine("[yellow]Proceeding with token rotation as fallback...[/]");
                         }
                     }
 
-                    // Jika bukan error proxy ATAU jika IP Auth/Test gagal, rotasi token
+                    // Jika BUKAN error proxy persisten (misal kuota habis),
+                    // ATAU jika IP Auth/Test Proxy gagal, Lakukan rotasi token
                     AnsiConsole.MarkupLine("[yellow]⚠ Rotating to next token (low quota or unrecoverable error)...[/]");
                     if (!string.IsNullOrEmpty(activeCodespace)) {
                          try { await CodespaceManager.DeleteCodespace(currentToken, activeCodespace); }
@@ -329,16 +340,20 @@ internal static class Program
                          currentState.ActiveCodespaceName = null;
                          TokenManager.SaveState(currentState);
                     }
-                    currentToken = TokenManager.SwitchToNextToken();
+                    currentToken = TokenManager.SwitchToNextToken(); // Ganti Token
                     activeCodespace = null;
-                    consecutiveErrors = 0;
+                    consecutiveErrors = 0; // Reset error setelah rotasi
                     await Task.Delay(5000, cancellationToken);
-                    continue;
+                    continue; // Lanjut ke iterasi berikutnya dengan token baru
                 }
+                // === AKHIR PERBAIKAN LOGIKA ERROR BILLING ===
 
+
+                // Jika billing OK, lanjut ke manage codespace
                 AnsiConsole.MarkupLine("Ensuring healthy codespace...");
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken, $"{currentToken.Owner}/{currentToken.Repo}");
 
+                // ... (sisa loop tidak berubah: save state, sleep, keep-alive check, trigger, error handling) ...
                 bool isNewOrRecreatedCodespace = currentState.ActiveCodespaceName != activeCodespace;
                 currentState.ActiveCodespaceName = activeCodespace;
                 TokenManager.SaveState(currentState);
@@ -383,12 +398,13 @@ internal static class Program
                         continue;
                     }
                 }
-            }
+
+            } // Akhir Try Utama
             catch (OperationCanceledException) {
                 AnsiConsole.MarkupLine("\n[yellow]⚠ Loop cancelled by user.[/]");
                 break;
             }
-            catch (Exception ex) {
+            catch (Exception ex) { // Tangkap error lain (misal dari EnsureHealthyCodespace)
                 consecutiveErrors++;
                 AnsiConsole.MarkupLine("\n[red]✗ ERROR in orchestrator loop:[/]");
                 AnsiConsole.WriteException(ex);
@@ -400,7 +416,7 @@ internal static class Program
                     }
                     currentState.ActiveCodespaceName = null;
                     TokenManager.SaveState(currentState);
-                    currentToken = TokenManager.SwitchToNextToken();
+                    currentToken = TokenManager.SwitchToNextToken(); // Rotasi token sebagai fallback error
                     consecutiveErrors = 0;
                     AnsiConsole.MarkupLine("[cyan]Waiting 30s before retry with new token...[/]");
                     await Task.Delay(30000, cancellationToken);
