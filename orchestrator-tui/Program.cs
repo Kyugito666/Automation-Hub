@@ -14,8 +14,8 @@ internal static class Program
     private static CancellationTokenSource _mainCts = new CancellationTokenSource();
     private static CancellationTokenSource? _interactiveCts;
     
-    // === PERBAIKAN: Tambahkan Task untuk Graceful Shutdown ===
-    private static Task? _shutdownTask = null;
+    // === PERBAIKAN: Flag untuk menandai shutdown sedang berjalan ===
+    private static volatile bool _isShuttingDown = false; 
     // === AKHIR PERBAIKAN ===
 
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMinutes((3 * 60) + 30);
@@ -23,82 +23,100 @@ internal static class Program
 
     public static async Task Main(string[] args)
     {
+        // === PERBAIKAN: Handler Ctrl+C yang lebih Blocking ===
+        // Deklarasikan variabel di luar handler agar bisa diakses
         bool forceQuitRequested = false;
-        
-        // === PERBAIKAN: Logika Ctrl+C yang diperbarui ===
+        object shutdownLock = new object(); // Untuk mencegah double execution
+
         Console.CancelKeyPress += (sender, e) => {
             e.Cancel = true; // Selalu cegah exit default
-            
-            if (_shutdownTask != null) // Shutdown sudah berjalan
-            {
-                if (forceQuitRequested) // Ctrl+C kedua (atau ketiga)
-                {
-                    AnsiConsole.MarkupLine("\n[red]Force quit confirmed. Exiting immediately...[/]");
-                    Environment.Exit(1);
-                }
-                AnsiConsole.MarkupLine("\n[red]Shutdown already in progress. Press Ctrl+C again to force quit.[/]");
-                forceQuitRequested = true;
-                Task.Delay(3000).ContinueWith(_ => forceQuitRequested = false); // Reset flag force quit
-                return;
-            }
-            
-            if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested) // Sedang dalam mode interaktif (Attach)
-            {
-                AnsiConsole.MarkupLine("\n[yellow]Ctrl+C: Stopping operation... (Press Ctrl+C again to force quit)[/]");
-                forceQuitRequested = true;
-                Task.Delay(3000).ContinueWith(_ => forceQuitRequested = false);
-                _interactiveCts.Cancel();
-            }
-            else if (!_mainCts.IsCancellationRequested) // Berada di Menu Utama atau Loop Menu 1
-            {
-                AnsiConsole.MarkupLine("\n[red]SHUTDOWN TRIGGERED! Stopping remote codespace...[/]");
-                AnsiConsole.MarkupLine("[dim](Press Ctrl+C again to force quit)[/]");
-                forceQuitRequested = true; // Aktifkan mode force quit untuk Ctrl+C berikutnya
 
-                // Mulai shutdown task (JANGAN di-await di sini)
-                _shutdownTask = PerformGracefulShutdownAsync(); 
-                
-                // Beri sinyal ke loop utama untuk berhenti
-                _mainCts.Cancel();
-            }
-            else
+            lock (shutdownLock) // Pastikan hanya satu thread yang memproses Ctrl+C
             {
-                AnsiConsole.MarkupLine("[yellow]Shutdown in progress... (Press Ctrl+C again to force quit)[/]");
-                forceQuitRequested = true;
-            }
+                if (_isShuttingDown) // Shutdown sudah berjalan
+                {
+                    if (forceQuitRequested) // Ctrl+C kedua (atau ketiga)
+                    {
+                        AnsiConsole.MarkupLine("\n[red]Force quit confirmed. Exiting immediately...[/]");
+                        Environment.Exit(1); // Hard exit
+                    }
+                    AnsiConsole.MarkupLine("\n[red]Shutdown already in progress. Press Ctrl+C again to force quit.[/]");
+                    forceQuitRequested = true;
+                    // Reset flag force quit setelah beberapa detik
+                    Task.Delay(3000).ContinueWith(_ => forceQuitRequested = false); 
+                    return; // Jangan lakukan apa-apa lagi jika shutdown sudah berjalan
+                }
+
+                // --- Logika Ctrl+C Pertama ---
+                
+                if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested) // Sedang dalam mode interaktif (Attach)
+                {
+                    AnsiConsole.MarkupLine("\n[yellow]Ctrl+C: Stopping interactive operation...[/]");
+                    _interactiveCts.Cancel(); // Batalkan hanya operasi interaktif
+                    // Tidak perlu force quit flag di sini, biarkan user Ctrl+C lagi jika mau force
+                }
+                else // Berada di Menu Utama atau Loop Menu 1 (atau operasi non-interaktif lainnya)
+                {
+                    AnsiConsole.MarkupLine("\n[red]SHUTDOWN TRIGGERED! Attempting to stop remote codespace...[/]");
+                    AnsiConsole.MarkupLine("[dim](This might take up to 2 minutes. Press Ctrl+C again to force quit.)[/]");
+                    
+                    _isShuttingDown = true; // Tandai bahwa shutdown sedang berlangsung
+                    forceQuitRequested = true; // Aktifkan mode force quit untuk Ctrl+C berikutnya
+                    Task.Delay(3000).ContinueWith(_ => forceQuitRequested = false); // Reset force quit flag
+
+                    // JALANKAN SHUTDOWN SECARA SINCRONOUS (Tunggu di sini)
+                    try
+                    {
+                        // Panggil dan TUNGGU (Wait) sampai selesai atau timeout internalnya tercapai.
+                        // Kita tidak butuh CancellationToken khusus karena kita ingin ini selesai.
+                        PerformGracefulShutdownAsync().Wait(); 
+                    }
+                    catch (Exception shutdownEx)
+                    {
+                        AnsiConsole.MarkupLine($"[red]Error during graceful shutdown attempt: {shutdownEx.Message.Split('\n').FirstOrDefault()}[/]");
+                        // Tetap lanjut untuk cancel loop utama
+                    }
+                    finally
+                    {
+                        // SETELAH mencoba stop, baru batalkan loop utama
+                        if (!_mainCts.IsCancellationRequested)
+                        {
+                             AnsiConsole.MarkupLine("[yellow]Signalling main loop to exit...[/]");
+                            _mainCts.Cancel();
+                        }
+                    }
+                }
+            } // Akhir lock
         };
         // === AKHIR PERBAIKAN ===
         
         try {
             TokenManager.Initialize();
+            // Jalankan loop/menu seperti biasa
             if (args.Length > 0 && args[0].ToLower() == "--run") { await RunOrchestratorLoopAsync(_mainCts.Token); }
             else { await RunInteractiveMenuAsync(_mainCts.Token); }
-        } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Cancelled.[/]"); }
-        catch (Exception ex) { AnsiConsole.MarkupLine("\n[red]FATAL ERROR:[/]"); AnsiConsole.WriteException(ex); }
-        finally {
-            // === PERBAIKAN: Tunggu Graceful Shutdown Selesai ===
-            if (_shutdownTask != null)
-            {
-                AnsiConsole.MarkupLine("\n[dim]Waiting for remote stop command to finish...[/]");
-                try
-                {
-                    // Beri waktu 20 detik agar perintah 'gh codespace stop' (yang timeout 120s)
-                    // setidaknya berhasil *terkirim* sebelum aplikasi exit.
-                    _shutdownTask.Wait(TimeSpan.FromSeconds(20));
-                }
-                catch (Exception ex)
-                {
-                    AnsiConsole.MarkupLine($"[yellow]Shutdown task error (continuing exit): {ex.Message.Split('\n').FirstOrDefault()}[/]");
-                }
-            }
-            // === AKHIR PERBAIKAN ===
-            AnsiConsole.MarkupLine("\n[dim]Shutdown complete.[/]");
+        } 
+        // Tangkap OperationCanceledException HANYA jika dari _mainCts (bukan dari Ctrl+C langsung)
+        catch (OperationCanceledException) when (_mainCts.IsCancellationRequested) 
+        { 
+            AnsiConsole.MarkupLine("\n[yellow]Main loop cancelled.[/]"); 
+        }
+        catch (Exception ex) 
+        { 
+            AnsiConsole.MarkupLine("\n[red]FATAL ERROR:[/]"); 
+            AnsiConsole.WriteException(ex); 
+        }
+        finally 
+        {
+            // Tidak perlu wait lagi di sini karena sudah ditunggu di handler Ctrl+C
+            AnsiConsole.MarkupLine("\n[dim]Application shutdown complete.[/]"); 
         }
     }
 
-    // === PERBAIKAN: Fungsi Baru untuk Graceful Shutdown ===
+    // Fungsi ini sekarang dipanggil dan ditunggu oleh handler Ctrl+C
     private static async Task PerformGracefulShutdownAsync()
     {
+        AnsiConsole.MarkupLine("[dim]Executing graceful shutdown steps...[/]");
         try
         {
             var token = TokenManager.GetCurrentToken();
@@ -107,26 +125,32 @@ internal static class Program
 
             if (!string.IsNullOrEmpty(activeCodespace))
             {
-                AnsiConsole.MarkupLine($"[yellow]Sending STOP command to {activeCodespace}...[/]");
-                // Memanggil fungsi public baru dari CodespaceManager
-                // Perintah ini memiliki timeout internal sendiri (STOP_TIMEOUT_MS)
-                // dan tidak bergantung pada _mainCts yang sudah dibatalkan.
-                await CodespaceManager.StopCodespace(token, activeCodespace);
-                AnsiConsole.MarkupLine($"[green]✓ Stop command sent to {activeCodespace}.[/]");
+                AnsiConsole.MarkupLine($"[yellow]Sending STOP command to codespace '{activeCodespace}'...[/]");
+                
+                // Panggil fungsi public dari CodespaceManager. 
+                // Fungsi ini punya timeout internal 120 detik (STOP_TIMEOUT_MS)
+                await CodespaceManager.StopCodespace(token, activeCodespace); 
+                
+                // Kita tidak tahu pasti apakah stop berhasil atau tidak dari return value,
+                // tapi setidaknya perintah sudah dikirim. Log dari StopCodespace akan muncul.
+                AnsiConsole.MarkupLine($"[green]✓ Stop command attempt finished for '{activeCodespace}'.[/]");
             }
             else
             {
-                AnsiConsole.MarkupLine("[yellow]No active codespace found to stop.[/]");
+                AnsiConsole.MarkupLine("[yellow]No active codespace recorded in state file to stop.[/]");
             }
         }
         catch (Exception ex)
         {
-            // Tangkap error jika terjadi (misal: token invalid)
-            AnsiConsole.MarkupLine($"[red]Error during graceful shutdown: {ex.Message.Split('\n').FirstOrDefault()}[/]");
+            // Tangkap dan log error jika terjadi saat mencoba stop
+            AnsiConsole.MarkupLine($"[red]Exception during codespace stop attempt: {ex.Message.Split('\n').FirstOrDefault()}[/]");
+            // Jangan lempar ulang error, biarkan aplikasi tetap mencoba exit
         }
+        AnsiConsole.MarkupLine("[dim]Graceful shutdown steps finished.[/]");
     }
-    // === AKHIR PERBAIKAN ===
 
+    // --- Sisa fungsi (RunInteractiveMenuAsync, Show..., RunOrchestratorLoopAsync, Pause) tidak berubah ---
+    // --- Salin sisa fungsi dari versi sebelumnya ke sini ---
     private static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested) {
@@ -137,14 +161,14 @@ internal static class Program
             var selection = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("\n[bold white]MAIN MENU[/]")
-                    .PageSize(8)
+                    .PageSize(8) 
                     .WrapAround(true)
                     .AddChoices(new[] {
                         "1. Start/Manage Codespace Runner (Continuous Loop)",
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
-                        "5. Migrasi Kredensial Lokal (Jalankan 1x)",
+                        "5. Migrasi Kredensial Lokal (Jalankan 1x)", 
                         "0. Exit"
                     }));
 
@@ -155,73 +179,94 @@ internal static class Program
                     case "2": await ShowSetupMenuAsync(cancellationToken); break;
                     case "3": await ShowLocalMenuAsync(cancellationToken); break;
                     case "4": await ShowAttachMenuAsync(cancellationToken); break;
-                    case "5": await CredentialMigrator.RunMigration(cancellationToken); Pause("Tekan Enter...", cancellationToken); break;
-                    case "0": AnsiConsole.MarkupLine("Exiting..."); _mainCts.Cancel(); return;
+                    case "5": await CredentialMigrator.RunMigration(cancellationToken); Pause("Tekan Enter...", cancellationToken); break; 
+                    case "0": AnsiConsole.MarkupLine("Exiting..."); _mainCts.Cancel(); return; // Langsung cancel jika pilih exit
                 }
-            } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { AnsiConsole.MarkupLine("\n[yellow]Sub-menu cancelled.[/]"); Pause("Press Enter...", CancellationToken.None); }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { AnsiConsole.MarkupLine("\n[yellow]Main cancelled.[/]"); return; }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); AnsiConsole.WriteException(ex); Pause("Press Enter...", CancellationToken.None); }
+            } 
+            // Tangkap cancel dari sub-menu (misal Ctrl+C di dalam migrasi)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && !_mainCts.IsCancellationRequested) 
+            { AnsiConsole.MarkupLine("\n[yellow]Sub-menu operation cancelled.[/]"); Pause("Press Enter...", CancellationToken.None); }
+            // Tangkap cancel dari handler Ctrl+C utama
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _mainCts.IsCancellationRequested) 
+            { AnsiConsole.MarkupLine("\n[yellow]Main operation cancelled.[/]"); return; } // Keluar dari menu
+            catch (Exception ex) 
+            { AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); AnsiConsole.WriteException(ex); Pause("Press Enter...", CancellationToken.None); }
         }
     }
 
      private static async Task ShowSetupMenuAsync(CancellationToken cancellationToken) {
-        while (!cancellationToken.IsCancellationRequested) {
+        // Cek cancel di awal loop
+        while (!cancellationToken.IsCancellationRequested && !_mainCts.IsCancellationRequested) {
              AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup").Color(Color.Yellow));
              var selection = AnsiConsole.Prompt( new SelectionPrompt<string>()
                      .Title("\n[bold white]TOKEN & COLLABORATOR[/]").PageSize(10).WrapAround(true)
                      .AddChoices(new[] { "1. Validate Tokens", "2. Invite Collaborators", "3. Accept Invitations", "4. Show Status", "0. Back" }));
              var sel = selection[0].ToString(); if (sel == "0") return;
+             
+             // Gunakan linked token untuk operasi di dalam menu
+             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _mainCts.Token);
              try {
                  switch (sel) {
-                     case "1": await CollaboratorManager.ValidateAllTokens(cancellationToken); break;
-                     case "2": await CollaboratorManager.InviteCollaborators(cancellationToken); break;
-                     case "3": await CollaboratorManager.AcceptInvitations(cancellationToken); break;
-                     case "4": await Task.Run(() => TokenManager.ShowStatus(), cancellationToken); break;
+                     case "1": await CollaboratorManager.ValidateAllTokens(linkedCts.Token); break;
+                     case "2": await CollaboratorManager.InviteCollaborators(linkedCts.Token); break;
+                     case "3": await CollaboratorManager.AcceptInvitations(linkedCts.Token); break;
+                     case "4": await Task.Run(() => TokenManager.ShowStatus(), linkedCts.Token); break;
                  }
-                 Pause("Press Enter...", cancellationToken);
-             } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Cancelled.[/]"); return;
+                 Pause("Press Enter...", linkedCts.Token);
+             } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Operation cancelled.[/]"); if (_mainCts.IsCancellationRequested) return; // Keluar jika main cancel
              } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); Pause("Press Enter...", CancellationToken.None); }
         }
      }
 
      private static async Task ShowLocalMenuAsync(CancellationToken cancellationToken) {
-        while (!cancellationToken.IsCancellationRequested) {
+         while (!cancellationToken.IsCancellationRequested && !_mainCts.IsCancellationRequested) {
              AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Proxy").Color(Color.Green));
              var selection = AnsiConsole.Prompt( new SelectionPrompt<string>()
                      .Title("\n[bold white]LOCAL PROXY MGMT[/]").PageSize(10).WrapAround(true)
                      .AddChoices(new[] { "1. Run ProxySync (Interactive)", "0. Back" }));
              var sel = selection[0].ToString(); if (sel == "0") return;
+
+             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _mainCts.Token);
              try {
-                if (sel == "1") await ProxyManager.DeployProxies(cancellationToken);
-                Pause("Press Enter...", cancellationToken);
-             } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Cancelled.[/]"); return;
+                if (sel == "1") await ProxyManager.DeployProxies(linkedCts.Token);
+                Pause("Press Enter...", linkedCts.Token);
+             } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Operation cancelled.[/]"); if (_mainCts.IsCancellationRequested) return;
              } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); Pause("Press Enter...", CancellationToken.None); }
         }
     }
 
      private static async Task ShowAttachMenuAsync(CancellationToken mainCancellationToken) {
-        if (mainCancellationToken.IsCancellationRequested) return;
+        if (mainCancellationToken.IsCancellationRequested || _mainCts.IsCancellationRequested) return;
         AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Attach").Color(Color.Blue));
         var currentToken = TokenManager.GetCurrentToken(); var state = TokenManager.GetState(); var activeCodespace = state.ActiveCodespaceName;
         if (string.IsNullOrEmpty(activeCodespace)) { AnsiConsole.MarkupLine("[red]No active codespace.[/]"); Pause("Press Enter...", mainCancellationToken); return; }
         List<string> sessions;
-        try { sessions = await CodespaceManager.GetTmuxSessions(currentToken, activeCodespace); }
-        catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Cancelled.[/]"); return; }
+        
+        using var linkedCtsFetch = CancellationTokenSource.CreateLinkedTokenSource(mainCancellationToken, _mainCts.Token);
+        try { sessions = await CodespaceManager.GetTmuxSessions(currentToken, activeCodespace); } // GetTmuxSessions tidak butuh CancellationToken
+        catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Fetching sessions cancelled.[/]"); return; } // Seharusnya tidak terjadi
         catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error fetching sessions: {ex.Message.EscapeMarkup()}[/]"); Pause("Press Enter...", CancellationToken.None); return; }
+        
         if (!sessions.Any()) { AnsiConsole.MarkupLine("[yellow]No running bot sessions found.[/]"); Pause("Press Enter...", mainCancellationToken); return; }
         var backOption = "[ (Back) ]"; sessions.Add(backOption);
         var selectedBot = AnsiConsole.Prompt( new SelectionPrompt<string>().Title($"Attach to (in [green]{activeCodespace}[/]):").PageSize(15).WrapAround(true).AddChoices(sessions) );
-        if (selectedBot == backOption) return;
-        AnsiConsole.MarkupLine($"\n[cyan]Attaching to [yellow]{selectedBot}[/].[/]"); AnsiConsole.MarkupLine("[dim](Ctrl+B, D to detach)[/]"); AnsiConsole.MarkupLine("[red]⚠ Ctrl+C TWICE to force quit.[/]");
+        if (selectedBot == backOption || mainCancellationToken.IsCancellationRequested || _mainCts.IsCancellationRequested) return;
+
+        AnsiConsole.MarkupLine($"\n[cyan]Attaching to [yellow]{selectedBot}[/].[/]"); AnsiConsole.MarkupLine("[dim](Ctrl+B, D to detach)[/]"); AnsiConsole.MarkupLine("[red]⚠ Use Ctrl+C carefully inside attach. TWICE might force quit TUI.[/]");
+        
         _interactiveCts = new CancellationTokenSource();
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_interactiveCts.Token, mainCancellationToken);
+        // Gabungkan token interaktif dengan token utama
+        using var linkedCtsAttach = CancellationTokenSource.CreateLinkedTokenSource(_interactiveCts.Token, mainCancellationToken, _mainCts.Token);
         try {
             string tmuxSessionName = "automation_hub_bots"; string escapedBotName = selectedBot.Replace("\"", "\\\"");
-            string args = $"codespace ssh --codespace {activeCodespace} -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
-            await ShellHelper.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCts.Token);
+            // Perintah tmux yang benar untuk attach ATAU create/select window
+            string args = $"codespace ssh --codespace {activeCodespace} -- tmux new-session -A -s {tmuxSessionName} \\; select-window -t \\\"{escapedBotName}\\\"";
+            // Jalankan interaktif
+            await ShellHelper.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCtsAttach.Token);
         } catch (OperationCanceledException) {
-            if (_interactiveCts?.IsCancellationRequested == true) AnsiConsole.MarkupLine("\n[yellow]✓ Detached.[/]");
-            else if (mainCancellationToken.IsCancellationRequested) AnsiConsole.MarkupLine("\n[yellow]Main cancelled.[/]"); else AnsiConsole.MarkupLine("\n[yellow]Attach cancelled.[/]");
+            if (_interactiveCts?.IsCancellationRequested == true) AnsiConsole.MarkupLine("\n[yellow]✓ Detached / Interactive operation cancelled.[/]");
+            else if (mainCancellationToken.IsCancellationRequested || _mainCts.IsCancellationRequested) AnsiConsole.MarkupLine("\n[yellow]Main application cancelled during attach.[/]");
+            else AnsiConsole.MarkupLine("\n[yellow]Attach operation cancelled unexpectedly.[/]");
         } catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]"); Pause("Press Enter...", CancellationToken.None); }
         finally { _interactiveCts?.Dispose(); _interactiveCts = null; }
     }
@@ -231,17 +276,24 @@ internal static class Program
     {
         AnsiConsole.Clear(); AnsiConsole.MarkupLine("[cyan]Loop Started[/]");
         const int MAX_CONSECUTIVE_ERRORS = 3; int consecutiveErrors = 0;
-        while (!cancellationToken.IsCancellationRequested) {
+        // Gunakan token dari _mainCts di sini
+        while (!cancellationToken.IsCancellationRequested) { 
             TokenEntry currentToken = TokenManager.GetCurrentToken(); TokenState currentState = TokenManager.GetState(); string? activeCodespace = currentState.ActiveCodespaceName;
             var username = currentToken.Username ?? "unknown";
             AnsiConsole.MarkupLine($"\n[cyan]Token #{currentState.CurrentIndex + 1}: @{username}[/]");
             try {
-                cancellationToken.ThrowIfCancellationRequested(); AnsiConsole.MarkupLine("Checking billing...");
-                var billingInfo = await BillingManager.GetBillingInfo(currentToken);
-                cancellationToken.ThrowIfCancellationRequested(); BillingManager.DisplayBilling(billingInfo, currentToken.Username ?? "unknown");
+                // Periksa pembatalan SEBELUM operasi network
+                cancellationToken.ThrowIfCancellationRequested(); 
+                AnsiConsole.MarkupLine("Checking billing...");
+                var billingInfo = await BillingManager.GetBillingInfo(currentToken); // GetBillingInfo tidak perlu CancellationToken
+                
+                cancellationToken.ThrowIfCancellationRequested(); 
+                BillingManager.DisplayBilling(billingInfo, currentToken.Username ?? "unknown");
+                
                 if (!billingInfo.IsQuotaOk) {
                     if (billingInfo.Error == BillingManager.PersistentProxyError) {
-                        AnsiConsole.MarkupLine("[magenta]Proxy error. IP Auth...[/]");
+                        AnsiConsole.MarkupLine("[magenta]Proxy error detected during billing. Attempting IP Auth...[/]");
+                        // Gunakan token utama untuk operasi recovery
                         bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync(cancellationToken);
                         cancellationToken.ThrowIfCancellationRequested();
                         if (ipAuthSuccess) {
@@ -251,78 +303,154 @@ internal static class Program
                             if(testSuccess) {
                                 AnsiConsole.MarkupLine("[green]Test OK. Reloading proxies...[/]");
                                 TokenManager.ReloadProxyListAndReassign();
-                                currentToken = TokenManager.GetCurrentToken();
-                                AnsiConsole.MarkupLine("[yellow]Retrying same token...[/]");
-                                await Task.Delay(5000, cancellationToken); continue;
-                            } else { AnsiConsole.MarkupLine("[red]Test failed.[/]"); }
+                                currentToken = TokenManager.GetCurrentToken(); // Ambil token lagi (mungkin proxy berubah)
+                                AnsiConsole.MarkupLine("[yellow]Retrying billing check with potentially new proxy...[/]");
+                                await Task.Delay(5000, cancellationToken); continue; // Ulangi loop
+                            } else { AnsiConsole.MarkupLine("[red]Proxy test failed after IP Auth.[/]"); }
                         } else { AnsiConsole.MarkupLine("[red]IP Auth failed.[/]"); }
                     }
-                    AnsiConsole.MarkupLine("[yellow]Rotating token...[/]");
-                    if (!string.IsNullOrEmpty(activeCodespace)) { try { await CodespaceManager.DeleteCodespace(currentToken, activeCodespace); } catch {} }
+                    // Jika IP Auth gagal atau kuota memang habis
+                    AnsiConsole.MarkupLine("[yellow]Quota low or billing check failed. Rotating token...[/]");
+                    if (!string.IsNullOrEmpty(activeCodespace)) { 
+                        AnsiConsole.MarkupLine($"[dim]Attempting to delete codespace {activeCodespace} before rotating...[/]");
+                        // Jangan pakai CancellationToken di sini, biarkan delete berjalan
+                        try { await CodespaceManager.DeleteCodespace(currentToken, activeCodespace); } catch {} 
+                    }
                     currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState);
                     currentToken = TokenManager.SwitchToNextToken(); activeCodespace = null; consecutiveErrors = 0;
-                    await Task.Delay(5000, cancellationToken); continue;
+                    AnsiConsole.MarkupLine($"[cyan]Switched to token: @{currentToken.Username ?? "unknown"}[/]");
+                    await Task.Delay(5000, cancellationToken); continue; // Ulangi loop dengan token baru
                 }
                 
+                // --- Jika Billing OK ---
                 cancellationToken.ThrowIfCancellationRequested(); 
-                AnsiConsole.MarkupLine("Ensuring codespace...");
+                AnsiConsole.MarkupLine("Ensuring codespace is healthy...");
                 
                 try {
+                    // EnsureHealthyCodespace akan menangani pembatalan internalnya
                     activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken, $"{currentToken.Owner}/{currentToken.Repo}", cancellationToken);
                 } catch (OperationCanceledException) {
-                    AnsiConsole.MarkupLine("\n[yellow]Codespace creation/check cancelled by user.[/]");
-                    throw;
+                    AnsiConsole.MarkupLine("\n[yellow]Codespace operation cancelled by user during ensure process.[/]");
+                    throw; // Biarkan Main menangkap ini
                 } catch (Exception csEx) {
                     AnsiConsole.MarkupLine($"\n[red]━━━ ERROR ENSURING CODESPACE ━━━[/]");
                     AnsiConsole.WriteException(csEx);
                     consecutiveErrors++;
                     AnsiConsole.MarkupLine($"\n[yellow]Consecutive errors: {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS}[/]");
-                    AnsiConsole.MarkupLine("\n[yellow]Press Enter to retry or Ctrl+C to abort...[/]");
-                    try { Console.ReadLine(); } catch { }
-                    continue;
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        AnsiConsole.MarkupLine("\n[yellow]Press Enter to retry or Ctrl+C to abort...[/]");
+                        // Beri kesempatan user cancel sebelum retry
+                        var readTask = Task.Run(() => Console.ReadLine());
+                        var cancelTask = Task.Delay(Timeout.Infinite, cancellationToken);
+                        await Task.WhenAny(readTask, cancelTask);
+                        cancellationToken.ThrowIfCancellationRequested(); // Jika user Ctrl+C saat menunggu Enter
+                    }
+                    continue; // Retry loop
                 }
                 
+                // Jika EnsureHealthyCodespace berhasil atau tidak dibatalkan
                 cancellationToken.ThrowIfCancellationRequested();
-                bool isNew = currentState.ActiveCodespaceName != activeCodespace; currentState.ActiveCodespaceName = activeCodespace; TokenManager.SaveState(currentState);
-                if (isNew) { AnsiConsole.MarkupLine($"[green]✓ New/Recreated CS: {activeCodespace}[/]"); } else { AnsiConsole.MarkupLine($"[green]✓ Reusing CS: {activeCodespace}[/]"); }
-                consecutiveErrors = 0;
-                AnsiConsole.MarkupLine($"\n[yellow]Sleeping {KeepAliveInterval.TotalHours:F1}h...[/]");
-                await Task.Delay(KeepAliveInterval, cancellationToken);
-                cancellationToken.ThrowIfCancellationRequested();
-                currentState = TokenManager.GetState(); activeCodespace = currentState.ActiveCodespaceName;
-                if (string.IsNullOrEmpty(activeCodespace)) { AnsiConsole.MarkupLine("[yellow]No CS after sleep.[/]"); continue; }
-                AnsiConsole.MarkupLine("\n[yellow]Keep-Alive Check...[/]");
+                bool isNew = currentState.ActiveCodespaceName != activeCodespace; 
+                currentState.ActiveCodespaceName = activeCodespace; // Update state
+                TokenManager.SaveState(currentState); // Simpan state BARU
+                if (isNew) { AnsiConsole.MarkupLine($"[green]✓ New/Recreated codespace active: {activeCodespace}[/]"); } 
+                else { AnsiConsole.MarkupLine($"[green]✓ Reusing existing codespace: {activeCodespace}[/]"); }
+                
+                consecutiveErrors = 0; // Reset error count on success
+
+                AnsiConsole.MarkupLine($"\n[yellow]Sleeping for {KeepAliveInterval.TotalHours:F1} hours...[/]");
+                await Task.Delay(KeepAliveInterval, cancellationToken); // Tunggu di sini, bisa di-cancel
+                
+                // --- Setelah Bangun Tidur ---
+                cancellationToken.ThrowIfCancellationRequested(); 
+                // Baca ulang state jika token dirotasi saat tidur (meski tidak mungkin)
+                currentState = TokenManager.GetState(); 
+                activeCodespace = currentState.ActiveCodespaceName; 
+                if (string.IsNullOrEmpty(activeCodespace)) { 
+                    AnsiConsole.MarkupLine("[yellow]No active codespace recorded after sleep. Restarting check cycle.[/]"); 
+                    continue; // Mulai dari awal loop
+                }
+
+                AnsiConsole.MarkupLine("\n[yellow]Performing Keep-Alive check...[/]");
+                // CheckHealthWithRetry akan menangani pembatalan internal
                 if (!await CodespaceManager.CheckHealthWithRetry(currentToken, activeCodespace, cancellationToken)) {
-                    AnsiConsole.MarkupLine("[red]Health FAILED![/]"); currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState); continue;
+                    AnsiConsole.MarkupLine("[red]Keep-alive health check FAILED! Codespace might be broken. Resetting...[/]"); 
+                    currentState.ActiveCodespaceName = null; 
+                    TokenManager.SaveState(currentState); 
+                    continue; // Mulai dari awal loop untuk recreate
                 } else {
-                    AnsiConsole.MarkupLine("[green]Health OK.[/]");
-                    try { AnsiConsole.MarkupLine("[dim]Triggering keep-alive...[/]"); await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace); AnsiConsole.MarkupLine("[green]Triggered.[/]"); }
-                    catch (Exception ex) { AnsiConsole.MarkupLine($"[yellow]Keep-alive trigger failed: {ex.Message.Split('\n').FirstOrDefault()}[/]"); currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState); continue; }
+                    AnsiConsole.MarkupLine("[green]Health check OK.[/]");
+                    try { 
+                        AnsiConsole.MarkupLine("[dim]Triggering keep-alive script...[/]"); 
+                        // TriggerStartupScript tidak perlu CancellationToken
+                        await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace); 
+                        AnsiConsole.MarkupLine("[green]Keep-alive triggered.[/]"); 
+                    }
+                    catch (Exception trigEx) { 
+                        // Jika trigger gagal, anggap codespace bermasalah
+                        AnsiConsole.MarkupLine($"[yellow]Keep-alive trigger failed: {trigEx.Message.Split('\n').FirstOrDefault()}. Resetting...[/]"); 
+                        currentState.ActiveCodespaceName = null; 
+                        TokenManager.SaveState(currentState); 
+                        continue; // Mulai dari awal loop untuk recreate
+                    }
                 }
+                // Jika semua OK, loop akan berulang
             }
-            catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Loop cancelled.[/]"); break; }
+            // Tangkap cancel yang spesifik untuk loop ini
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) 
+            { 
+                AnsiConsole.MarkupLine("\n[yellow]Orchestrator loop cancelled.[/]"); 
+                break; // Keluar dari while loop
+            }
+            // Tangkap error umum dalam satu iterasi loop
             catch (Exception ex) {
-                consecutiveErrors++; AnsiConsole.MarkupLine("\n[red]━━━ LOOP ERROR ━━━[/]"); AnsiConsole.WriteException(ex);
+                consecutiveErrors++; 
+                AnsiConsole.MarkupLine("\n[red]━━━ UNEXPECTED LOOP ERROR ━━━[/]"); 
+                AnsiConsole.WriteException(ex);
+                
+                // Periksa pembatalan SEBELUM logic recovery
+                if (cancellationToken.IsCancellationRequested) break;
+
                 if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                    AnsiConsole.MarkupLine($"\n[red]CRITICAL: {MAX_CONSECUTIVE_ERRORS} errors![/]"); AnsiConsole.MarkupLine("[yellow]Recovery: Rotating token + reset...[/]");
-                    if (!string.IsNullOrEmpty(currentState.ActiveCodespaceName)) { try { await CodespaceManager.DeleteCodespace(currentToken, currentState.ActiveCodespaceName); } catch {} }
-                    currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState); currentToken = TokenManager.SwitchToNextToken(); consecutiveErrors = 0;
-                    AnsiConsole.MarkupLine("[cyan]Waiting 30s...[/]");
-                    try { await Task.Delay(30000, cancellationToken); } catch (OperationCanceledException) { break; }
+                    AnsiConsole.MarkupLine($"\n[red]CRITICAL: Reached {MAX_CONSECUTIVE_ERRORS} consecutive errors![/]"); 
+                    AnsiConsole.MarkupLine("[yellow]Performing emergency recovery: Rotating token + Force deleting codespace...[/]");
+                    if (!string.IsNullOrEmpty(currentState.ActiveCodespaceName)) { 
+                        // Jangan pakai CancellationToken saat delete darurat
+                        try { await CodespaceManager.DeleteCodespace(currentToken, currentState.ActiveCodespaceName); } catch {} 
+                    }
+                    currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState); 
+                    currentToken = TokenManager.SwitchToNextToken(); 
+                    consecutiveErrors = 0; // Reset error count
+                    AnsiConsole.MarkupLine($"[cyan]Recovery: Switched to token @{currentToken.Username ?? "unknown"}. Waiting 30s...[/]");
+                    try { await Task.Delay(30000, cancellationToken); } catch (OperationCanceledException) { break; } // Bisa di-cancel saat delay
                 } else {
-                    AnsiConsole.MarkupLine($"[yellow]Retrying in {ErrorRetryDelay.TotalMinutes} min... (Err {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS})[/]");
-                    try { await Task.Delay(ErrorRetryDelay, cancellationToken); } catch (OperationCanceledException) { break; }
+                    AnsiConsole.MarkupLine($"[yellow]Retrying loop in {ErrorRetryDelay.TotalMinutes} minutes... (Error {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS})[/]");
+                    try { await Task.Delay(ErrorRetryDelay, cancellationToken); } catch (OperationCanceledException) { break; } // Bisa di-cancel saat delay
                 }
             }
-        }
-        AnsiConsole.MarkupLine("\n[cyan]Loop Stopped[/]");
+        } // Akhir while loop
+        AnsiConsole.MarkupLine("\n[cyan]Orchestrator Loop Stopped[/]");
     }
 
      private static void Pause(string message, CancellationToken cancellationToken)
     {
-       if (cancellationToken.IsCancellationRequested) return;
+       // Cek cancel di awal
+       if (cancellationToken.IsCancellationRequested || _mainCts.IsCancellationRequested) return; 
         Console.WriteLine(); AnsiConsole.Markup($"[dim]{message}[/]");
-        try { while (!Console.KeyAvailable) { if (cancellationToken.IsCancellationRequested) return; Thread.Sleep(100); } Console.ReadKey(true); }
-        catch (InvalidOperationException) { AnsiConsole.MarkupLine("[yellow](Auto-continue...)[/]"); Thread.Sleep(2000); }
+        try { 
+            // Loop cek key sambil cek cancel
+            while (!Console.KeyAvailable) { 
+                if (cancellationToken.IsCancellationRequested || _mainCts.IsCancellationRequested) return; 
+                Thread.Sleep(100); 
+            } 
+            Console.ReadKey(true); // Baca key jika ada
+        }
+        // Handle jika console tidak interaktif (misal redirect output)
+        catch (InvalidOperationException) { 
+            AnsiConsole.MarkupLine("[yellow](Non-interactive console detected, auto-continuing...)[/]"); 
+            // Tunggu sebentar saja, bisa di-cancel
+            try { Task.Delay(2000, cancellationToken).Wait(); } catch { } 
+        }
     }
-}
+} // Akhir class Program
