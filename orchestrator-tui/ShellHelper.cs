@@ -9,88 +9,123 @@ namespace Orchestrator;
 public static class ShellHelper
 {
     private const int DEFAULT_TIMEOUT_MS = 120000;
-    private const int MAX_RETRY_ON_PROXY_ERROR = 2;
-    private const int MAX_RETRY_ON_NETWORK_ERROR = 2;
-    private const int MAX_RETRY_ON_TIMEOUT = 1;
+    // === PERBAIKAN: Hapus MAX_RETRY, kita pakai infinite loop ===
+    // private const int MAX_RETRY_ON_PROXY_ERROR = 2;
+    // private const int MAX_RETRY_ON_NETWORK_ERROR = 2;
+    // private const int MAX_RETRY_ON_TIMEOUT = 1;
     private static bool _isAttemptingIpAuth = false;
 
      public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
     {
         var startInfo = CreateStartInfo("gh", args, token);
-        int proxyRetryCount = 0; int networkRetryCount = 0; int timeoutRetryCount = 0;
         Exception? lastException = null;
 
-        while (true) {
-            try {
-                // Token CancellationTokenSource (cts) di sini adalah untuk TIMEOUT
-                var cts = new CancellationTokenSource(timeoutMilliseconds);
-                var (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, cts.Token);
-                
-                if (exitCode != 0) {
-                    stderr = stderr.ToLowerInvariant();
-                    bool isRateLimit = stderr.Contains("api rate limit exceeded") || stderr.Contains("403");
-                    bool isAuthError = stderr.Contains("bad credentials") || stderr.Contains("401");
-                    bool isProxyAuthError = stderr.Contains("407") || stderr.Contains("proxy authentication required");
-                    bool isNetworkError = stderr.Contains("dial tcp") || stderr.Contains("connection refused") || stderr.Contains("i/o timeout") ||
-                                          stderr.Contains("error connecting") || stderr.Contains("wsarecv") || stderr.Contains("forcibly closed") ||
-                                          stderr.Contains("resolve host") || stderr.Contains("tls handshake timeout");
-                    bool isNotFoundError = stderr.Contains("404") || stderr.Contains("could not find");
+        // === PERBAIKAN: Logic Infinite Retry ===
+        while (true) 
+        {
+            // Token CancellationTokenSource (cts) di sini adalah untuk TIMEOUT
+            var cts = new CancellationTokenSource(timeoutMilliseconds);
+            string stdout = "", stderr = "";
+            int exitCode = -1;
 
-                    if (isProxyAuthError && proxyRetryCount < MAX_RETRY_ON_PROXY_ERROR) {
-                        proxyRetryCount++; AnsiConsole.MarkupLine($"[yellow]Proxy Auth (407). Rotating... ({proxyRetryCount}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
-                        if (TokenManager.RotateProxyForToken(token)) { startInfo = CreateStartInfo("gh", args, token); await Task.Delay(2000); continue; }
-                        else { AnsiConsole.MarkupLine("[red]No more proxies.[/]"); }
-                    }
-                    if (isNetworkError && networkRetryCount < MAX_RETRY_ON_NETWORK_ERROR) {
-                        networkRetryCount++; AnsiConsole.MarkupLine($"[yellow]Network error. Retrying... ({networkRetryCount}/{MAX_RETRY_ON_NETWORK_ERROR})[/]");
-                        await Task.Delay(4000); continue;
-                    }
-                    if ((isNetworkError || isProxyAuthError) && !_isAttemptingIpAuth) {
-                        AnsiConsole.MarkupLine("[magenta]Persistent error. Attempting auto IP Auth...[/]");
-                        _isAttemptingIpAuth = true;
-                        bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync();
-                        _isAttemptingIpAuth = false;
-                        if (ipAuthSuccess) {
-                            AnsiConsole.MarkupLine("[magenta]IP Auth OK. Retrying command...[/]");
-                            proxyRetryCount = 0; networkRetryCount = 0; timeoutRetryCount = 0;
-                            startInfo = CreateStartInfo("gh", args, token); await Task.Delay(2000); continue;
-                        } else { AnsiConsole.MarkupLine("[red]Auto IP Auth failed. Failing.[/]"); }
-                    }
-                    if (isRateLimit || isAuthError) { string errorType = isRateLimit ? "RateLimit/403" : "Auth/401"; AnsiConsole.MarkupLine($"[red]GH Error ({errorType}).[/]"); lastException = new Exception($"GH Fail ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break; }
-                    if (isNotFoundError) { AnsiConsole.MarkupLine($"[red]GH Error (NotFound/404).[/]"); lastException = new Exception($"GH Not Found (404): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break; }
-                    lastException = new Exception($"gh command failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break;
+            try 
+            {
+                (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, cts.Token);
+                
+                if (exitCode == 0)
+                {
+                    return stdout; // SUKSES
                 }
-                return stdout;
+
+                // Jika exit code BUKAN 0, kita analisa error di bawah
             }
-            // --- PERBAIKAN BUG ---
-            // Tangkap TaskCanceledException (spesifik untuk timeout) SECARA TERPISAH
-            catch (TaskCanceledException) { 
-                if (timeoutRetryCount < MAX_RETRY_ON_TIMEOUT) { 
-                    timeoutRetryCount++; 
-                    AnsiConsole.MarkupLine($"[yellow]Timeout. Retrying... ({timeoutRetryCount}/{MAX_RETRY_ON_TIMEOUT})[/]"); 
-                    await Task.Delay(5000); 
-                    continue; // Lanjutkan (coba lagi)
-                }
-                // Jika retry habis, JANGAN throw TaskCanceledException,
-                // tapi buat Exception baru agar ditangani sebagai error biasa (csEx)
-                lastException = new Exception($"Command timed out after {MAX_RETRY_ON_TIMEOUT + 1} attempts."); 
-                break; // Keluar loop retry, lempar 'lastException' di bawah
+            // --- Tangkap HANYA command timeout ---
+            catch (TaskCanceledException) 
+            { 
+                AnsiConsole.MarkupLine($"[yellow]Command timeout ({timeoutMilliseconds / 1000}s). Retrying in 15s...[/]");
+                await Task.Delay(15000);
+                continue; // Coba lagi command yang sama
             }
-            catch (OperationCanceledException) {
-                // Ini HANYA akan tertangkap jika token Ctr+C global (yang saat ini tidak di-pass)
-                // atau jika RunProcessAsync salah melempar.
+            catch (OperationCanceledException) 
+            {
                 AnsiConsole.MarkupLine("[yellow]Command cancelled by user (OperationCanceled).[/]");
                 throw; // Lempar ulang agar loop utama (Menu 1) bisa berhenti
             }
-            // --- AKHIR PERBAIKAN ---
-            catch (Exception ex) {
-                lastException = ex;
-                if (networkRetryCount == 0 && proxyRetryCount == 0 && timeoutRetryCount == 0) {
-                    networkRetryCount++; AnsiConsole.MarkupLine($"[yellow]Unexpected fail: {ex.Message.Split('\n').FirstOrDefault()?.Trim()}. Retrying once...[/]"); await Task.Delay(3000); continue;
-                }
-                break;
+            catch (Exception ex) 
+            {
+                // Error tak terduga (misal: proses gagal start)
+                AnsiConsole.MarkupLine($"[red]ShellHelper Exception: {ex.Message.Split('\n').FirstOrDefault()?.Trim()}[/]");
+                AnsiConsole.MarkupLine($"[yellow]Retrying in 30s...[/]");
+                await Task.Delay(30000);
+                continue;
             }
+
+            // --- Analisa Error (jika exitCode != 0) ---
+            stderr = stderr.ToLowerInvariant();
+            bool isRateLimit = stderr.Contains("api rate limit exceeded") || stderr.Contains("403");
+            bool isAuthError = stderr.Contains("bad credentials") || stderr.Contains("401");
+            bool isProxyAuthError = stderr.Contains("407") || stderr.Contains("proxy authentication required");
+            bool isNetworkError = stderr.Contains("dial tcp") || stderr.Contains("connection refused") || stderr.Contains("i/o timeout") ||
+                                  stderr.Contains("error connecting") || stderr.Contains("wsarecv") || stderr.Contains("forcibly closed") ||
+                                  stderr.Contains("resolve host") || stderr.Contains("tls handshake timeout") || stderr.Contains("unreachable network");
+            bool isNotFoundError = stderr.Contains("404") || stderr.Contains("could not find");
+
+            // --- Logic Penanganan Error ---
+
+            // 1. Error Proxy 407: Coba rotasi, lalu IP Auth
+            if (isProxyAuthError) {
+                AnsiConsole.MarkupLine($"[yellow]Proxy Auth (407). Rotating...[/]");
+                if (TokenManager.RotateProxyForToken(token)) {
+                    startInfo = CreateStartInfo("gh", args, token); // Update startInfo dgn proxy baru
+                    await Task.Delay(2000);
+                    continue; // Coba lagi
+                } 
+                
+                // Rotasi gagal (kehabisan proxy), coba IP Auth
+                AnsiConsole.MarkupLine("[yellow]Proxy rotation failed. Attempting IP Auth...[/]");
+                if (!_isAttemptingIpAuth) {
+                    _isAttemptingIpAuth = true;
+                    bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync();
+                    _isAttemptingIpAuth = false;
+                    
+                    if (ipAuthSuccess) {
+                        AnsiConsole.MarkupLine("[magenta]IP Auth OK. Retrying command...[/]");
+                        continue; // Coba lagi
+                    } else {
+                         AnsiConsole.MarkupLine("[red]IP Auth failed. Treating as network error.[/]");
+                         // Biarkan jatuh ke logic isNetworkError di bawah
+                    }
+                }
+            }
+
+            // 2. Network Error (atau 407 yg gagal di-handle): Infinite Retry
+            // Ini adalah catch-all untuk koneksi mati
+            if (isNetworkError || isProxyAuthError) {
+                AnsiConsole.MarkupLine($"[magenta]Network error detected. Retrying in 30s...[/]");
+                AnsiConsole.MarkupLine($"[dim]   (Error: {stderr.Split('\n').FirstOrDefault()?.Trim()})[/]");
+                await Task.Delay(30000);
+                continue; // Coba lagi command yang sama
+            }
+
+            // 3. Error Fatal (Auth/Not Found): Langsung GAGAL
+            if (isRateLimit || isAuthError) { 
+                string errorType = isRateLimit ? "RateLimit/403" : "Auth/401"; 
+                AnsiConsole.MarkupLine($"[red]GH Error ({errorType}).[/]"); 
+                lastException = new Exception($"GH Fail ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); 
+                break; // Keluar dari while(true) -> throw error
+            }
+            if (isNotFoundError) { 
+                AnsiConsole.MarkupLine($"[red]GH Error (NotFound/404).[/]"); 
+                lastException = new Exception($"GH Not Found (404): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); 
+                break; // Keluar dari while(true) -> throw error
+            }
+
+            // 4. Error Lainnya: Anggap fatal
+            lastException = new Exception($"gh command failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); 
+            break; // Keluar dari while(true) -> throw error
         }
+        // === AKHIR PERBAIKAN ===
+
         throw lastException ?? new Exception("GH command failed.");
     }
 
@@ -201,31 +236,25 @@ public static class ShellHelper
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            // --- PERBAIKAN BUG ---
-            // 'using var reg' adalah cara standar untuk menangani timeout
             using var reg = cancellationToken.Register(() => {
                 try {
                     if (!process.HasExited) {
                         process.Kill(true);
-                        // Ini akan menyebabkan tcs.Task melempar TaskCanceledException
                         tcs.TrySetCanceled(cancellationToken); 
                     }
                 } catch { }
             });
 
-            // Hapus blok 'if (cancellationToken.IsCancellationRequested)' yang salah
-            // Cukup await tcs.Task. Jika timeout, 'reg' akan membatalkannya.
             return await tcs.Task;
         }
-        catch (TaskCanceledException) { // <-- Tangkap TaskCanceledException secara eksplisit
+        catch (TaskCanceledException) { 
             try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw; // Lempar ulang sebagai TaskCanceledException
+            throw; 
         }
-        catch (OperationCanceledException) { // <-- Tangkap OperationCanceled (jika terjadi)
+        catch (OperationCanceledException) { 
              try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw; // Lempar ulang sebagai OperationCanceledException
+            throw; 
         }
-        // --- AKHIR PERBAIKAN ---
         catch (Exception ex) {
             try { if (!process.HasExited) process.Kill(true); } catch { }
             return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim() + "\n" + ex.Message, process.HasExited ? process.ExitCode : -1);
