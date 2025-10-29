@@ -15,76 +15,77 @@ public static class ShellHelper
     private static bool _isAttemptingIpAuth = false;
 
      public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
-{
-    var startInfo = CreateStartInfo("gh", args, token);
-    int proxyRetryCount = 0; int networkRetryCount = 0; int timeoutRetryCount = 0;
-    Exception? lastException = null;
+    {
+        var startInfo = CreateStartInfo("gh", args, token);
+        int proxyRetryCount = 0; int networkRetryCount = 0; int timeoutRetryCount = 0;
+        Exception? lastException = null;
 
-    while (true) {
-        try {
-            var cts = new CancellationTokenSource(timeoutMilliseconds);
-            var (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, cts.Token);
-            
-            if (exitCode != 0) {
-                stderr = stderr.ToLowerInvariant();
-                bool isRateLimit = stderr.Contains("api rate limit exceeded") || stderr.Contains("403");
-                bool isAuthError = stderr.Contains("bad credentials") || stderr.Contains("401");
-                bool isProxyAuthError = stderr.Contains("407") || stderr.Contains("proxy authentication required");
-                bool isNetworkError = stderr.Contains("dial tcp") || stderr.Contains("connection refused") || stderr.Contains("i/o timeout") ||
-                                      stderr.Contains("error connecting") || stderr.Contains("wsarecv") || stderr.Contains("forcibly closed") ||
-                                      stderr.Contains("resolve host") || stderr.Contains("tls handshake timeout");
-                bool isNotFoundError = stderr.Contains("404") || stderr.Contains("could not find");
+        while (true) {
+            try {
+                var cts = new CancellationTokenSource(timeoutMilliseconds);
+                var (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, cts.Token);
+                
+                if (exitCode != 0) {
+                    stderr = stderr.ToLowerInvariant();
+                    bool isRateLimit = stderr.Contains("api rate limit exceeded") || stderr.Contains("403");
+                    bool isAuthError = stderr.Contains("bad credentials") || stderr.Contains("401");
+                    bool isProxyAuthError = stderr.Contains("407") || stderr.Contains("proxy authentication required");
+                    bool isNetworkError = stderr.Contains("dial tcp") || stderr.Contains("connection refused") || stderr.Contains("i/o timeout") ||
+                                          stderr.Contains("error connecting") || stderr.Contains("wsarecv") || stderr.Contains("forcibly closed") ||
+                                          stderr.Contains("resolve host") || stderr.Contains("tls handshake timeout");
+                    bool isNotFoundError = stderr.Contains("404") || stderr.Contains("could not find");
 
-                if (isProxyAuthError && proxyRetryCount < MAX_RETRY_ON_PROXY_ERROR) {
-                    proxyRetryCount++; AnsiConsole.MarkupLine($"[yellow]Proxy Auth (407). Rotating... ({proxyRetryCount}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
-                    if (TokenManager.RotateProxyForToken(token)) { startInfo = CreateStartInfo("gh", args, token); await Task.Delay(2000); continue; }
-                    else { AnsiConsole.MarkupLine("[red]No more proxies.[/]"); }
+                    if (isProxyAuthError && proxyRetryCount < MAX_RETRY_ON_PROXY_ERROR) {
+                        proxyRetryCount++; AnsiConsole.MarkupLine($"[yellow]Proxy Auth (407). Rotating... ({proxyRetryCount}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
+                        if (TokenManager.RotateProxyForToken(token)) { startInfo = CreateStartInfo("gh", args, token); await Task.Delay(2000); continue; }
+                        else { AnsiConsole.MarkupLine("[red]No more proxies.[/]"); }
+                    }
+                    if (isNetworkError && networkRetryCount < MAX_RETRY_ON_NETWORK_ERROR) {
+                        networkRetryCount++; AnsiConsole.MarkupLine($"[yellow]Network error. Retrying... ({networkRetryCount}/{MAX_RETRY_ON_NETWORK_ERROR})[/]");
+                        await Task.Delay(4000); continue;
+                    }
+                    if ((isNetworkError || isProxyAuthError) && !_isAttemptingIpAuth) {
+                        AnsiConsole.MarkupLine("[magenta]Persistent error. Attempting auto IP Auth...[/]");
+                        _isAttemptingIpAuth = true;
+                        bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync();
+                        _isAttemptingIpAuth = false;
+                        if (ipAuthSuccess) {
+                            AnsiConsole.MarkupLine("[magenta]IP Auth OK. Retrying command...[/]");
+                            proxyRetryCount = 0; networkRetryCount = 0; timeoutRetryCount = 0;
+                            startInfo = CreateStartInfo("gh", args, token); await Task.Delay(2000); continue;
+                        } else { AnsiConsole.MarkupLine("[red]Auto IP Auth failed. Failing.[/]"); }
+                    }
+                    if (isRateLimit || isAuthError) { string errorType = isRateLimit ? "RateLimit/403" : "Auth/401"; AnsiConsole.MarkupLine($"[red]GH Error ({errorType}).[/]"); lastException = new Exception($"GH Fail ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break; }
+                    if (isNotFoundError) { AnsiConsole.MarkupLine($"[red]GH Error (NotFound/404).[/]"); lastException = new Exception($"GH Not Found (404): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break; }
+                    lastException = new Exception($"gh command failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break;
                 }
-                if (isNetworkError && networkRetryCount < MAX_RETRY_ON_NETWORK_ERROR) {
-                    networkRetryCount++; AnsiConsole.MarkupLine($"[yellow]Network error. Retrying... ({networkRetryCount}/{MAX_RETRY_ON_NETWORK_ERROR})[/]");
-                    await Task.Delay(4000); continue;
-                }
-                if ((isNetworkError || isProxyAuthError) && !_isAttemptingIpAuth) {
-                    AnsiConsole.MarkupLine("[magenta]Persistent error. Attempting auto IP Auth...[/]");
-                    _isAttemptingIpAuth = true;
-                    bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync();
-                    _isAttemptingIpAuth = false;
-                    if (ipAuthSuccess) {
-                        AnsiConsole.MarkupLine("[magenta]IP Auth OK. Retrying command...[/]");
-                        proxyRetryCount = 0; networkRetryCount = 0; timeoutRetryCount = 0;
-                        startInfo = CreateStartInfo("gh", args, token); await Task.Delay(2000); continue;
-                    } else { AnsiConsole.MarkupLine("[red]Auto IP Auth failed. Failing.[/]"); }
-                }
-                if (isRateLimit || isAuthError) { string errorType = isRateLimit ? "RateLimit/403" : "Auth/401"; AnsiConsole.MarkupLine($"[red]GH Error ({errorType}).[/]"); lastException = new Exception($"GH Fail ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break; }
-                if (isNotFoundError) { AnsiConsole.MarkupLine($"[red]GH Error (NotFound/404).[/]"); lastException = new Exception($"GH Not Found (404): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break; }
-                lastException = new Exception($"gh command failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break;
+                return stdout;
             }
-            return stdout;
-        }
-        catch (OperationCanceledException ex) {
-            AnsiConsole.MarkupLine("[yellow]Command cancelled by user.[/]");
-            throw;
-        }
-        catch (TaskCanceledException ex) {
-            if (timeoutRetryCount < MAX_RETRY_ON_TIMEOUT) { timeoutRetryCount++; AnsiConsole.MarkupLine($"[yellow]Timeout. Retrying... ({timeoutRetryCount}/{MAX_RETRY_ON_TIMEOUT})[/]"); await Task.Delay(5000); continue; }
-            lastException = new Exception($"Command timed out after retries.", ex); break;
-        }
-        catch (Exception ex) {
-            lastException = ex;
-            if (networkRetryCount == 0 && proxyRetryCount == 0 && timeoutRetryCount == 0) {
-                networkRetryCount++; AnsiConsole.MarkupLine($"[yellow]Unexpected fail: {ex.Message.Split('\n').FirstOrDefault()?.Trim()}. Retrying once...[/]"); await Task.Delay(3000); continue;
+            catch (TaskCanceledException) {
+                if (timeoutRetryCount < MAX_RETRY_ON_TIMEOUT) { timeoutRetryCount++; AnsiConsole.MarkupLine($"[yellow]Timeout. Retrying... ({timeoutRetryCount}/{MAX_RETRY_ON_TIMEOUT})[/]"); await Task.Delay(5000); continue; }
+                lastException = new Exception($"Command timed out after retries."); break;
             }
-            break;
+            catch (OperationCanceledException) {
+                AnsiConsole.MarkupLine("[yellow]Command cancelled by user.[/]");
+                throw;
+            }
+            catch (Exception ex) {
+                lastException = ex;
+                if (networkRetryCount == 0 && proxyRetryCount == 0 && timeoutRetryCount == 0) {
+                    networkRetryCount++; AnsiConsole.MarkupLine($"[yellow]Unexpected fail: {ex.Message.Split('\n').FirstOrDefault()?.Trim()}. Retrying once...[/]"); await Task.Delay(3000); continue;
+                }
+                break;
+            }
         }
+        throw lastException ?? new Exception("GH command failed.");
     }
-    throw lastException ?? new Exception("GH command failed.");
-}
 
     public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
     {
         var startInfo = CreateStartInfo(command, args, token);
         if (workingDir != null) startInfo.WorkingDirectory = workingDir;
-        var (_, stderr, exitCode) = await RunProcessAsync(startInfo);
+        var cts = new CancellationTokenSource(DEFAULT_TIMEOUT_MS);
+        var (_, stderr, exitCode) = await RunProcessAsync(startInfo, cts.Token);
         if (exitCode != 0) throw new Exception($"Command '{command}' failed (Exit Code: {exitCode}): {stderr}");
     }
 
@@ -169,48 +170,47 @@ public static class ShellHelper
     }
 
     private static async Task<(string stdout, string stderr, int exitCode)> RunProcessAsync(ProcessStartInfo startInfo, CancellationToken cancellationToken)
-{
-    using var process = new Process { StartInfo = startInfo };
-    var stdoutBuilder = new StringBuilder();
-    var stderrBuilder = new StringBuilder();
-    var tcs = new TaskCompletionSource<(string, string, int)>();
+    {
+        using var process = new Process { StartInfo = startInfo };
+        var stdoutBuilder = new StringBuilder();
+        var stderrBuilder = new StringBuilder();
+        var tcs = new TaskCompletionSource<(string, string, int)>();
 
-    process.EnableRaisingEvents = true;
-    process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
-    process.ErrorDataReceived += (s, e) => { if (e.Data != null) stderrBuilder.AppendLine(e.Data); };
-    process.Exited += (s, e) => { Task.Delay(200).ContinueWith(_ => tcs.TrySetResult((stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim(), process.ExitCode))); };
+        process.EnableRaisingEvents = true;
+        process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
+        process.ErrorDataReceived += (s, e) => { if (e.Data != null) stderrBuilder.AppendLine(e.Data); };
+        process.Exited += (s, e) => { Task.Delay(200).ContinueWith(_ => tcs.TrySetResult((stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim(), process.ExitCode))); };
 
-    try {
-        if (!process.Start()) { return ("", $"Failed to start: {startInfo.FileName}", -1); }
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        try {
+            if (!process.Start()) { return ("", $"Failed to start: {startInfo.FileName}", -1); }
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
 
-        using var reg = cancellationToken.Register(() => {
-            try {
-                if (!process.HasExited) {
-                    process.Kill(true);
-                    tcs.TrySetCanceled();
-                }
-            } catch { }
-        });
+            using var reg = cancellationToken.Register(() => {
+                try {
+                    if (!process.HasExited) {
+                        process.Kill(true);
+                        tcs.TrySetCanceled();
+                    }
+                } catch { }
+            });
 
-        var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, cancellationToken));
-        
-        if (cancellationToken.IsCancellationRequested) {
-            try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw new OperationCanceledException();
+            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, cancellationToken));
+            
+            if (cancellationToken.IsCancellationRequested) {
+                try { if (!process.HasExited) process.Kill(true); } catch { }
+                throw new OperationCanceledException();
+            }
+
+            return await tcs.Task;
         }
-
-        return await tcs.Task;
-    }
-    catch (OperationCanceledException) {
-        try { if (!process.HasExited) process.Kill(true); } catch { }
-        throw;
-    }
-    catch (Exception ex) {
-        try { if (!process.HasExited) process.Kill(true); } catch { }
-        return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim() + "\n" + ex.Message, process.HasExited ? process.ExitCode : -1);
+        catch (OperationCanceledException) {
+            try { if (!process.HasExited) process.Kill(true); } catch { }
+            throw;
+        }
+        catch (Exception ex) {
+            try { if (!process.HasExited) process.Kill(true); } catch { }
+            return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim() + "\n" + ex.Message, process.HasExited ? process.ExitCode : -1);
+        }
     }
 }
-
-} // End class ShellHelper
