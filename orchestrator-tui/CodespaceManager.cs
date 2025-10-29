@@ -59,96 +59,89 @@ public static class CodespaceManager
     }
 
     private static async Task UploadCredentialsToCodespace(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
-    {
-        AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials via gh cp ═══[/]");
-        var config = BotConfig.Load();
-        if (config == null || !config.BotsAndTools.Any()) { AnsiConsole.MarkupLine("[yellow]Skip: No bot config.[/]"); return; }
+{
+    AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials via gh cp ═══[/]");
+    var config = BotConfig.Load();
+    if (config == null || !config.BotsAndTools.Any()) { AnsiConsole.MarkupLine("[yellow]Skip: No bot config.[/]"); return; }
 
-        var credentialFilesToUpload = LoadUploadFileList();
-        if (!credentialFilesToUpload.Any()) { AnsiConsole.MarkupLine("[yellow]Skip: No files listed.[/]"); return; }
-        AnsiConsole.MarkupLine($"[dim]   Checking for {credentialFilesToUpload.Count} files per bot...[/]");
+    var credentialFilesToUpload = LoadUploadFileList();
+    if (!credentialFilesToUpload.Any()) { AnsiConsole.MarkupLine("[yellow]Skip: No files listed.[/]"); return; }
+    AnsiConsole.MarkupLine($"[dim]   Checking for {credentialFilesToUpload.Count} files per bot...[/]");
 
-        int botsProcessed = 0; int filesUploaded = 0; int filesSkipped = 0;
-        string remoteWorkspacePath = $"/workspaces/{token.Repo}";
+    int botsProcessed = 0; int filesUploaded = 0; int filesSkipped = 0;
+    string remoteWorkspacePath = $"/workspaces/{token.Repo.ToLowerInvariant()}";
 
-        await AnsiConsole.Progress()
-            .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
-            .StartAsync(async ctx => {
-                var task = ctx.AddTask("[green]Processing bots...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count });
+    await AnsiConsole.Progress()
+        .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
+        .StartAsync(async ctx => {
+            var task = ctx.AddTask("[green]Processing bots...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count });
 
-                foreach (var bot in config.BotsAndTools)
+            foreach (var bot in config.BotsAndTools)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                task.Description = $"[green]Checking:[/] {bot.Name}";
+                if (!bot.Enabled) { task.Increment(1); continue; }
+
+                string localBotDir = BotConfig.GetLocalBotPath(bot.Path);
+                if (!Directory.Exists(localBotDir)) { filesSkipped++; task.Increment(1); continue; }
+
+                string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/').ToLowerInvariant();
+                bool botProcessed = false;
+                bool remoteDirEnsured = false;
+
+                foreach (var credFileName in credentialFilesToUpload)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    task.Description = $"[green]Checking:[/] {bot.Name}";
-                    if (!bot.Enabled) { task.Increment(1); continue; }
+                    string localFilePath = Path.Combine(localBotDir, credFileName);
 
-                    string localBotDir = BotConfig.GetLocalBotPath(bot.Path);
-                    if (!Directory.Exists(localBotDir)) { filesSkipped++; task.Increment(1); continue; }
-
-                    string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/');
-                    bool botProcessed = false;
-                    bool remoteDirEnsured = false;
-
-                    foreach (var credFileName in credentialFilesToUpload)
+                    if (File.Exists(localFilePath))
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        string localFilePath = Path.Combine(localBotDir, credFileName);
-
-                        if (File.Exists(localFilePath))
+                        if (!remoteDirEnsured)
                         {
-                            if (!remoteDirEnsured)
-                            {
-                                task.Description = $"[grey]Ensuring remote dir:[/] {bot.Name}";
-                                try {
-                                    string mkdirCmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}'";
-                                    string mkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- {mkdirCmd}";
-                                    await ShellHelper.RunGhCommand(token, mkdirArgs, SSH_COMMAND_TIMEOUT_MS);
-                                    remoteDirEnsured = true;
-                                } catch (OperationCanceledException) { throw;
-                                } catch (Exception mkdirEx) {
-                                    AnsiConsole.MarkupLine($"[red]\n   ✗ Failed create dir {bot.Name}: {mkdirEx.Message.Split('\n').FirstOrDefault()}. Skip bot.[/]");
-                                    filesSkipped += credentialFilesToUpload.Count(cf => File.Exists(Path.Combine(localBotDir, cf)));
-                                    botProcessed = true;
-                                    goto NextBot;
-                                }
-                            }
-
-                            botProcessed = true;
-                            string remoteFilePath = $"{remoteBotDir}/{credFileName}";
-                            task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
-                            string localAbsPath = Path.GetFullPath(localFilePath);
-
-                            // === PERBAIKAN: Format `gh cp` Args untuk ShellHelper ===
-                            // ShellHelper akan menangani quoting /c "..." atau -c "..."
-                            // Kita hanya perlu memastikan argumen gh benar: cp --codespace <name> <local> remote:<remote>
-                            string remoteTargetArg = $"remote:{remoteFilePath}"; // Path remote diawali "remote:"
-                            // Argumen dipisah spasi, ShellHelper akan quote jika perlu
-                            string cpArgs = $"codespace cp --codespace \"{codespaceName}\" \"{localAbsPath}\" \"{remoteTargetArg}\"";
-                            // === AKHIR PERBAIKAN ===
-
+                            task.Description = $"[grey]Ensuring remote dir:[/] {bot.Name}";
                             try {
-                                await ShellHelper.RunGhCommand(token, cpArgs, SSH_COMMAND_TIMEOUT_MS * 2);
-                                filesUploaded++;
-                            } catch (OperationCanceledException) {
-                                 AnsiConsole.MarkupLine($"[yellow]\n   Upload cancelled.[/]"); filesSkipped++; throw;
-                            } catch (Exception ex) {
-                                // Tampilkan path yang gagal biar lebih jelas
-                                AnsiConsole.MarkupLine($"[red]\n   ✗ Failed upload '{localAbsPath}' to '{remoteTargetArg}': {ex.Message.Split('\n').FirstOrDefault()}[/]");
-                                filesSkipped++;
+                                string mkdirCmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}'";
+                                string mkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- {mkdirCmd}";
+                                await ShellHelper.RunGhCommand(token, mkdirArgs, 30000);
+                                remoteDirEnsured = true;
+                            } catch (OperationCanceledException) { throw;
+                            } catch (Exception mkdirEx) {
+                                AnsiConsole.MarkupLine($"[red]\n   ✗ Failed create dir {bot.Name}: {mkdirEx.Message.Split('\n').FirstOrDefault()}. Skip bot.[/]");
+                                filesSkipped += credentialFilesToUpload.Count(cf => File.Exists(Path.Combine(localBotDir, cf)));
+                                botProcessed = true;
+                                goto NextBot;
                             }
-                            await Task.Delay(150, cancellationToken);
                         }
+
+                        botProcessed = true;
+                        string remoteFilePath = $"{remoteBotDir}/{credFileName}";
+                        task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
+                        string localAbsPath = Path.GetFullPath(localFilePath);
+
+                        string remoteTargetArg = $"remote:{remoteFilePath}";
+                        string cpArgs = $"codespace cp --codespace \"{codespaceName}\" \"{localAbsPath}\" \"{remoteTargetArg}\"";
+
+                        try {
+                            await ShellHelper.RunGhCommand(token, cpArgs, 120000);
+                            filesUploaded++;
+                        } catch (OperationCanceledException) {
+                             AnsiConsole.MarkupLine($"[yellow]\n   Upload cancelled.[/]"); filesSkipped++; throw;
+                        } catch (Exception ex) {
+                            AnsiConsole.MarkupLine($"[red]\n   ✗ Failed upload '{localAbsPath}' to '{remoteTargetArg}': {ex.Message.Split('\n').FirstOrDefault()}[/]");
+                            filesSkipped++;
+                        }
+                        await Task.Delay(150, cancellationToken);
                     }
-                NextBot:
-                    if (botProcessed) { botsProcessed++; }
-                    task.Increment(1);
                 }
-            });
+            NextBot:
+                if (botProcessed) { botsProcessed++; }
+                task.Increment(1);
+            }
+        });
 
-        AnsiConsole.MarkupLine($"[green]✓ Upload finished.[/]");
-        AnsiConsole.MarkupLine($"[dim]   Bots: {botsProcessed}/{config.BotsAndTools.Count} | Files: {filesUploaded} uploaded | Skipped/Failed: {filesSkipped}[/]");
-    }
-
+    AnsiConsole.MarkupLine($"[green]✓ Upload finished.[/]");
+    AnsiConsole.MarkupLine($"[dim]   Bots: {botsProcessed}/{config.BotsAndTools.Count} | Files: {filesUploaded} uploaded | Skipped/Failed: {filesSkipped}[/]");
+}
 
     public static async Task<string> EnsureHealthyCodespace(TokenEntry token, string repoFullName, CancellationToken cancellationToken)
     {
