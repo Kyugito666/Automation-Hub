@@ -362,7 +362,7 @@ def get_webshare_download_url(session: requests.Session, plan_id: str):
         ui.console.print(f"   -> [bold red]ERROR tak terduga saat mencari URL: {e}[/bold red]")
         return None
 
-# Fungsi download_proxies_from_api (sudah dimodifikasi)
+# --- PERBAIKAN PADA FUNGSI 'download_proxies_from_api' ---
 def download_proxies_from_api(is_auto=False, get_urls_only=False):
     ui.print_header()
     if get_urls_only:
@@ -378,50 +378,60 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
     newly_saved_count = 0
     discovery_failed = False # Flag jika discovery gagal
 
-    ui.console.print(f"\n[bold]Mencoba discover URL baru dari '{os.path.basename(WEBSHARE_APIKEYS_FILE)}'...[/bold]")
-    api_keys = load_webshare_apikeys(WEBSHARE_APIKEYS_FILE)
-    if not api_keys:
-        ui.console.print(f"[yellow]'{os.path.basename(WEBSHARE_APIKEYS_FILE)}' kosong atau tidak ditemukan.[/yellow]")
-    else:
-        ui.console.print(f"Ditemukan {len(api_keys)} API Key untuk dicek.")
-        processed_keys_count = 0
-        for api_key in api_keys:
-            account_email_info = "[grey]Mencoba mendapatkan email...[/]"
-            try:
-                with requests.Session() as email_session:
-                    email_session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
-                    account_email_info = get_account_email(email_session)
-            except Exception: account_email_info = "[bold red]Error[/]"
-            ui.console.print(f"\n--- Mengecek Key: [...{api_key[-6:]}] (Email: {account_email_info}) ---")
-
-            with requests.Session() as session:
-                session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
+    # === PERBAIKAN LOGIKA: Hanya jalankan blok ini jika 'get_urls_only' (Menu A) atau 'is_auto' (Full Auto) ===
+    if get_urls_only or is_auto:
+        ui.console.print(f"\n[bold]Mencoba discover URL baru dari '{os.path.basename(WEBSHARE_APIKEYS_FILE)}'...[/bold]")
+        api_keys = load_webshare_apikeys(WEBSHARE_APIKEYS_FILE)
+        if not api_keys:
+            ui.console.print(f"[yellow]'{os.path.basename(WEBSHARE_APIKEYS_FILE)}' kosong atau tidak ditemukan.[/yellow]")
+            if is_auto: # Jika auto mode dan gagal, ini masalah
+                 discovery_failed = True
+        else:
+            ui.console.print(f"Ditemukan {len(api_keys)} API Key untuk dicek.")
+            processed_keys_count = 0
+            for api_key in api_keys:
+                account_email_info = "[grey]Mencoba mendapatkan email...[/]"
                 try:
-                    plan_id = get_target_plan_id(session)
-                    if not plan_id:
-                        ui.console.print(f"   -> [bold red]Gagal mendapatkan Plan ID. Akun ini dilewati.[/bold red]")
-                        discovery_failed = True # Tandai gagal jika Plan ID tidak ketemu
-                        continue
-                    download_url = get_webshare_download_url(session, plan_id)
-                    if download_url:
-                        discovered_urls_from_keys[api_key] = download_url
-                        if download_url not in urls_to_process:
-                             urls_to_process.add(download_url)
-                             if save_discovered_url(APILIST_SOURCE_FILE, download_url):
-                                 newly_saved_count += 1
-                    else:
-                        ui.console.print("   -> [yellow]Gagal mendapatkan URL download untuk key ini. Dilewati.[/yellow]")
-                        discovery_failed = True # Tandai gagal jika URL tidak ketemu
-                except Exception as e:
-                    ui.console.print(f"   -> [bold red]!!! TERJADI ERROR saat discover URL: {e}[/bold red]")
-                    discovery_failed = True # Tandai gagal jika ada exception
-            processed_keys_count += 1
-            if processed_keys_count < len(api_keys):
-                 time.sleep(1)
+                    with requests.Session() as email_session:
+                        email_session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
+                        account_email_info = get_account_email(email_session)
+                except Exception: account_email_info = "[bold red]Error[/]"
+                ui.console.print(f"\n--- Mengecek Key: [...{api_key[-6:]}] (Email: {account_email_info}) ---")
 
-        ui.console.print(f"\nSelesai discover URL dari API keys. {len(discovered_urls_from_keys)} URL ditemukan.")
-        if newly_saved_count > 0:
-             ui.console.print(f"[green]{newly_saved_count} URL baru disimpan ke '{os.path.basename(APILIST_SOURCE_FILE)}'.[/green]")
+                with requests.Session() as session:
+                    session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
+                    try:
+                        plan_id = get_target_plan_id(session)
+                        if not plan_id:
+                            ui.console.print(f"   -> [bold red]Gagal mendapatkan Plan ID. Akun ini dilewati.[/bold red]")
+                            discovery_failed = True # Tandai gagal jika Plan ID tidak ketemu
+                            continue
+                        download_url = get_webshare_download_url(session, plan_id)
+                        if download_url:
+                            discovered_urls_from_keys[api_key] = download_url
+                            if download_url not in urls_to_process:
+                                 urls_to_process.add(download_url)
+                                 if save_discovered_url(APILIST_SOURCE_FILE, download_url):
+                                     newly_saved_count += 1
+                        else:
+                            ui.console.print("   -> [yellow]Gagal mendapatkan URL download untuk key ini. Dilewati.[/yellow]")
+                            discovery_failed = True # Tandai gagal jika URL tidak ketemu
+                    except Exception as e:
+                        ui.console.print(f"   -> [bold red]!!! TERJADI ERROR saat discover URL: {e}[/bold red]")
+                        discovery_failed = True # Tandai gagal jika ada exception
+                processed_keys_count += 1
+                if processed_keys_count < len(api_keys):
+                     time.sleep(1)
+
+            ui.console.print(f"\nSelesai discover URL dari API keys. {len(discovered_urls_from_keys)} URL ditemukan.")
+            if newly_saved_count > 0:
+                 ui.console.print(f"[green]{newly_saved_count} URL baru disimpan ke '{os.path.basename(APILIST_SOURCE_FILE)}'.[/green]")
+    
+    # Ini adalah blok untuk Menu 'b' (Download) saat dijalankan manual
+    elif not get_urls_only and not is_auto:
+        ui.console.print(f"\n[dim]Mode Unduh: Melewati discovery API Key.[/dim]")
+        ui.console.print(f"[dim]Hanya akan mengunduh dari URL di '{os.path.basename(APILIST_SOURCE_FILE)}'.[/dim]")
+    # === AKHIR PERBAIKAN ===
 
     if get_urls_only:
         ui.console.print("\n-------------------------------------------")
@@ -465,6 +475,7 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
     except IOError as e:
         ui.console.print(f"\n[bold red]Gagal menulis hasil ke '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
         return False
+# --- AKHIR PERBAIKAN FUNGSI ---
 
 # Fungsi convert_proxylist_to_http (sudah benar)
 def convert_proxylist_to_http():
