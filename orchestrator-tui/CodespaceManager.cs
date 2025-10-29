@@ -44,217 +44,243 @@ public static class CodespaceManager
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory!, "..", "..", "..", ".."));
     }
 
+    private static List<string> LoadUploadFileList()
+    {
+        if (!File.Exists(UploadFilesListPath)) {
+            AnsiConsole.MarkupLine($"[yellow]Warn: '{UploadFilesListPath}' not found. Using defaults.[/]");
+            return new List<string> { "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", "config.json", "data.txt", "query.txt", "wallet.txt", "settings.yaml", "mnemonics.txt" };
+        }
+        try {
+            return File.ReadAllLines(UploadFilesListPath).Select(l => l.Trim()).Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#")).ToList();
+        } catch (Exception ex) {
+            AnsiConsole.MarkupLine($"[red]Error reading '{UploadFilesListPath}': {ex.Message.EscapeMarkup()}. Using defaults.[/]");
+            return new List<string> { "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", "config.json", "data.txt", "query.txt", "wallet.txt", "settings.yaml", "mnemonics.txt" };
+        }
+    }
+
+    private static List<string> GetFilesToUploadForBot(string localBotDir, List<string> allPossibleFiles)
+    {
+        var existingFiles = new List<string>();
+        
+        foreach (var fileName in allPossibleFiles)
+        {
+            var filePath = Path.Combine(localBotDir, fileName);
+            if (File.Exists(filePath))
+            {
+                existingFiles.Add(fileName);
+            }
+        }
+        
+        return existingFiles;
+    }
+
     private static async Task UploadCredentialsToCodespace(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
-{
-    AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials via gh cp ═══[/]");
-    var config = BotConfig.Load();
-    if (config == null || !config.BotsAndTools.Any()) { AnsiConsole.MarkupLine("[yellow]Skip: No bot config.[/]"); return; }
+    {
+        AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials via gh cp ═══[/]");
+        var config = BotConfig.Load();
+        if (config == null || !config.BotsAndTools.Any()) { AnsiConsole.MarkupLine("[yellow]Skip: No bot config.[/]"); return; }
 
-    var allPossibleFiles = LoadUploadFileList();
-    if (!allPossibleFiles.Any()) { AnsiConsole.MarkupLine("[yellow]Skip: No files listed.[/]"); return; }
+        var allPossibleFiles = LoadUploadFileList();
+        if (!allPossibleFiles.Any()) { AnsiConsole.MarkupLine("[yellow]Skip: No files listed.[/]"); return; }
 
-    int botsProcessed = 0; int filesUploaded = 0; int filesSkipped = 0; int botsSkipped = 0;
-    string remoteWorkspacePath = $"/workspaces/{token.Repo.ToLowerInvariant()}";
+        int botsProcessed = 0; int filesUploaded = 0; int filesSkipped = 0; int botsSkipped = 0;
+        string remoteWorkspacePath = $"/workspaces/{token.Repo.ToLowerInvariant()}";
 
-    AnsiConsole.MarkupLine($"[dim]Remote workspace: {remoteWorkspacePath}[/]");
-    AnsiConsole.MarkupLine($"[dim]Scanning {allPossibleFiles.Count} possible credential files per bot...[/]");
+        AnsiConsole.MarkupLine($"[dim]Remote workspace: {remoteWorkspacePath}[/]");
+        AnsiConsole.MarkupLine($"[dim]Scanning {allPossibleFiles.Count} possible credential files per bot...[/]");
 
-    try {
-        await AnsiConsole.Progress()
-            .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
-            .StartAsync(async ctx => {
-                var task = ctx.AddTask("[green]Processing bots...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count });
+        try {
+            await AnsiConsole.Progress()
+                .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
+                .StartAsync(async ctx => {
+                    var task = ctx.AddTask("[green]Processing bots...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count });
 
-                foreach (var bot in config.BotsAndTools)
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        AnsiConsole.MarkupLine("\n[yellow]━━━ Upload cancelled by user ━━━[/]");
-                        cancellationToken.ThrowIfCancellationRequested();
-                    }
-
-                    task.Description = $"[green]Checking:[/] {bot.Name}";
-                    if (!bot.Enabled) { task.Increment(1); continue; }
-
-                    string localBotDir = BotConfig.GetLocalBotPath(bot.Path);
-                    if (!Directory.Exists(localBotDir))
-                    {
-                        AnsiConsole.MarkupLine($"[yellow]SKIP {bot.Name}: Local dir not found ({localBotDir})[/]");
-                        botsSkipped++;
-                        task.Increment(1);
-                        continue;
-                    }
-
-                    var filesToUpload = GetFilesToUploadForBot(localBotDir, allPossibleFiles);
-                    if (!filesToUpload.Any())
-                    {
-                        AnsiConsole.MarkupLine($"[dim]SKIP {bot.Name}: No credential files[/]");
-                        botsSkipped++;
-                        task.Increment(1);
-                        continue;
-                    }
-
-                    string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/').ToLowerInvariant();
-                    
-                    task.Description = $"[grey]Creating dir:[/] {bot.Name}";
-                    AnsiConsole.MarkupLine($"[dim]  Creating: {remoteBotDir}[/]");
-                    
-                    try {
-                        string mkdirCmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}'";
-                        string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
-                        await ShellHelper.RunGhCommand(token, sshArgs, 30000);
-                        AnsiConsole.MarkupLine($"[green]  ✓ Dir ready: {bot.Name}[/]");
-                    }
-                    catch (OperationCanceledException) {
-                        AnsiConsole.MarkupLine("\n[yellow]━━━ MKDIR CANCELLED ━━━[/]");
-                        AnsiConsole.MarkupLine($"[yellow]Last bot: {bot.Name}[/]");
-                        AnsiConsole.MarkupLine($"[yellow]Progress: {botsProcessed}/{config.BotsAndTools.Count} bots | {filesUploaded} files[/]");
-                        throw;
-                    }
-                    catch (Exception mkdirEx) {
-                        AnsiConsole.MarkupLine($"[red]  ✗ Failed mkdir {bot.Name}: {mkdirEx.Message.Split('\n').FirstOrDefault()}[/]");
-                        AnsiConsole.MarkupLine($"[red]     Command was: mkdir -p '{remoteBotDir}'[/]");
-                        filesSkipped += filesToUpload.Count;
-                        botsSkipped++;
-                        task.Increment(1);
-                        continue;
-                    }
-
-                    foreach (var credFileName in filesToUpload)
+                    foreach (var bot in config.BotsAndTools)
                     {
                         if (cancellationToken.IsCancellationRequested)
                         {
-                            AnsiConsole.MarkupLine("\n[yellow]━━━ Upload cancelled during file upload ━━━[/]");
-                            throw new OperationCanceledException();
+                            AnsiConsole.MarkupLine("\n[yellow]━━━ Upload cancelled by user ━━━[/]");
+                            cancellationToken.ThrowIfCancellationRequested();
                         }
 
-                        string localFilePath = Path.Combine(localBotDir, credFileName);
-                        string remoteFilePath = $"{remoteBotDir}/{credFileName}";
-                        task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
-                        string localAbsPath = Path.GetFullPath(localFilePath);
+                        task.Description = $"[green]Checking:[/] {bot.Name}";
+                        if (!bot.Enabled) { task.Increment(1); continue; }
 
-                        string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteFilePath}\"";
+                        string localBotDir = BotConfig.GetLocalBotPath(bot.Path);
+                        if (!Directory.Exists(localBotDir))
+                        {
+                            AnsiConsole.MarkupLine($"[yellow]SKIP {bot.Name}: Local dir not found ({localBotDir})[/]");
+                            botsSkipped++;
+                            task.Increment(1);
+                            continue;
+                        }
 
+                        var filesToUpload = GetFilesToUploadForBot(localBotDir, allPossibleFiles);
+                        if (!filesToUpload.Any())
+                        {
+                            AnsiConsole.MarkupLine($"[dim]SKIP {bot.Name}: No credential files[/]");
+                            botsSkipped++;
+                            task.Increment(1);
+                            continue;
+                        }
+
+                        string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/').ToLowerInvariant();
+                        
+                        task.Description = $"[grey]Creating dir:[/] {bot.Name}";
+                        AnsiConsole.MarkupLine($"[dim]  Creating: {remoteBotDir}[/]");
+                        
                         try {
-                            await ShellHelper.RunGhCommand(token, cpArgs, 120000);
-                            filesUploaded++;
+                            string mkdirCmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}'";
+                            string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
+                            await ShellHelper.RunGhCommand(token, sshArgs, 30000);
+                            AnsiConsole.MarkupLine($"[green]  ✓ Dir ready: {bot.Name}[/]");
                         }
                         catch (OperationCanceledException) {
-                            AnsiConsole.MarkupLine($"\n[yellow]━━━ Upload cancelled at {credFileName} ━━━[/]");
-                            AnsiConsole.MarkupLine($"[yellow]Progress: {botsProcessed}/{config.BotsAndTools.Count} bots | {filesUploaded} files uploaded[/]");
-                            filesSkipped++;
+                            AnsiConsole.MarkupLine("\n[yellow]━━━ MKDIR CANCELLED ━━━[/]");
+                            AnsiConsole.MarkupLine($"[yellow]Last bot: {bot.Name}[/]");
+                            AnsiConsole.MarkupLine($"[yellow]Progress: {botsProcessed}/{config.BotsAndTools.Count} bots | {filesUploaded} files[/]");
                             throw;
                         }
-                        catch (Exception ex) {
-                            AnsiConsole.MarkupLine($"[red]  ✗ Failed: {bot.Name}/{credFileName}[/]");
-                            AnsiConsole.MarkupLine($"[red]     Error: {ex.Message.Split('\n').FirstOrDefault()}[/]");
-                            AnsiConsole.MarkupLine($"[red]     Local: {localAbsPath}[/]");
-                            AnsiConsole.MarkupLine($"[red]     Remote: {remoteFilePath}[/]");
-                            filesSkipped++;
+                        catch (Exception mkdirEx) {
+                            AnsiConsole.MarkupLine($"[red]  ✗ Failed mkdir {bot.Name}: {mkdirEx.Message.Split('\n').FirstOrDefault()}[/]");
+                            AnsiConsole.MarkupLine($"[red]     Command was: mkdir -p '{remoteBotDir}'[/]");
+                            filesSkipped += filesToUpload.Count;
+                            botsSkipped++;
+                            task.Increment(1);
+                            continue;
                         }
 
-                        try {
-                            await Task.Delay(200, cancellationToken);
-                        } catch (OperationCanceledException) {
-                            AnsiConsole.MarkupLine("\n[yellow]━━━ Delay cancelled ━━━[/]");
-                            throw;
+                        foreach (var credFileName in filesToUpload)
+                        {
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                AnsiConsole.MarkupLine("\n[yellow]━━━ Upload cancelled during file upload ━━━[/]");
+                                throw new OperationCanceledException();
+                            }
+
+                            string localFilePath = Path.Combine(localBotDir, credFileName);
+                            string remoteFilePath = $"{remoteBotDir}/{credFileName}";
+                            task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
+                            string localAbsPath = Path.GetFullPath(localFilePath);
+
+                            string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteFilePath}\"";
+
+                            try {
+                                await ShellHelper.RunGhCommand(token, cpArgs, 120000);
+                                filesUploaded++;
+                            }
+                            catch (OperationCanceledException) {
+                                AnsiConsole.MarkupLine($"\n[yellow]━━━ Upload cancelled at {credFileName} ━━━[/]");
+                                AnsiConsole.MarkupLine($"[yellow]Progress: {botsProcessed}/{config.BotsAndTools.Count} bots | {filesUploaded} files uploaded[/]");
+                                filesSkipped++;
+                                throw;
+                            }
+                            catch (Exception ex) {
+                                AnsiConsole.MarkupLine($"[red]  ✗ Failed: {bot.Name}/{credFileName}[/]");
+                                AnsiConsole.MarkupLine($"[red]     Error: {ex.Message.Split('\n').FirstOrDefault()}[/]");
+                                AnsiConsole.MarkupLine($"[red]     Local: {localAbsPath}[/]");
+                                AnsiConsole.MarkupLine($"[red]     Remote: {remoteFilePath}[/]");
+                                filesSkipped++;
+                            }
+
+                            try {
+                                await Task.Delay(200, cancellationToken);
+                            } catch (OperationCanceledException) {
+                                AnsiConsole.MarkupLine("\n[yellow]━━━ Delay cancelled ━━━[/]");
+                                throw;
+                            }
                         }
+
+                        botsProcessed++;
+                        task.Increment(1);
                     }
-
-                    botsProcessed++;
-                    task.Increment(1);
-                }
-            });
-    } catch (OperationCanceledException) {
-        AnsiConsole.MarkupLine("\n[yellow]━━━ UPLOAD CANCELLED BY USER ━━━[/]");
-        AnsiConsole.MarkupLine($"[yellow]Final: {botsProcessed}/{config.BotsAndTools.Count} bots | {filesUploaded} uploaded | {filesSkipped} failed[/]");
-        throw;
-    } catch (Exception uploadEx) {
-        AnsiConsole.MarkupLine("\n[red]━━━ UNEXPECTED UPLOAD ERROR ━━━[/]");
-        AnsiConsole.WriteException(uploadEx);
-        AnsiConsole.MarkupLine($"[yellow]Partial: {botsProcessed} bots | {filesUploaded} uploaded | {filesSkipped} failed[/]");
-        throw;
-    }
-
-    AnsiConsole.MarkupLine($"\n[green]✓ Upload finished.[/]");
-    AnsiConsole.MarkupLine($"[dim]   Bots: {botsProcessed} processed | {botsSkipped} skipped | Files: {filesUploaded} uploaded | {filesSkipped} failed[/]");
-}
-
-private static List<string> GetFilesToUploadForBot(string localBotDir, List<string> allPossibleFiles)
-{
-    var existingFiles = new List<string>();
-    
-    foreach (var fileName in allPossibleFiles)
-    {
-        var filePath = Path.Combine(localBotDir, fileName);
-        if (File.Exists(filePath))
-        {
-            existingFiles.Add(fileName);
+                });
+        } catch (OperationCanceledException) {
+            AnsiConsole.MarkupLine("\n[yellow]━━━ UPLOAD CANCELLED BY USER ━━━[/]");
+            AnsiConsole.MarkupLine($"[yellow]Final: {botsProcessed}/{config.BotsAndTools.Count} bots | {filesUploaded} uploaded | {filesSkipped} failed[/]");
+            throw;
+        } catch (Exception uploadEx) {
+            AnsiConsole.MarkupLine("\n[red]━━━ UNEXPECTED UPLOAD ERROR ━━━[/]");
+            AnsiConsole.WriteException(uploadEx);
+            AnsiConsole.MarkupLine($"[yellow]Partial: {botsProcessed} bots | {filesUploaded} uploaded | {filesSkipped} failed[/]");
+            throw;
         }
+
+        AnsiConsole.MarkupLine($"\n[green]✓ Upload finished.[/]");
+        AnsiConsole.MarkupLine($"[dim]   Bots: {botsProcessed} processed | {botsSkipped} skipped | Files: {filesUploaded} uploaded | {filesSkipped} failed[/]");
     }
-    
-    return existingFiles;
-}
+
 
     public static async Task<string> EnsureHealthyCodespace(TokenEntry token, string repoFullName, CancellationToken cancellationToken)
     {
         AnsiConsole.MarkupLine("\n[cyan]Ensuring Codespace...[/]");
         CodespaceInfo? codespace = null; Stopwatch stopwatch = Stopwatch.StartNew();
 
-        AnsiConsole.Markup("[dim]Checking repo commit... [/]");
-        var repoLastCommit = await GetRepoLastCommitDate(token); cancellationToken.ThrowIfCancellationRequested();
-        if (repoLastCommit.HasValue) AnsiConsole.MarkupLine($"[green]OK[/]"); else AnsiConsole.MarkupLine("[yellow]Fetch failed[/]");
+        try {
+            AnsiConsole.Markup("[dim]Checking repo commit... [/]");
+            var repoLastCommit = await GetRepoLastCommitDate(token); cancellationToken.ThrowIfCancellationRequested();
+            if (repoLastCommit.HasValue) AnsiConsole.MarkupLine($"[green]OK[/]"); else AnsiConsole.MarkupLine("[yellow]Fetch failed[/]");
 
-        while (stopwatch.Elapsed.TotalMinutes < STATE_POLL_MAX_DURATION_MIN)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            AnsiConsole.Markup($"[dim]({stopwatch.Elapsed:mm\\:ss}) Finding CS... [/]");
-            var (found, all) = await FindExistingCodespace(token); cancellationToken.ThrowIfCancellationRequested();
-            codespace = found;
-
-            if (codespace == null) {
-                AnsiConsole.MarkupLine("[yellow]Not found[/]"); await CleanupStuckCodespaces(token, all, null);
-                cancellationToken.ThrowIfCancellationRequested();
-                return await CreateNewCodespace(token, repoFullName, cancellationToken);
-            }
-
-            AnsiConsole.MarkupLine($"[green]Found[/] [dim]{codespace.Name} ({codespace.State})[/]");
-            if (repoLastCommit.HasValue && !string.IsNullOrEmpty(codespace.CreatedAt)) {
-                 if (DateTime.TryParse(codespace.CreatedAt, out var csCreated)) {
-                    csCreated = csCreated.ToUniversalTime();
-                    if (repoLastCommit.Value > csCreated) { AnsiConsole.MarkupLine($"[yellow]⚠ Outdated CS. Deleting...[/]"); await DeleteCodespace(token, codespace.Name); codespace = null; continue; }
-                 }
-            }
-
-            switch (codespace.State)
+            while (stopwatch.Elapsed.TotalMinutes < STATE_POLL_MAX_DURATION_MIN)
             {
-                case "Available":
-                    AnsiConsole.MarkupLine("[cyan]State: Available. SSH Check...[/]");
-                    if (!await WaitForSshReadyWithRetry(token, codespace.Name, cancellationToken)) { AnsiConsole.MarkupLine($"[red]SSH failed. Deleting...[/]"); await DeleteCodespace(token, codespace.Name); codespace = null; break; }
-                    await UploadCredentialsToCodespace(token, codespace.Name, cancellationToken);
-                    AnsiConsole.MarkupLine("[cyan]Trigger & Health Check...[/]");
-                    try { await TriggerStartupScript(token, codespace.Name); } catch {}
-                    if (await CheckHealthWithRetry(token, codespace.Name, cancellationToken)) { AnsiConsole.MarkupLine("[green]✓ Health OK. Reusing.[/]"); stopwatch.Stop(); return codespace.Name; }
-                    AnsiConsole.MarkupLine($"[yellow]Health timeout but SSH OK.[/]"); stopwatch.Stop(); return codespace.Name;
+                cancellationToken.ThrowIfCancellationRequested();
+                AnsiConsole.Markup($"[dim]({stopwatch.Elapsed:mm\\:ss}) Finding CS... [/]");
+                var (found, all) = await FindExistingCodespace(token); cancellationToken.ThrowIfCancellationRequested();
+                codespace = found;
 
-                case "Stopped": case "Shutdown":
-                    AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Starting...[/]");
-                    await StartCodespace(token, codespace.Name);
-                    if (!await WaitForState(token, codespace.Name, "Available", TimeSpan.FromMinutes(3), cancellationToken)) AnsiConsole.MarkupLine("[yellow]State timeout[/]");
-                    if (!await WaitForSshReadyWithRetry(token, codespace.Name, cancellationToken)) { AnsiConsole.MarkupLine("[red]SSH failed after start. Deleting...[/]"); await DeleteCodespace(token, codespace.Name); codespace = null; break; }
-                    await UploadCredentialsToCodespace(token, codespace.Name, cancellationToken);
-                    AnsiConsole.MarkupLine("[cyan]Trigger & Health Check...[/]");
-                     try { await TriggerStartupScript(token, codespace.Name); } catch {}
-                    if (await CheckHealthWithRetry(token, codespace.Name, cancellationToken)) { AnsiConsole.MarkupLine("[green]✓ Health OK. Reusing.[/]"); stopwatch.Stop(); return codespace.Name; }
-                    AnsiConsole.MarkupLine($"[yellow]Health timeout but SSH OK.[/]"); stopwatch.Stop(); return codespace.Name;
+                if (codespace == null) {
+                    AnsiConsole.MarkupLine("[yellow]Not found[/]"); await CleanupStuckCodespaces(token, all, null);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return await CreateNewCodespace(token, repoFullName, cancellationToken);
+                }
 
-                case "Starting": case "Queued": case "Rebuilding":
-                    AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Waiting {STATE_POLL_INTERVAL_SEC}s...[/]");
-                    await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000, cancellationToken); continue;
+                AnsiConsole.MarkupLine($"[green]Found[/] [dim]{codespace.Name} ({codespace.State})[/]");
+                if (repoLastCommit.HasValue && !string.IsNullOrEmpty(codespace.CreatedAt)) {
+                     if (DateTime.TryParse(codespace.CreatedAt, out var csCreated)) {
+                        csCreated = csCreated.ToUniversalTime();
+                        if (repoLastCommit.Value > csCreated) { AnsiConsole.MarkupLine($"[yellow]⚠ Outdated CS. Deleting...[/]"); await DeleteCodespace(token, codespace.Name); codespace = null; continue; }
+                     }
+                }
 
-                default: AnsiConsole.MarkupLine($"[red]Bad state: {codespace.State}. Deleting...[/]"); await DeleteCodespace(token, codespace.Name); codespace = null; break;
+                switch (codespace.State)
+                {
+                    case "Available":
+                        AnsiConsole.MarkupLine("[cyan]State: Available. SSH Check...[/]");
+                        if (!await WaitForSshReadyWithRetry(token, codespace.Name, cancellationToken)) { AnsiConsole.MarkupLine($"[red]SSH failed. Deleting...[/]"); await DeleteCodespace(token, codespace.Name); codespace = null; break; }
+                        await UploadCredentialsToCodespace(token, codespace.Name, cancellationToken);
+                        AnsiConsole.MarkupLine("[cyan]Trigger & Health Check...[/]");
+                        try { await TriggerStartupScript(token, codespace.Name); } catch {}
+                        if (await CheckHealthWithRetry(token, codespace.Name, cancellationToken)) { AnsiConsole.MarkupLine("[green]✓ Health OK. Reusing.[/]"); stopwatch.Stop(); return codespace.Name; }
+                        AnsiConsole.MarkupLine($"[yellow]Health timeout but SSH OK.[/]"); stopwatch.Stop(); return codespace.Name;
+
+                    case "Stopped": case "Shutdown":
+                        AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Starting...[/]");
+                        await StartCodespace(token, codespace.Name);
+                        if (!await WaitForState(token, codespace.Name, "Available", TimeSpan.FromMinutes(3), cancellationToken)) AnsiConsole.MarkupLine("[yellow]State timeout[/]");
+                        if (!await WaitForSshReadyWithRetry(token, codespace.Name, cancellationToken)) { AnsiConsole.MarkupLine("[red]SSH failed after start. Deleting...[/]"); await DeleteCodespace(token, codespace.Name); codespace = null; break; }
+                        await UploadCredentialsToCodespace(token, codespace.Name, cancellationToken);
+                        AnsiConsole.MarkupLine("[cyan]Trigger & Health Check...[/]");
+                         try { await TriggerStartupScript(token, codespace.Name); } catch {}
+                        if (await CheckHealthWithRetry(token, codespace.Name, cancellationToken)) { AnsiConsole.MarkupLine("[green]✓ Health OK. Reusing.[/]"); stopwatch.Stop(); return codespace.Name; }
+                        AnsiConsole.MarkupLine($"[yellow]Health timeout but SSH OK.[/]"); stopwatch.Stop(); return codespace.Name;
+
+                    case "Starting": case "Queued": case "Rebuilding":
+                        AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Waiting {STATE_POLL_INTERVAL_SEC}s...[/]");
+                        await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000, cancellationToken); continue;
+
+                    default: AnsiConsole.MarkupLine($"[red]Bad state: {codespace.State}. Deleting...[/]"); await DeleteCodespace(token, codespace.Name); codespace = null; break;
+                }
+                if (codespace == null) { await Task.Delay(5000, cancellationToken); }
             }
-            if (codespace == null) { await Task.Delay(5000, cancellationToken); }
+        } catch (OperationCanceledException) {
+            AnsiConsole.MarkupLine("\n[yellow]Codespace operation cancelled.[/]");
+            stopwatch.Stop();
+            throw;
+        } catch (Exception ex) {
+            stopwatch.Stop();
+            AnsiConsole.MarkupLine($"\n[red]FATAL error in EnsureHealthyCodespace:[/]");
+            AnsiConsole.WriteException(ex);
+            throw;
         }
 
         stopwatch.Stop();
@@ -304,18 +330,13 @@ private static List<string> GetFilesToUploadForBot(string localBotDir, List<stri
 
         } catch (OperationCanceledException) {
              AnsiConsole.MarkupLine("[yellow]Creation cancelled.[/]");
-             // === PERBAIKAN: Jangan delete, tapi stop ===
              if (!string.IsNullOrWhiteSpace(newName)) {
                  AnsiConsole.MarkupLine($"[yellow]Stopping partially created CS {newName}...[/]");
-                 // Panggil StopCodespace tanpa await di catch block utama bisa berisiko
-                 // Lebih aman panggil secara sinkron atau pakai Task.Run jika perlu cepat
-                 try { await StopCodespace(token, newName); } catch {} // Coba stop, abaikan error
+                 try { await StopCodespace(token, newName); } catch {}
              }
-             // === AKHIR PERBAIKAN ===
-             throw; // Lempar ulang cancel exception
+             throw;
         } catch (Exception ex) {
             createStopwatch.Stop(); AnsiConsole.WriteException(ex);
-            // Hapus jika GAGAL (bukan cancel)
             if (!string.IsNullOrWhiteSpace(newName)) { await DeleteCodespace(token, newName); }
             string info = ""; if (ex.Message.Contains("quota")) info = " (Quota?)"; else if (ex.Message.Contains("401")) info = " (Token?)";
             throw new Exception($"FATAL: Create failed{info}. {ex.Message}");
