@@ -85,7 +85,6 @@ public static class CodespaceManager
 
         int botsProcessed = 0; int filesUploaded = 0; int filesSkipped = 0; int botsSkipped = 0;
         
-        // Path repo (e.g., /workspaces/automation-hub) BOLEH lowercase. Ini konsisten.
         string remoteWorkspacePath = $"/workspaces/{token.Repo.ToLowerInvariant()}";
 
         AnsiConsole.MarkupLine($"[dim]Remote workspace: {remoteWorkspacePath}[/]");
@@ -118,7 +117,6 @@ public static class CodespaceManager
                         }
                         else
                         {
-                            // Ini menggunakan path LOKAL yang portable (dari migrasi)
                             localBotDir = BotConfig.GetLocalBotPath(bot.Path);
                         }
 
@@ -139,10 +137,8 @@ public static class CodespaceManager
                             continue;
                         }
 
-                        // === PERBAIKAN UTAMA: Hapus .ToLowerInvariant() ===
                         // Path bot (e.g., /bots/privatekey/turnautobot-nte) HARUS case-sensitive.
                         string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/');
-                        // === AKHIR PERBAIKAN ===
                         
                         task.Description = $"[grey]Creating dir:[/] {bot.Name}";
                         
@@ -365,7 +361,6 @@ public static class CodespaceManager
     private static async Task<DateTime?> GetRepoLastCommitDate(TokenEntry token) { try { using var c = TokenManager.CreateHttpClient(token); var r = await c.GetAsync($"https://api.github.com/repos/{token.Owner}/{token.Repo}/commits?per_page=1"); if (!r.IsSuccessStatusCode) return null; var j = await r.Content.ReadAsStringAsync(); using var d = JsonDocument.Parse(j); if (d.RootElement.GetArrayLength() == 0) return null; var s = d.RootElement[0].GetProperty("commit").GetProperty("committer").GetProperty("date").GetString(); return DateTime.TryParse(s, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var dt) ? dt : null; } catch { return null; } }
     public static async Task DeleteCodespace(TokenEntry token, string codespaceName) { AnsiConsole.MarkupLine($"[yellow]Deleting {codespaceName}...[/]"); try { await ShellHelper.RunGhCommand(token, $"codespace delete -c \"{codespaceName}\" --force", SSH_COMMAND_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]✓ Deleted[/]"); } catch (Exception ex) { if (ex.Message.Contains("404") || ex.Message.Contains("find")) AnsiConsole.MarkupLine($"[dim]Gone[/]"); else AnsiConsole.MarkupLine($"[yellow]Fail: {ex.Message.Split('\n').FirstOrDefault()}[/]"); } await Task.Delay(3000); }
     
-    // (Fungsi ini tetap public untuk logic Ctrl+C)
     public static async Task StopCodespace(TokenEntry token, string codespaceName) { AnsiConsole.Markup($"[dim]Stopping {codespaceName}... [/]"); try { await ShellHelper.RunGhCommand(token, $"codespace stop --codespace \"{codespaceName}\"", STOP_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]OK[/]"); } catch (Exception ex) { if (ex.Message.Contains("stopped")) AnsiConsole.MarkupLine("[dim]Already stopped[/]"); else AnsiConsole.MarkupLine($"[yellow]Stop error: {ex.Message.Split('\n').FirstOrDefault()}[/]"); } await Task.Delay(2000); }
 
     private static async Task StartCodespace(TokenEntry token, string codespaceName) { AnsiConsole.Markup($"[dim]Starting {codespaceName}... [/]"); try { await ShellHelper.RunGhCommand(token, $"codespace start --codespace \"{codespaceName}\"", START_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]OK[/]"); } catch (Exception ex) { if(!ex.Message.Contains("available")) AnsiConsole.MarkupLine($"[yellow]Start warn: {ex.Message.Split('\n').FirstOrDefault()}[/]"); else AnsiConsole.MarkupLine($"[dim]Already available[/]"); } }
@@ -376,7 +371,6 @@ public static class CodespaceManager
     public static async Task TriggerStartupScript(TokenEntry token, string codespaceName) 
     { 
         AnsiConsole.MarkupLine("[cyan]Triggering auto-start.sh...[/]"); 
-        // Path repo (e.g., /workspaces/automation-hub) BOLEH lowercase. Ini konsisten.
         string repo = token.Repo.ToLower(); 
         string script = $"/workspaces/{repo}/auto-start.sh"; 
         AnsiConsole.Markup("[dim]Executing (detached)... [/]"); string cmd = $"nohup bash \"{script}\" > /tmp/startup.log 2>&1 &"; 
@@ -386,5 +380,8 @@ public static class CodespaceManager
     }
 
     public static async Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName) { AnsiConsole.MarkupLine($"[dim]Fetching tmux sessions...[/]"); string args = $"codespace ssh -c \"{codespaceName}\" -- tmux list-windows -t automation_hub_bots -F \"#{{window_name}}\""; try { string result = await ShellHelper.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS); return result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(s => s != "dashboard" && s != "bash").OrderBy(s => s).ToList(); } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Failed fetch tmux: {ex.Message.Split('\n').FirstOrDefault()}[/]"); return new List<string>(); } }
-    private class CodespaceInfo { [JsonPropertyName("name")] public string Name{get;set;}=""; [JsonPropertyName("displayName")] public string DisplayName{get;set;}=""; [JsonPropertyName("state")] public string State{get.set;}=""; [JsonPropertyName("createdAt")] public string CreatedAt{get.set;}=""; }
+    
+    // === PERBAIKAN TYPO: get.set; menjadi get;set; ===
+    private class CodespaceInfo { [JsonPropertyName("name")] public string Name{get;set;}=""; [JsonPropertyName("displayName")] public string DisplayName{get;set;}=""; [JsonPropertyName("state")] public string State{get;set;}=""; [JsonPropertyName("createdAt")] public string CreatedAt{get;set;}=""; }
+    // === AKHIR PERBAIKAN ===
 }
