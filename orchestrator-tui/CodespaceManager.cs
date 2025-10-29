@@ -94,7 +94,7 @@ public static class CodespaceManager
             await AnsiConsole.Progress()
                 .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
                 .StartAsync(async ctx => {
-                    var task = ctx.AddTask("[green]Processing bots...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count });
+                    var task = ctx.AddTask("[green]Processing bots...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count + 1 }); // +1 untuk apikeys
 
                     foreach (var bot in config.BotsAndTools)
                     {
@@ -137,7 +137,6 @@ public static class CodespaceManager
                             continue;
                         }
 
-                        // Path bot (e.g., /bots/privatekey/turnautobot-nte) HARUS case-sensitive.
                         string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/');
                         
                         task.Description = $"[grey]Creating dir:[/] {bot.Name}";
@@ -197,6 +196,43 @@ public static class CodespaceManager
                         botsProcessed++;
                         task.Increment(1);
                     }
+
+                    // === PERBAIKAN: Upload apikeys.txt ===
+                    task.Description = "[cyan]Uploading apikeys.txt...";
+                    string localApiKeysPath = Path.Combine(ConfigRoot, "apikeys.txt");
+                    
+                    if (!File.Exists(localApiKeysPath))
+                    {
+                        AnsiConsole.MarkupLine("[yellow]SKIP: config/apikeys.txt tidak ditemukan di lokal.[/]");
+                    }
+                    else
+                    {
+                        string remoteProxyConfigDir = $"{remoteWorkspacePath}/proxysync/config";
+                        string remoteApiKeysPath = $"{remoteProxyConfigDir}/apikeys.txt";
+
+                        try
+                        {
+                            // 1. Buat direktori config di proxysync (remote)
+                            string mkdirCmd = $"mkdir -p '{remoteProxyConfigDir.Replace("'", "'\\''")}'";
+                            string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
+                            await ShellHelper.RunGhCommand(token, sshArgs, 30000);
+
+                            // 2. Upload file
+                            string localAbsPath = Path.GetFullPath(localApiKeysPath);
+                            string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteApiKeysPath}\"";
+                            await ShellHelper.RunGhCommand(token, cpArgs, 120000);
+                            
+                            AnsiConsole.MarkupLine("[green]✓ apikeys.txt di-upload ke proxysync/config/.[/]");
+                            filesUploaded++;
+                        }
+                        catch (Exception ex)
+                        {
+                            AnsiConsole.MarkupLine($"[red]✗ Gagal upload apikeys.txt: {ex.Message.Split('\n').FirstOrDefault()}[/]");
+                            filesSkipped++;
+                        }
+                    }
+                    task.Increment(1);
+                    // === AKHIR PERBAIKAN ===
                 });
         } catch (OperationCanceledException) {
             AnsiConsole.MarkupLine($"\n[yellow]Final: {botsProcessed} bots | {filesUploaded} uploaded | {filesSkipped} failed[/]");
@@ -381,7 +417,5 @@ public static class CodespaceManager
 
     public static async Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName) { AnsiConsole.MarkupLine($"[dim]Fetching tmux sessions...[/]"); string args = $"codespace ssh -c \"{codespaceName}\" -- tmux list-windows -t automation_hub_bots -F \"#{{window_name}}\""; try { string result = await ShellHelper.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS); return result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(s => s != "dashboard" && s != "bash").OrderBy(s => s).ToList(); } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Failed fetch tmux: {ex.Message.Split('\n').FirstOrDefault()}[/]"); return new List<string>(); } }
     
-    // === PERBAIKAN TYPO: get.set; menjadi get;set; ===
     private class CodespaceInfo { [JsonPropertyName("name")] public string Name{get;set;}=""; [JsonPropertyName("displayName")] public string DisplayName{get;set;}=""; [JsonPropertyName("state")] public string State{get;set;}=""; [JsonPropertyName("createdAt")] public string CreatedAt{get;set;}=""; }
-    // === AKHIR PERBAIKAN ===
 }
