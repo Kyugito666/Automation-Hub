@@ -2,22 +2,23 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Spectre.Console;
-using System.Net; // Pastikan using System.Net ada
+using System.Net;
 
 namespace Orchestrator;
 
 public static class ShellHelper
 {
+    // ... (konstanta dan _isAttemptingIpAuth tetap sama) ...
     private const int DEFAULT_TIMEOUT_MS = 120000;
     private const int MAX_RETRY_ON_PROXY_ERROR = 2;
     private const int MAX_RETRY_ON_NETWORK_ERROR = 2;
     private const int MAX_RETRY_ON_TIMEOUT = 1;
     private static bool _isAttemptingIpAuth = false;
 
+
     // Fungsi RunGhCommand tetap sama (versi terakhir dengan auto IP auth)
      public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
     {
-        // Panggil CreateStartInfo DENGAN command "gh" secara eksplisit
         var startInfo = CreateStartInfo("gh", args, token);
         int proxyRetryCount = 0; int networkRetryCount = 0; int timeoutRetryCount = 0;
         Exception? lastException = null;
@@ -37,11 +38,7 @@ public static class ShellHelper
 
                     if (isProxyAuthError && proxyRetryCount < MAX_RETRY_ON_PROXY_ERROR) {
                         proxyRetryCount++; AnsiConsole.MarkupLine($"[yellow]Proxy Auth (407). Rotating... ({proxyRetryCount}/{MAX_RETRY_ON_PROXY_ERROR})[/]");
-                        if (TokenManager.RotateProxyForToken(token)) {
-                            // Update startInfo setelah rotasi proxy
-                            startInfo = CreateStartInfo("gh", args, token);
-                            await Task.Delay(2000); continue;
-                         }
+                        if (TokenManager.RotateProxyForToken(token)) { startInfo = CreateStartInfo("gh", args, token); await Task.Delay(2000); continue; }
                         else { AnsiConsole.MarkupLine("[red]No more proxies.[/]"); }
                     }
                     if (isNetworkError && networkRetryCount < MAX_RETRY_ON_NETWORK_ERROR) {
@@ -56,9 +53,7 @@ public static class ShellHelper
                         if (ipAuthSuccess) {
                             AnsiConsole.MarkupLine("[magenta]IP Auth finished. Retrying command...[/]");
                             proxyRetryCount = 0; networkRetryCount = 0; timeoutRetryCount = 0;
-                            // Update startInfo lagi
-                            startInfo = CreateStartInfo("gh", args, token);
-                            await Task.Delay(2000); continue;
+                            startInfo = CreateStartInfo("gh", args, token); await Task.Delay(2000); continue;
                         } else { AnsiConsole.MarkupLine("[red]Auto IP Auth failed. Failing command.[/]"); }
                     }
                     if (isRateLimit || isAuthError) { string errorType = isRateLimit ? "RateLimit/403" : "Auth/401"; AnsiConsole.MarkupLine($"[red]GH Error ({errorType}).[/]"); lastException = new Exception($"GH Fail ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break; }
@@ -96,10 +91,8 @@ public static class ShellHelper
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false, RedirectStandardOutput = false, RedirectStandardError = false, RedirectStandardInput = false };
         if (workingDir != null) startInfo.WorkingDirectory = workingDir;
-        // Panggil SetEnvironmentVariables & SetFileNameAndArgs DI SINI untuk interactive
-        if (token != null) SetEnvironmentVariables(startInfo, token, command); // Kirim command
-        SetFileNameAndArgs(startInfo, command, args); // Set filename & args
-
+        if (token != null) SetEnvironmentVariables(startInfo, token, command);
+        SetFileNameAndArgs(startInfo, command, args);
         using var process = new Process { StartInfo = startInfo };
         try {
             AnsiConsole.MarkupLine($"[dim]Starting interactive: {startInfo.FileName} {startInfo.Arguments}[/]");
@@ -117,10 +110,8 @@ public static class ShellHelper
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false, RedirectStandardOutput = false, RedirectStandardError = false, RedirectStandardInput = false };
         if (workingDir != null) startInfo.WorkingDirectory = workingDir;
-        // Panggil SetEnvironmentVariables & SetFileNameAndArgs DI SINI untuk interactive
-        if (token != null) SetEnvironmentVariables(startInfo, token, command); // Kirim command
-        SetFileNameAndArgs(startInfo, command, args); // Set filename & args
-
+        if (token != null) SetEnvironmentVariables(startInfo, token, command);
+        SetFileNameAndArgs(startInfo, command, args);
         using var process = new Process { StartInfo = startInfo };
         try {
             AnsiConsole.MarkupLine($"[bold green]▶ Starting bot FULL INTERACTIVE[/]"); AnsiConsole.MarkupLine($"[dim]Cmd: {command} {args}[/]"); AnsiConsole.MarkupLine($"[dim]Dir: {workingDir ?? "current"}[/]"); AnsiConsole.MarkupLine("[yellow]"+ new string('═', 60) +"[/]");
@@ -141,60 +132,41 @@ public static class ShellHelper
         catch (Exception ex) { AnsiConsole.MarkupLine("\n[yellow]"+ new string('═', 60) +"[/]"); AnsiConsole.MarkupLine($"[red]✗ Err run bot: {ex.Message.EscapeMarkup()}[/]"); try { if (!process.HasExited) process.Kill(true); } catch { } AnsiConsole.MarkupLine("\n[dim]Press Enter...[/]"); Console.ReadLine(); throw; }
     }
 
-    // Fungsi CreateStartInfo - Panggil SetEnvironmentVariables & SetFileNameAndArgs
+    // Fungsi CreateStartInfo tetap sama
      private static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token) {
         var startInfo = new ProcessStartInfo {
-            // FileName diatur nanti di SetFileNameAndArgs
-            Arguments = args, // Hanya args
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8 };
-        // Set environment (proxy) dulu jika token ada
-        if (token != null) SetEnvironmentVariables(startInfo, token, command); // Kirim command ke sini
-        // Baru set FileName dan format Arguments
+            Arguments = args, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
+        if (token != null) SetEnvironmentVariables(startInfo, token, command);
         SetFileNameAndArgs(startInfo, command, args);
         return startInfo;
     }
 
-    // === PERBAIKAN: SetEnvironmentVariables butuh 'command' ===
-    // Tambahkan parameter string command
+    // Fungsi SetEnvironmentVariables tetap sama
     private static void SetEnvironmentVariables(ProcessStartInfo startInfo, TokenEntry token, string command) {
-        // Cek command berdasarkan parameter 'command'
         bool isGhCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? command.ToLower().EndsWith("gh.exe") || command.ToLower() == "gh"
-            : command == "gh"; // Di Linux/Mac biasanya cuma 'gh'
-
-        // Hanya set GH_TOKEN jika command nya 'gh'
-        if (isGhCommand) {
-            startInfo.EnvironmentVariables["GH_TOKEN"] = token.Token;
-         }
-
-        // Selalu set proxy jika ada di token
+            : command == "gh";
+        if (isGhCommand) { startInfo.EnvironmentVariables["GH_TOKEN"] = token.Token; }
         if (!string.IsNullOrEmpty(token.Proxy)) {
             startInfo.EnvironmentVariables["https_proxy"] = token.Proxy; startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
             startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy; startInfo.EnvironmentVariables["HTTP_PROXY"] = token.Proxy;
             startInfo.EnvironmentVariables["NO_PROXY"] = "localhost,127.0.0.1"; startInfo.EnvironmentVariables["no_proxy"] = "localhost,127.0.0.1";
         } else {
-             // Hapus variabel proxy jika token tidak punya proxy (penting!)
              startInfo.EnvironmentVariables.Remove("https_proxy"); startInfo.EnvironmentVariables.Remove("http_proxy");
              startInfo.EnvironmentVariables.Remove("HTTPS_PROXY"); startInfo.EnvironmentVariables.Remove("HTTP_PROXY");
         }
     }
-    // === AKHIR PERBAIKAN ===
 
 
     // Fungsi SetFileNameAndArgs tetap sama
      private static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
          if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
             startInfo.FileName = "cmd.exe";
-            // Gabungkan command dan args untuk /c, pastikan di-quote
             startInfo.Arguments = $"/c \"{command} {args}\"";
         } else {
             startInfo.FileName = "/bin/bash";
-            // Escape double quotes di dalam args sebelum membungkusnya
             string escapedArgs = args.Replace("\"", "\\\"");
             startInfo.Arguments = $"-c \"{command} {escapedArgs}\"";
         }
@@ -218,7 +190,7 @@ public static class ShellHelper
             if (completedTask != tcs.Task) { throw new TaskCanceledException($"Process timed out"); }
              return await tcs.Task;
         } catch (TaskCanceledException) { // Tangkap timeout
-            AnsiConsole.MarkupLine($"[red]Timeout ({timeoutMilliseconds / 1000}s): {startInfo.FileName} {startInfo.Arguments?.Split(' ').FirstOrDefault()}[/]"); // Lebih aman cek null
+            AnsiConsole.MarkupLine($"[red]Timeout ({timeoutMilliseconds / 1000}s): {startInfo.FileName} {startInfo.Arguments?.Split(' ').FirstOrDefault()}[/]");
             try { if (!process.HasExited) process.Kill(true); } catch { /* Ignore */ }
             throw; // Lempar ulang
         } catch (Exception ex) { // Tangkap error start/lainnya
