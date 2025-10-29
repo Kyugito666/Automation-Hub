@@ -70,13 +70,14 @@ internal static class Program
             var selection = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("\n[bold white]MAIN MENU[/]")
-                    .PageSize(7)
+                    .PageSize(8) // <-- Diubah ke 8
                     .WrapAround(true)
                     .AddChoices(new[] {
                         "1. Start/Manage Codespace Runner (Continuous Loop)",
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
+                        "5. Migrasi Kredensial Lokal (Jalankan 1x)", // <-- MENU BARU
                         "0. Exit"
                     }));
 
@@ -87,6 +88,7 @@ internal static class Program
                     case "2": await ShowSetupMenuAsync(cancellationToken); break;
                     case "3": await ShowLocalMenuAsync(cancellationToken); break;
                     case "4": await ShowAttachMenuAsync(cancellationToken); break;
+                    case "5": await CredentialMigrator.RunMigration(cancellationToken); Pause("Tekan Enter...", cancellationToken); break; // <-- MENU BARU
                     case "0": AnsiConsole.MarkupLine("Exiting..."); _mainCts.Cancel(); return;
                 }
             } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { AnsiConsole.MarkupLine("\n[yellow]Sub-menu cancelled.[/]"); Pause("Press Enter...", CancellationToken.None); }
