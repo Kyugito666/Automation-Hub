@@ -153,7 +153,8 @@ public static class CodespaceManager
                             // Buat direktori remote bot
                             string mkdirCmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}'";
                             string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
-                            await ShellHelper.RunGhCommand(token, sshArgs, 30000); // Timeout pendek untuk mkdir
+                            // === PERBAIKAN: Timeout mkdir ditambah jadi 60s ===
+                            await ShellHelper.RunGhCommand(token, sshArgs, 60000); 
                         }
                         catch (OperationCanceledException) { throw; } // Tangkap cancel
                         catch (Exception mkdirEx) {
@@ -163,6 +164,9 @@ public static class CodespaceManager
                             task.Increment(1);
                             continue; // Lanjut ke bot berikutnya
                         }
+
+                        // === PERBAIKAN: Delay 1s untuk mencegah race condition scp ===
+                        try { await Task.Delay(1000, cancellationToken); } catch (OperationCanceledException) { throw; } 
 
                         // Upload file kredensial satu per satu
                         foreach (var credFileName in filesToUpload)
