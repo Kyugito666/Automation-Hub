@@ -84,15 +84,11 @@ public static class CodespaceManager
 
                     string localBotDir = BotConfig.GetLocalBotPath(bot.Path);
                     if (!Directory.Exists(localBotDir)) {
-                        // Tidak perlu log spam jika folder lokal tidak ada
-                        // AnsiConsole.MarkupLine($"[dim]   Local path not found for {bot.Name}. Skip.[/]");
                         filesSkipped++; task.Increment(1); continue;
                      }
 
                     string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/');
                     bool botProcessed = false;
-
-                    // Buat direktori remote SEKALI per bot (jika ada file yang akan diupload)
                     bool remoteDirEnsured = false;
 
                     foreach (var credFileName in credentialFilesToUpload)
@@ -102,7 +98,6 @@ public static class CodespaceManager
 
                         if (File.Exists(localFilePath))
                         {
-                            // Pastikan direktori remote ada HANYA jika ada file yang mau diupload
                             if (!remoteDirEnsured)
                             {
                                 task.Description = $"[grey]Ensuring remote dir:[/] {bot.Name}";
@@ -111,12 +106,12 @@ public static class CodespaceManager
                                     // === PERBAIKAN: Gunakan timeout lebih lama untuk mkdir ===
                                     await ShellHelper.RunGhCommand(token, mkdirArgs, SSH_COMMAND_TIMEOUT_MS); // Naikkan jadi 120 detik
                                     remoteDirEnsured = true;
-                                } catch (OperationCanceledException) { throw; // Langsung throw cancel
+                                } catch (OperationCanceledException) { throw;
                                 } catch (Exception mkdirEx) {
                                     AnsiConsole.MarkupLine($"[red]\n   ✗ Failed create remote dir for {bot.Name}: {mkdirEx.Message.Split('\n').FirstOrDefault()}. Skipping bot.[/]");
-                                    filesSkipped += credentialFilesToUpload.Count(cf => File.Exists(Path.Combine(localBotDir, cf))); // Hitung sisa file yg diskip
-                                    botProcessed = true; // Tetap tandai bot diproses (meski gagal)
-                                    goto NextBot; // Lompat ke bot berikutnya jika mkdir gagal
+                                    filesSkipped += credentialFilesToUpload.Count(cf => File.Exists(Path.Combine(localBotDir, cf)));
+                                    botProcessed = true;
+                                    goto NextBot;
                                 }
                             }
 
@@ -128,7 +123,6 @@ public static class CodespaceManager
                             string cpArgs = $"codespace cp --codespace \"{codespaceName}\" \"{localAbsPath}\" \"{remoteTargetArg}\"";
 
                             try {
-                                // Timeout cp tetap 240 detik
                                 await ShellHelper.RunGhCommand(token, cpArgs, SSH_COMMAND_TIMEOUT_MS * 2);
                                 filesUploaded++;
                             } catch (OperationCanceledException) {
@@ -142,7 +136,7 @@ public static class CodespaceManager
                             await Task.Delay(150, cancellationToken);
                         }
                     }
-                NextBot: // Label untuk goto
+                NextBot:
                     if (botProcessed) { botsProcessed++; }
                     task.Increment(1);
                 }
@@ -254,7 +248,7 @@ public static class CodespaceManager
             AnsiConsole.MarkupLine("\n[cyan]Optimizing first boot...[/]");
             await Task.Delay(45000, cancellationToken);
             var currentState = await GetCodespaceState(token, newName);
-            cancellationToken.ThrowIfCancellationRequested();
+             cancellationToken.ThrowIfCancellationRequested();
 
             AnsiConsole.MarkupLine($"[dim]State: {currentState}[/]");
             if (currentState == "Available") {
@@ -295,7 +289,6 @@ public static class CodespaceManager
              throw;
         } catch (Exception ex) {
             createStopwatch.Stop(); AnsiConsole.WriteException(ex);
-            // Hapus jika GAGAL (bukan cancel)
             if (!string.IsNullOrWhiteSpace(newName)) { await DeleteCodespace(token, newName); }
             string info = ""; if (ex.Message.Contains("quota")) info = " (Quota?)"; else if (ex.Message.Contains("401")) info = " (Token?)";
             throw new Exception($"FATAL: Create failed{info}. {ex.Message}");
@@ -319,7 +312,7 @@ public static class CodespaceManager
 
     private static async Task<string?> GetCodespaceState(TokenEntry token, string codespaceName)
     {
-        string args = $"codespace view --json state -c \"{codespaceName}\""; // Quote name
+        string args = $"codespace view --json state -c \"{codespaceName}\"";
         try {
             string json = await ShellHelper.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS);
             using var doc = JsonDocument.Parse(json);
