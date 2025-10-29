@@ -13,7 +13,7 @@ public static class CodespaceManager
 {
     private const string CODESPACE_DISPLAY_NAME = "automation-hub-runner";
     private const string MACHINE_TYPE = "standardLinux32gb";
-    private const int SSH_COMMAND_TIMEOUT_MS = 120000; // Timeout default & NAIK untuk mkdir
+    private const int SSH_COMMAND_TIMEOUT_MS = 120000;
     private const int CREATE_TIMEOUT_MS = 600000;
     private const int STOP_TIMEOUT_MS = 120000;
     private const int START_TIMEOUT_MS = 300000;
@@ -100,10 +100,9 @@ public static class CodespaceManager
                             {
                                 task.Description = $"[grey]Ensuring remote dir:[/] {bot.Name}";
                                 try {
-                                    // === PERBAIKAN: Lebih toleran quote untuk mkdir ===
-                                    string mkdirCmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}'"; // Quote path di remote
+                                    string mkdirCmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}'";
                                     string mkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- {mkdirCmd}";
-                                    await ShellHelper.RunGhCommand(token, mkdirArgs, SSH_COMMAND_TIMEOUT_MS); // Timeout 120s
+                                    await ShellHelper.RunGhCommand(token, mkdirArgs, SSH_COMMAND_TIMEOUT_MS);
                                     remoteDirEnsured = true;
                                 } catch (OperationCanceledException) { throw;
                                 } catch (Exception mkdirEx) {
@@ -119,19 +118,22 @@ public static class CodespaceManager
                             task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
                             string localAbsPath = Path.GetFullPath(localFilePath);
 
-                            // === PERBAIKAN: Coba quote path remote secara eksplisit ===
-                            // Format: gh codespace cp --codespace <name> <local> 'remote:<remote>'
-                            string remoteTargetArg = $"remote:'{remoteFilePath.Replace("'", "'\\''")}'"; // Quote path remote
-                            string cpArgs = $"codespace cp --codespace \"{codespaceName}\" \"{localAbsPath}\" {remoteTargetArg}";
+                            // === PERBAIKAN: Format `gh cp` Args untuk ShellHelper ===
+                            // ShellHelper akan menangani quoting /c "..." atau -c "..."
+                            // Kita hanya perlu memastikan argumen gh benar: cp --codespace <name> <local> remote:<remote>
+                            string remoteTargetArg = $"remote:{remoteFilePath}"; // Path remote diawali "remote:"
+                            // Argumen dipisah spasi, ShellHelper akan quote jika perlu
+                            string cpArgs = $"codespace cp --codespace \"{codespaceName}\" \"{localAbsPath}\" \"{remoteTargetArg}\"";
                             // === AKHIR PERBAIKAN ===
 
                             try {
-                                await ShellHelper.RunGhCommand(token, cpArgs, SSH_COMMAND_TIMEOUT_MS * 2); // cp timeout 240s
+                                await ShellHelper.RunGhCommand(token, cpArgs, SSH_COMMAND_TIMEOUT_MS * 2);
                                 filesUploaded++;
                             } catch (OperationCanceledException) {
                                  AnsiConsole.MarkupLine($"[yellow]\n   Upload cancelled.[/]"); filesSkipped++; throw;
                             } catch (Exception ex) {
-                                AnsiConsole.MarkupLine($"[red]\n   ✗ Failed upload {credFileName} ({bot.Name}): {ex.Message.Split('\n').FirstOrDefault()}[/]");
+                                // Tampilkan path yang gagal biar lebih jelas
+                                AnsiConsole.MarkupLine($"[red]\n   ✗ Failed upload '{localAbsPath}' to '{remoteTargetArg}': {ex.Message.Split('\n').FirstOrDefault()}[/]");
                                 filesSkipped++;
                             }
                             await Task.Delay(150, cancellationToken);
@@ -259,12 +261,15 @@ public static class CodespaceManager
              // === PERBAIKAN: Jangan delete, tapi stop ===
              if (!string.IsNullOrWhiteSpace(newName)) {
                  AnsiConsole.MarkupLine($"[yellow]Stopping partially created CS {newName}...[/]");
-                 await StopCodespace(token, newName); // <-- Ganti jadi Stop
+                 // Panggil StopCodespace tanpa await di catch block utama bisa berisiko
+                 // Lebih aman panggil secara sinkron atau pakai Task.Run jika perlu cepat
+                 try { await StopCodespace(token, newName); } catch {} // Coba stop, abaikan error
              }
              // === AKHIR PERBAIKAN ===
-             throw;
+             throw; // Lempar ulang cancel exception
         } catch (Exception ex) {
             createStopwatch.Stop(); AnsiConsole.WriteException(ex);
+            // Hapus jika GAGAL (bukan cancel)
             if (!string.IsNullOrWhiteSpace(newName)) { await DeleteCodespace(token, newName); }
             string info = ""; if (ex.Message.Contains("quota")) info = " (Quota?)"; else if (ex.Message.Contains("401")) info = " (Token?)";
             throw new Exception($"FATAL: Create failed{info}. {ex.Message}");
@@ -275,21 +280,15 @@ public static class CodespaceManager
     private static async Task<(CodespaceInfo? existing, List<CodespaceInfo> all)> FindExistingCodespace(TokenEntry token)
     {
         string args = "codespace list --json name,displayName,state,createdAt"; List<CodespaceInfo> all = new();
-        try {
-            string jsonResult = await ShellHelper.RunGhCommand(token, args); if (string.IsNullOrWhiteSpace(jsonResult) || jsonResult == "[]") return (null, all);
-            try { all = JsonSerializer.Deserialize<List<CodespaceInfo>>(jsonResult, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); } catch {}
-        } catch {}
+        try { string jsonResult = await ShellHelper.RunGhCommand(token, args); if (string.IsNullOrWhiteSpace(jsonResult) || jsonResult == "[]") return (null, all); try { all = JsonSerializer.Deserialize<List<CodespaceInfo>>(jsonResult, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); } catch {} } catch {}
         var existing = all.FirstOrDefault(cs => cs.DisplayName == CODESPACE_DISPLAY_NAME && cs.State != "Deleted"); return (existing, all);
     }
-
     private static async Task<string?> GetCodespaceState(TokenEntry token, string codespaceName) { try { string json = await ShellHelper.RunGhCommand(token, $"codespace view --json state -c \"{codespaceName}\"", SSH_PROBE_TIMEOUT_MS); using var doc = JsonDocument.Parse(json); return doc.RootElement.TryGetProperty("state", out var p) ? p.GetString() : null; } catch { return null; } }
     private static async Task<DateTime?> GetRepoLastCommitDate(TokenEntry token) { try { using var c = TokenManager.CreateHttpClient(token); var r = await c.GetAsync($"https://api.github.com/repos/{token.Owner}/{token.Repo}/commits?per_page=1"); if (!r.IsSuccessStatusCode) return null; var j = await r.Content.ReadAsStringAsync(); using var d = JsonDocument.Parse(j); if (d.RootElement.GetArrayLength() == 0) return null; var s = d.RootElement[0].GetProperty("commit").GetProperty("committer").GetProperty("date").GetString(); return DateTime.TryParse(s, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var dt) ? dt : null; } catch { return null; } }
     public static async Task DeleteCodespace(TokenEntry token, string codespaceName) { AnsiConsole.MarkupLine($"[yellow]Deleting {codespaceName}...[/]"); try { await ShellHelper.RunGhCommand(token, $"codespace delete -c \"{codespaceName}\" --force", SSH_COMMAND_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]✓ Deleted[/]"); } catch (Exception ex) { if (ex.Message.Contains("404") || ex.Message.Contains("find")) AnsiConsole.MarkupLine($"[dim]Gone[/]"); else AnsiConsole.MarkupLine($"[yellow]Fail: {ex.Message.Split('\n').FirstOrDefault()}[/]"); } await Task.Delay(3000); }
     private static async Task StopCodespace(TokenEntry token, string codespaceName) { AnsiConsole.Markup($"[dim]Stopping {codespaceName}... [/]"); try { await ShellHelper.RunGhCommand(token, $"codespace stop --codespace \"{codespaceName}\"", STOP_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]OK[/]"); } catch (Exception ex) { if (ex.Message.Contains("stopped")) AnsiConsole.MarkupLine("[dim]Already stopped[/]"); else AnsiConsole.MarkupLine($"[yellow]Stop error: {ex.Message.Split('\n').FirstOrDefault()}[/]"); } await Task.Delay(2000); }
     private static async Task StartCodespace(TokenEntry token, string codespaceName) { AnsiConsole.Markup($"[dim]Starting {codespaceName}... [/]"); try { await ShellHelper.RunGhCommand(token, $"codespace start --codespace \"{codespaceName}\"", START_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]OK[/]"); } catch (Exception ex) { if(!ex.Message.Contains("available")) AnsiConsole.MarkupLine($"[yellow]Start warn: {ex.Message.Split('\n').FirstOrDefault()}[/]"); else AnsiConsole.MarkupLine($"[dim]Already available[/]"); } }
     private static async Task CleanupStuckCodespaces(TokenEntry token, List<CodespaceInfo> all, string? current) { AnsiConsole.MarkupLine("[dim]Cleaning stuck CS...[/]"); int cleaned=0; foreach (var cs in all) { if (cs.Name == current || cs.State == "Deleted") continue; if (cs.DisplayName == CODESPACE_DISPLAY_NAME) { AnsiConsole.MarkupLine($"[yellow]Stuck: {cs.Name} ({cs.State}). Deleting...[/]"); await DeleteCodespace(token, cs.Name); cleaned++; } } if (cleaned == 0) AnsiConsole.MarkupLine("[dim]None[/]"); }
-
-
     private static async Task<bool> WaitForState(TokenEntry token, string codespaceName, string targetState, TimeSpan timeout, CancellationToken cancellationToken) { Stopwatch sw = Stopwatch.StartNew(); AnsiConsole.Markup($"[cyan]Waiting state '{targetState}'...[/]"); while(sw.Elapsed < timeout) { cancellationToken.ThrowIfCancellationRequested(); var state = await GetCodespaceState(token, codespaceName); if (state == targetState) { AnsiConsole.MarkupLine($"[green]✓ {targetState}[/]"); return true; } if (state == null || state == "Failed" || state == "Error" || state.Contains("Shutting")) { AnsiConsole.MarkupLine($"[red]{state ?? "Lost"}[/]"); return false; } await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000, cancellationToken); } AnsiConsole.MarkupLine($"[yellow]Timeout[/]"); return false; }
     private static async Task<bool> WaitForSshReadyWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken) { Stopwatch sw = Stopwatch.StartNew(); AnsiConsole.Markup($"[cyan]Waiting SSH ready...[/]"); while(sw.Elapsed.TotalMinutes < SSH_READY_MAX_DURATION_MIN) { cancellationToken.ThrowIfCancellationRequested(); try { string res = await ShellHelper.RunGhCommand(token, $"codespace ssh -c \"{codespaceName}\" -- echo ready", SSH_PROBE_TIMEOUT_MS); if (res.Contains("ready")) { AnsiConsole.MarkupLine("[green]✓ SSH Ready[/]"); return true; } } catch (OperationCanceledException) { throw; } catch { } await Task.Delay(SSH_READY_POLL_INTERVAL_SEC * 1000, cancellationToken); } AnsiConsole.MarkupLine($"[yellow]SSH Timeout[/]"); return false; }
     public static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken) { Stopwatch sw = Stopwatch.StartNew(); AnsiConsole.Markup($"[cyan]Checking health...[/]"); int sshOk = 0; const int SSH_OK_THRESHOLD = 2; while(sw.Elapsed.TotalMinutes < HEALTH_CHECK_MAX_DURATION_MIN) { cancellationToken.ThrowIfCancellationRequested(); string result = ""; try { string args = $"codespace ssh -c \"{codespaceName}\" -- \"if [ -f {HEALTH_CHECK_FAIL_PROXY} ] || [ -f {HEALTH_CHECK_FAIL_DEPLOY} ]; then echo FAILED; elif [ -f {HEALTH_CHECK_FILE} ]; then echo HEALTHY; else echo NOT_READY; fi\""; result = await ShellHelper.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); if (result.Contains("FAILED")) { AnsiConsole.MarkupLine($"[red]✗ Startup failed[/]"); return false; } if (result.Contains("HEALTHY")) { AnsiConsole.MarkupLine("[green]✓ Healthy[/]"); return true; } if (result.Contains("NOT_READY")) { sshOk++; } if (sshOk >= SSH_OK_THRESHOLD && sw.Elapsed.TotalMinutes >= 1) { AnsiConsole.MarkupLine($"[cyan]SSH stable. Assuming OK.[/]"); return true; } } catch (OperationCanceledException) { throw; } catch { sshOk = 0; } await Task.Delay(HEALTH_CHECK_POLL_INTERVAL_SEC * 1000, cancellationToken); } AnsiConsole.MarkupLine($"[yellow]Health Timeout[/]"); return false; }
