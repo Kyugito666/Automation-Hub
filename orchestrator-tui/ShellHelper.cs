@@ -8,15 +8,12 @@ namespace Orchestrator;
 
 public static class ShellHelper
 {
-    // ... (konstanta dan _isAttemptingIpAuth tetap sama) ...
     private const int DEFAULT_TIMEOUT_MS = 120000;
     private const int MAX_RETRY_ON_PROXY_ERROR = 2;
     private const int MAX_RETRY_ON_NETWORK_ERROR = 2;
     private const int MAX_RETRY_ON_TIMEOUT = 1;
     private static bool _isAttemptingIpAuth = false;
 
-
-    // Fungsi RunGhCommand tetap sama (versi terakhir dengan auto IP auth)
      public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
     {
         var startInfo = CreateStartInfo("gh", args, token);
@@ -51,33 +48,32 @@ public static class ShellHelper
                         bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync();
                         _isAttemptingIpAuth = false;
                         if (ipAuthSuccess) {
-                            AnsiConsole.MarkupLine("[magenta]IP Auth finished. Retrying command...[/]");
+                            AnsiConsole.MarkupLine("[magenta]IP Auth OK. Retrying command...[/]");
                             proxyRetryCount = 0; networkRetryCount = 0; timeoutRetryCount = 0;
                             startInfo = CreateStartInfo("gh", args, token); await Task.Delay(2000); continue;
-                        } else { AnsiConsole.MarkupLine("[red]Auto IP Auth failed. Failing command.[/]"); }
+                        } else { AnsiConsole.MarkupLine("[red]Auto IP Auth failed. Failing.[/]"); }
                     }
                     if (isRateLimit || isAuthError) { string errorType = isRateLimit ? "RateLimit/403" : "Auth/401"; AnsiConsole.MarkupLine($"[red]GH Error ({errorType}).[/]"); lastException = new Exception($"GH Fail ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break; }
                     if (isNotFoundError) { AnsiConsole.MarkupLine($"[red]GH Error (NotFound/404).[/]"); lastException = new Exception($"GH Not Found (404): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break; }
                     lastException = new Exception($"gh command failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim()}"); break;
                 }
-                return stdout; // Sukses
+                return stdout;
             }
             catch (TaskCanceledException ex) {
                 if (timeoutRetryCount < MAX_RETRY_ON_TIMEOUT) { timeoutRetryCount++; AnsiConsole.MarkupLine($"[yellow]Timeout. Retrying... ({timeoutRetryCount}/{MAX_RETRY_ON_TIMEOUT})[/]"); await Task.Delay(5000); continue; }
                 lastException = new Exception($"Command timed out after retries.", ex); break;
             }
-            catch (Exception ex) { // Error tak terduga
+            catch (Exception ex) {
                 lastException = ex;
-                if (networkRetryCount == 0 && proxyRetryCount == 0 && timeoutRetryCount == 0) { // Coba retry sekali
+                if (networkRetryCount == 0 && proxyRetryCount == 0 && timeoutRetryCount == 0) {
                     networkRetryCount++; AnsiConsole.MarkupLine($"[yellow]Unexpected fail: {ex.Message.Split('\n').FirstOrDefault()?.Trim()}. Retrying once...[/]"); await Task.Delay(3000); continue;
                 }
-                break; // Gagal jika sudah pernah retry
+                break;
             }
         }
         throw lastException ?? new Exception("GH command failed.");
     }
 
-    // Fungsi RunCommandAsync tetap sama
     public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
     {
         var startInfo = CreateStartInfo(command, args, token);
@@ -86,7 +82,6 @@ public static class ShellHelper
         if (exitCode != 0) throw new Exception($"Command '{command}' failed (Exit Code: {exitCode}): {stderr}");
     }
 
-    // Fungsi RunInteractive tetap sama
      public static async Task RunInteractive(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false, RedirectStandardOutput = false, RedirectStandardError = false, RedirectStandardInput = false };
@@ -105,7 +100,6 @@ public static class ShellHelper
     }
 
 
-    // Fungsi RunInteractiveWithFullInput tetap sama
     public static async Task RunInteractiveWithFullInput(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false, RedirectStandardOutput = false, RedirectStandardError = false, RedirectStandardInput = false };
@@ -132,7 +126,6 @@ public static class ShellHelper
         catch (Exception ex) { AnsiConsole.MarkupLine("\n[yellow]"+ new string('═', 60) +"[/]"); AnsiConsole.MarkupLine($"[red]✗ Err run bot: {ex.Message.EscapeMarkup()}[/]"); try { if (!process.HasExited) process.Kill(true); } catch { } AnsiConsole.MarkupLine("\n[dim]Press Enter...[/]"); Console.ReadLine(); throw; }
     }
 
-    // Fungsi CreateStartInfo tetap sama
      private static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token) {
         var startInfo = new ProcessStartInfo {
             Arguments = args, RedirectStandardOutput = true, RedirectStandardError = true,
@@ -143,7 +136,6 @@ public static class ShellHelper
         return startInfo;
     }
 
-    // Fungsi SetEnvironmentVariables tetap sama
     private static void SetEnvironmentVariables(ProcessStartInfo startInfo, TokenEntry token, string command) {
         bool isGhCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? command.ToLower().EndsWith("gh.exe") || command.ToLower() == "gh"
@@ -159,8 +151,6 @@ public static class ShellHelper
         }
     }
 
-
-    // Fungsi SetFileNameAndArgs tetap sama
      private static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
          if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
             startInfo.FileName = "cmd.exe";
@@ -172,14 +162,13 @@ public static class ShellHelper
         }
     }
 
-    // Fungsi RunProcessAsync (dengan fix warning CS0168)
     private static async Task<(string stdout, string stderr, int exitCode)> RunProcessAsync(ProcessStartInfo startInfo, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS) {
         using var process = new Process { StartInfo = startInfo };
         var stdoutBuilder = new StringBuilder(); var stderrBuilder = new StringBuilder();
         var tcs = new TaskCompletionSource<(string, string, int)>();
         process.EnableRaisingEvents = true;
         process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
-        process.ErrorDataReceived += (s, e) => { if (e.Data != null) { stderrBuilder.AppendLine(e.Data); /* Optional log */ } };
+        process.ErrorDataReceived += (s, e) => { if (e.Data != null) { stderrBuilder.AppendLine(e.Data); } };
         process.Exited += (s, e) => { Task.Delay(200).ContinueWith(_ => tcs.TrySetResult((stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim(), process.ExitCode))); };
         CancellationTokenSource? timeoutCts = null;
         try {
@@ -189,14 +178,13 @@ public static class ShellHelper
             var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, timeoutCts.Token));
             if (completedTask != tcs.Task) { throw new TaskCanceledException($"Process timed out"); }
              return await tcs.Task;
-        } catch (TaskCanceledException) { // Tangkap timeout
+        } catch (TaskCanceledException) {
             AnsiConsole.MarkupLine($"[red]Timeout ({timeoutMilliseconds / 1000}s): {startInfo.FileName} {startInfo.Arguments?.Split(' ').FirstOrDefault()}[/]");
-            try { if (!process.HasExited) process.Kill(true); } catch { /* Ignore */ }
-            throw; // Lempar ulang
+            try { if (!process.HasExited) process.Kill(true); } catch { }
+            throw;
         } catch (Exception ex) { // Tangkap error start/lainnya
-            // Gunakan ex.Message di log
             AnsiConsole.MarkupLine($"[red]Failed run '{startInfo.FileName}': {ex.Message.Split('\n').FirstOrDefault()}[/]");
-            try { if (!process.HasExited) process.Kill(true); } catch { /* Ignore */ }
+            try { if (!process.HasExited) process.Kill(true); } catch { }
             return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim() + "\n" + ex.Message, process.HasExited ? process.ExitCode : -1);
         } finally { timeoutCts?.Dispose(); }
     }
