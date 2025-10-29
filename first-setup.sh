@@ -13,15 +13,9 @@ echo "========================================="
 # Ganti ke direktori workspace
 cd "${CODESPACE_VSCODE_FOLDER:-/workspaces/automation-hub}" || exit 1
 
-echo "[1/2] Installing essential tools (jq for JSON parsing)..."
-# jq dibutuhkan untuk extract secrets di auto-start.sh
-if ! command -v jq &> /dev/null; then
-    echo "   Installing jq..."
-    sudo apt-get update -qq && sudo apt-get install -y jq
-    echo "   ✓ jq installed"
-else
-    echo "   ✓ jq already installed"
-fi
+# === PERBAIKAN: Instalasi jq dipindah ke post-attach.sh ===
+echo "[1/2] Skipping essential tools (Handled by post-attach.sh)"
+# === AKHIR PERBAIKAN ===
 
 echo "[2/2] Installing proxysync dependencies..."
 if [ -f "proxysync/requirements.txt" ]; then
