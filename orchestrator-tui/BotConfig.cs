@@ -62,39 +62,39 @@ public class BotConfig
     
     public static string GetLocalBotPath(string configPath)
     {
-        var lastSegment = configPath.Split('/', '\\').Last();
+        var botName = configPath.Split('/', '\\').Last();
         
-        string targetFolder;
+        string searchRoot;
         if (configPath.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
         {
-            targetFolder = Path.Combine(LocalBotRoot, "PrivateKey");
+            searchRoot = Path.Combine(LocalBotRoot, "PrivateKey");
         }
         else if (configPath.Contains("token", StringComparison.OrdinalIgnoreCase))
         {
-            targetFolder = Path.Combine(LocalBotRoot, "Token");
+            searchRoot = Path.Combine(LocalBotRoot, "Token");
         }
         else
         {
-            targetFolder = LocalBotRoot;
+            searchRoot = LocalBotRoot;
         }
         
-        var localDir = new DirectoryInfo(targetFolder);
-        if (!localDir.Exists)
+        if (!Directory.Exists(searchRoot))
         {
-            AnsiConsole.MarkupLine($"[red]ERROR: Folder tidak ditemukan: {targetFolder}[/]");
-            return Path.Combine(targetFolder, lastSegment);
+            AnsiConsole.MarkupLine($"[red]ERROR: Search root tidak ada: {searchRoot}[/]");
+            return Path.Combine(searchRoot, botName);
         }
         
-        var matchingDir = localDir.GetDirectories()
-            .FirstOrDefault(d => d.Name.Equals(lastSegment, StringComparison.OrdinalIgnoreCase));
+        var matchingDir = Directory.GetDirectories(searchRoot, "*", SearchOption.TopDirectoryOnly)
+            .Select(d => new DirectoryInfo(d))
+            .FirstOrDefault(d => d.Name.Equals(botName, StringComparison.OrdinalIgnoreCase));
         
         if (matchingDir != null)
         {
             return matchingDir.FullName;
         }
         
-        AnsiConsole.MarkupLine($"[yellow]WARN: Folder '{lastSegment}' tidak ditemukan di {targetFolder}[/]");
-        return Path.Combine(targetFolder, lastSegment);
+        AnsiConsole.MarkupLine($"[yellow]WARN: Bot '{botName}' tidak ketemu di {searchRoot}[/]");
+        return Path.Combine(searchRoot, botName);
     }
 }
 
