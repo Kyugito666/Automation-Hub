@@ -3,12 +3,12 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Spectre.Console;
 using System.Net;
-using System.Threading; // <-- Pastikan ini ada
-using System.Threading.Tasks; // <-- Pastikan ini ada
+using System.Threading;
+using System.Threading.Tasks;
 
-namespace Orchestrator // <-- Namespace dimulai di sini
+namespace Orchestrator
 {
-    public static class ShellHelper // <-- Class dimulai di sini
+    public static class ShellHelper
     {
         private const int DEFAULT_TIMEOUT_MS = 120000;
         private const int SHORT_TIMEOUT_MS = 30000;
@@ -22,14 +22,11 @@ namespace Orchestrator // <-- Namespace dimulai di sini
         {
             var startInfo = CreateStartInfo("gh", args, token);
             Exception? lastException = null;
-
-            // Ambil token cancel global dengan benar
             var globalCancelToken = Program.GetMainCancellationToken();
 
             while (true)
             {
                 globalCancelToken.ThrowIfCancellationRequested();
-
                 var commandTimeoutCts = new CancellationTokenSource(timeoutMilliseconds);
                 string stdout = "", stderr = "";
                 int exitCode = -1;
@@ -39,10 +36,8 @@ namespace Orchestrator // <-- Namespace dimulai di sini
                     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(commandTimeoutCts.Token, globalCancelToken);
                     (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, linkedCts.Token);
 
-                    if (exitCode == 0)
-                    {
-                        return stdout;
-                    }
+                    if (exitCode == 0) return stdout;
+
                     AnsiConsole.MarkupLine($"[yellow]WARN: gh command failed (Exit {exitCode}). Analyzing error...[/]");
                     AnsiConsole.MarkupLine($"[grey]   CMD: gh {args}[/]");
                     AnsiConsole.MarkupLine($"[grey]   ERR: {stderr.Split('\n').FirstOrDefault()?.Trim()}[/]");
@@ -78,7 +73,6 @@ namespace Orchestrator // <-- Namespace dimulai di sini
                                       lowerStderr.Contains("unreachable network") || lowerStderr.Contains("unexpected eof");
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
-
                 if (isProxyAuthError) {
                     AnsiConsole.MarkupLine($"[yellow]Proxy Auth Error (407) detected. Attempting to rotate proxy...[/]");
                     if (TokenManager.RotateProxyForToken(token)) {
@@ -93,16 +87,12 @@ namespace Orchestrator // <-- Namespace dimulai di sini
                         _isAttemptingIpAuth = true;
                         bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync(globalCancelToken);
                         _isAttemptingIpAuth = false;
-
                         if (ipAuthSuccess) {
                             AnsiConsole.MarkupLine("[magenta]IP Auth successful. Retrying command...[/]");
                             continue;
-                        } else {
-                             AnsiConsole.MarkupLine("[red]Automatic IP Auth failed. Treating as persistent network error.[/]");
-                        }
-                    } else {
-                         AnsiConsole.MarkupLine("[yellow]IP Auth already in progress, treating as network error.[/]");
-                    }
+                        } else { AnsiConsole.MarkupLine("[red]Automatic IP Auth failed. Treating as persistent network error.[/]"); }
+                    } else { AnsiConsole.MarkupLine("[yellow]IP Auth already in progress, treating as network error.[/]"); }
+
                      AnsiConsole.MarkupLine($"[magenta]Persistent Proxy/Network issue. Retrying command in {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
                      try { await Task.Delay(NETWORK_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; }
                      continue;
@@ -126,7 +116,6 @@ namespace Orchestrator // <-- Namespace dimulai di sini
                 lastException = new Exception($"Unhandled GH Command Failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim()}");
                 try { await Task.Delay(2000, globalCancelToken); } catch (OperationCanceledException) { throw; }
                 continue;
-
             } // Akhir while loop
 
             throw lastException ?? new Exception("GH command failed after exhausting retry/error handling logic.");
@@ -155,9 +144,7 @@ namespace Orchestrator // <-- Namespace dimulai di sini
                 using var reg = cancellationToken.Register(() => { try { if (!process.HasExited) process.Kill(true); } catch { } });
                 await process.WaitForExitAsync(cancellationToken);
                 if (!cancellationToken.IsCancellationRequested && process.ExitCode != 0 && process.ExitCode != -1)
-                {
-                    AnsiConsole.MarkupLine($"[yellow]Interactive process exited with code: {process.ExitCode}[/]");
-                }
+                { AnsiConsole.MarkupLine($"[yellow]Interactive process exited with code: {process.ExitCode}[/]"); }
             } catch (OperationCanceledException) {
                 AnsiConsole.MarkupLine("[yellow]Interactive operation cancelled.[/]");
                 try { if (!process.HasExited) process.Kill(true); } catch { }
@@ -195,11 +182,7 @@ namespace Orchestrator // <-- Namespace dimulai di sini
 
                 if (completedTask == cancellationTcs.Task || cancellationToken.IsCancellationRequested) {
                     AnsiConsole.MarkupLine("[yellow]Cancellation requested. Terminating process...[/]");
-                    try {
-                        if (!process.HasExited) {
-                            process.Kill(true);
-                            await Task.WhenAny(processExitedTcs.Task, Task.Delay(1500));
-                        }
+                    try { if (!process.HasExited) { process.Kill(true); await Task.WhenAny(processExitedTcs.Task, Task.Delay(1500)); }
                     } catch (InvalidOperationException) { /* Process already exited */ }
                     catch (Exception killEx) { AnsiConsole.MarkupLine($"[red]Error terminating process: {killEx.Message}[/]"); }
                     throw new OperationCanceledException();
@@ -208,14 +191,10 @@ namespace Orchestrator // <-- Namespace dimulai di sini
                 await Task.Delay(100);
                 int exitCode = process.ExitCode;
 
-                if (exitCode == 0) {
-                    AnsiConsole.MarkupLine($"[green]✓ Process exited normally (Code: {exitCode})[/]");
-                } else {
-                    AnsiConsole.MarkupLine($"[yellow]Process exited with non-zero code: {exitCode}[/]");
-                }
+                if (exitCode == 0) { AnsiConsole.MarkupLine($"[green]✓ Process exited normally (Code: {exitCode})[/]"); }
+                else { AnsiConsole.MarkupLine($"[yellow]Process exited with non-zero code: {exitCode}[/]"); }
 
-            } catch (OperationCanceledException) {
-                 AnsiConsole.MarkupLine("[yellow]Interactive session cancelled.[/]");
+            } catch (OperationCanceledException) { AnsiConsole.MarkupLine("[yellow]Interactive session cancelled.[/]");
             } catch (Exception ex) {
                 AnsiConsole.MarkupLine("\n[yellow]"+ new string('═', 60) +"[/]");
                 AnsiConsole.MarkupLine($"[red]✗ Error running full interactive process: {ex.Message.EscapeMarkup()}[/]");
@@ -245,7 +224,12 @@ namespace Orchestrator // <-- Namespace dimulai di sini
             if (!string.IsNullOrEmpty(token.Proxy)) {
                 startInfo.EnvironmentVariables["https_proxy"] = token.Proxy; startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
                 startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy; startInfo.EnvironmentVariables["HTTP_PROXY"] = token.Proxy;
-                string noProxy = "localhost,127.0.0.1,.github.com,github.com,api.github.com";
+
+                // === PERBAIKAN: Hapus domain GitHub dari NO_PROXY ===
+                // Biarkan SEMUA traffic gh (termasuk API calls) lewat proxy
+                string noProxy = "localhost,127.0.0.1";
+                // === AKHIR PERBAIKAN ===
+
                 startInfo.EnvironmentVariables["NO_PROXY"] = noProxy; startInfo.EnvironmentVariables["no_proxy"] = noProxy;
             } else {
                  startInfo.EnvironmentVariables.Remove("https_proxy"); startInfo.EnvironmentVariables.Remove("http_proxy");
@@ -303,26 +287,16 @@ namespace Orchestrator // <-- Namespace dimulai di sini
 
                 return await tcs.Task;
             }
-            catch (TaskCanceledException) {
-                 throw;
-            }
-            catch (OperationCanceledException) {
-                throw;
-            }
+            catch (TaskCanceledException) { throw; }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex) {
                 AnsiConsole.MarkupLine($"[red]Error in RunProcessAsync: {ex.Message}[/]");
                 try { if (process != null && !process.HasExited) process.Kill(true); } catch { }
                 return (stdoutBuilder.ToString().TrimEnd(), (stderrBuilder.ToString().TrimEnd() + "\n" + ex.Message).Trim(), process?.ExitCode ?? -1);
             } finally {
-                // === PERBAIKAN: Gunakan Dispose(), bukan DisposeAsync() ===
-                cancellationRegistration.Dispose(); // Dispose sinkronus sudah cukup
-                // === AKHIR PERBAIKAN ===
+                cancellationRegistration.Dispose();
             }
-        } // Akhir RunProcessAsync
+        }
 
-        // === PERBAIKAN: Hapus referensi _programExitCts yang salah tempat ===
-        // private static CancellationTokenSource _programExitCts => Program._mainCts; // INI DIHAPUS
-        // === AKHIR PERBAIKAN ===
-
-    } // Kurung kurawal penutup Class ShellHelper
-} // Kurung kurawal penutup Namespace Orchestrator
+    } // Akhir Class ShellHelper
+} // Akhir Namespace Orchestrator
