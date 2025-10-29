@@ -57,25 +57,14 @@ public static class BotUpdater
         AnsiConsole.Write(table);
     }
 
+    // === PERBAIKAN: Ganti logika D:\SC ===
     private static string GetLocalBotPathForUpdate(string configPath)
     {
-        configPath = configPath.Replace('/', '\\');
-        var botName = Path.GetFileName(configPath);
-        
-        if (configPath.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
-        {
-            return Path.Combine(@"D:\SC\PrivateKey", botName);
-        }
-        else if (configPath.Contains("token", StringComparison.OrdinalIgnoreCase))
-        {
-            return Path.Combine(@"D:\SC\Token", botName);
-        }
-        else
-        {
-            AnsiConsole.MarkupLine($"[yellow]Warning: Path format tidak dikenali: {configPath}[/yellow]");
-            return Path.Combine(@"D:\SC", botName);
-        }
+        // Gunakan logika yang SAMA PERSIS seperti BotConfig.cs yang baru
+        // Ini akan mengembalikan path lengkap di dalam folder repo lokal
+        return BotConfig.GetLocalBotPath(configPath);
     }
+    // === AKHIR PERBAIKAN ===
     
     public static async Task UpdateAllBotsLocally()
     {
@@ -83,7 +72,8 @@ public static class BotUpdater
         if (config == null) return;
 
         AnsiConsole.MarkupLine($"[cyan]Mulai proses update LOKAL untuk {config.BotsAndTools.Count} entri...[/]");
-        AnsiConsole.MarkupLine("[yellow]INFO: Bot akan di-update di D:\\SC\\PrivateKey dan D:\\SC\\Token[/]");
+        // === PERBAIKAN: Hapus info D:\SC ===
+        AnsiConsole.MarkupLine("[yellow]INFO: Bot akan di-update di folder /bots/ di dalam repo ini.[/]");
 
         int successCount = 0;
         int failCount = 0;
@@ -99,6 +89,7 @@ public static class BotUpdater
                 continue;
             }
             
+            // === PERBAIKAN: Gunakan fungsi baru ===
             string targetPath = GetLocalBotPathForUpdate(bot.Path);
             
             AnsiConsole.MarkupLine($"   [dim]Target: {targetPath.EscapeMarkup()}[/]");
