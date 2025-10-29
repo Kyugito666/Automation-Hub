@@ -3,162 +3,155 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Spectre.Console;
 using System.Net;
+using System.Threading; // <-- Tambahkan ini
+using System.Threading.Tasks; // <-- Tambahkan ini
 
 namespace Orchestrator;
 
 public static class ShellHelper
 {
-    private const int DEFAULT_TIMEOUT_MS = 120000; // 2 minutes default
-    private const int SHORT_TIMEOUT_MS = 30000; // 30 seconds for quick checks
-    private const int LONG_TIMEOUT_MS = 600000; // 10 minutes for create
-    private const int NETWORK_RETRY_DELAY_MS = 30000; // Delay 30s for network errors
-    private const int TIMEOUT_RETRY_DELAY_MS = 15000; // Delay 15s for command timeouts
+    private const int DEFAULT_TIMEOUT_MS = 120000;
+    private const int SHORT_TIMEOUT_MS = 30000;
+    private const int LONG_TIMEOUT_MS = 600000;
+    private const int NETWORK_RETRY_DELAY_MS = 30000;
+    private const int TIMEOUT_RETRY_DELAY_MS = 15000;
 
     private static bool _isAttemptingIpAuth = false;
 
      public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
     {
         var startInfo = CreateStartInfo("gh", args, token);
-        Exception? lastException = null; // Store the final exception if retry loop exits
+        Exception? lastException = null;
 
-        // Infinite Retry Loop
+        // === PERBAIKAN: Gunakan CancellationTokenSource baru untuk delay ===
+        // Kita butuh token yang BISA dibatalkan oleh Ctrl+C global,
+        // tapi TIDAK sama dengan commandTimeoutCts
+        using var globalCancelSource = CancellationTokenSource.CreateLinkedTokenSource(Program.GetMainCancellationToken()); // Ambil token global
+        var globalCancelToken = globalCancelSource.Token;
+        // === AKHIR PERBAIKAN ===
+
+
         while (true)
         {
-            // Use a CancellationTokenSource for command-specific timeout
+            // Cek pembatalan global di awal loop
+            globalCancelToken.ThrowIfCancellationRequested();
+
             var commandTimeoutCts = new CancellationTokenSource(timeoutMilliseconds);
             string stdout = "", stderr = "";
             int exitCode = -1;
 
             try
             {
-                // Run the process with the command timeout token
-                (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, commandTimeoutCts.Token);
+                // Gabungkan timeout command DENGAN cancel global
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(commandTimeoutCts.Token, globalCancelToken);
+                (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, linkedCts.Token); // Pakai linked token
 
-                // --- SUCCESS ---
                 if (exitCode == 0)
                 {
-                    // AnsiConsole.MarkupLine($"[grey]DEBUG: Command OK (Exit 0): {args.Split(' ').FirstOrDefault()}[/]");
-                    return stdout; // Return successful output
+                    return stdout;
                 }
-
-                // --- FAILURE (Exit Code != 0) ---
-                // Log the failure clearly before analyzing
                 AnsiConsole.MarkupLine($"[yellow]WARN: gh command failed (Exit {exitCode}). Analyzing error...[/]");
                 AnsiConsole.MarkupLine($"[grey]   CMD: gh {args}[/]");
                 AnsiConsole.MarkupLine($"[grey]   ERR: {stderr.Split('\n').FirstOrDefault()?.Trim()}[/]");
-
             }
-            // --- CATCH COMMAND TIMEOUT ---
-            catch (TaskCanceledException) // Specifically catches the commandTimeoutCts cancellation
+            // Tangkap timeout command (dari commandTimeoutCts)
+            catch (OperationCanceledException) when (commandTimeoutCts.IsCancellationRequested)
             {
                 AnsiConsole.MarkupLine($"[yellow]Command timed out ({timeoutMilliseconds / 1000}s). Retrying in {TIMEOUT_RETRY_DELAY_MS / 1000}s...[/]");
                 AnsiConsole.MarkupLine($"[grey]   CMD: gh {args}[/]");
-                try { await Task.Delay(TIMEOUT_RETRY_DELAY_MS, _mainCts.Token); } catch (OperationCanceledException) { throw; } // Allow main cancellation during delay
-                continue; // Retry the same command
+                // === PERBAIKAN: Pakai globalCancelToken untuk delay ===
+                try { await Task.Delay(TIMEOUT_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; }
+                continue;
             }
-            // --- CATCH USER CANCELLATION (Ctrl+C) ---
-            catch (OperationCanceledException) // Catches cancellation from _mainCts (passed down or triggered by handler)
+            // Tangkap cancel global (dari _mainCts via globalCancelToken)
+            catch (OperationCanceledException) when (globalCancelToken.IsCancellationRequested)
             {
-                AnsiConsole.MarkupLine("[yellow]Command cancelled by user (OperationCanceled).[/]");
-                throw; // Re-throw to stop the main loop or calling function
+                AnsiConsole.MarkupLine("[yellow]Command cancelled by user (Global Cancel).[/]");
+                throw;
             }
-            // --- CATCH UNEXPECTED ERRORS DURING PROCESS RUN ---
             catch (Exception ex)
             {
                 AnsiConsole.MarkupLine($"[red]ShellHelper Exception during RunProcessAsync: {ex.Message.Split('\n').FirstOrDefault()?.Trim()}[/]");
                 AnsiConsole.MarkupLine($"[yellow]Retrying in {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
-                 try { await Task.Delay(NETWORK_RETRY_DELAY_MS, _mainCts.Token); } catch (OperationCanceledException) { throw; } // Allow cancel
-                continue; // Retry
+                 // === PERBAIKAN: Pakai globalCancelToken untuk delay ===
+                 try { await Task.Delay(NETWORK_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; }
+                continue;
             }
 
-            // --- Analyze stderr if exitCode != 0 ---
             string lowerStderr = stderr.ToLowerInvariant();
-            bool isRateLimit = lowerStderr.Contains("api rate limit exceeded") || lowerStderr.Contains("403 forbidden"); // More specific 403
-            bool isAuthError = lowerStderr.Contains("bad credentials") || lowerStderr.Contains("401 unauthorized"); // More specific 401
-            bool isProxyAuthError = lowerStderr.Contains("407 proxy authentication required"); // More specific 407
-            // === PERBAIKAN: Tambahkan "unexpected eof" ===
+            bool isRateLimit = lowerStderr.Contains("api rate limit exceeded") || lowerStderr.Contains("403 forbidden");
+            bool isAuthError = lowerStderr.Contains("bad credentials") || lowerStderr.Contains("401 unauthorized");
+            bool isProxyAuthError = lowerStderr.Contains("407 proxy authentication required");
             bool isNetworkError = lowerStderr.Contains("dial tcp") || lowerStderr.Contains("connection refused") ||
                                   lowerStderr.Contains("i/o timeout") || lowerStderr.Contains("error connecting") ||
                                   lowerStderr.Contains("wsarecv") || lowerStderr.Contains("forcibly closed") ||
                                   lowerStderr.Contains("resolve host") || lowerStderr.Contains("tls handshake timeout") ||
-                                  lowerStderr.Contains("unreachable network") || lowerStderr.Contains("unexpected eof"); // <-- DITAMBAHKAN DI SINI
-            // === AKHIR PERBAIKAN ===
-            bool isNotFoundError = lowerStderr.Contains("404 not found"); // More specific 404
+                                  lowerStderr.Contains("unreachable network") || lowerStderr.Contains("unexpected eof");
+            bool isNotFoundError = lowerStderr.Contains("404 not found");
 
-            // --- Error Handling Logic ---
 
-            // 1. Proxy Auth Error (407): Rotate -> IP Auth -> Network Error Fallback
             if (isProxyAuthError) {
                 AnsiConsole.MarkupLine($"[yellow]Proxy Auth Error (407) detected. Attempting to rotate proxy...[/]");
                 if (TokenManager.RotateProxyForToken(token)) {
-                    startInfo = CreateStartInfo("gh", args, token); // Update ProcessStartInfo with the new proxy
+                    startInfo = CreateStartInfo("gh", args, token);
                     AnsiConsole.MarkupLine($"[cyan]Proxy rotated. Retrying command immediately...[/]");
-                    await Task.Delay(1000); // Short delay after rotation
-                    continue; // Retry command with new proxy
+                    // === PERBAIKAN: Pakai globalCancelToken untuk delay ===
+                    try { await Task.Delay(1000, globalCancelToken); } catch (OperationCanceledException) { throw; }
+                    continue;
                 }
 
-                // Rotation failed (no more proxies?), try IP Auth
                 AnsiConsole.MarkupLine("[yellow]Proxy rotation failed or no alternative proxies. Attempting automatic IP Authorization...[/]");
-                if (!_isAttemptingIpAuth) { // Prevent recursive IP Auth attempts
+                if (!_isAttemptingIpAuth) {
                     _isAttemptingIpAuth = true;
-                    bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync(_mainCts.Token); // Pass main cancel token
+                    // === PERBAIKAN: Pakai globalCancelToken untuk IP Auth ===
+                    bool ipAuthSuccess = await ProxyManager.RunIpAuthorizationOnlyAsync(globalCancelToken);
                     _isAttemptingIpAuth = false;
 
                     if (ipAuthSuccess) {
                         AnsiConsole.MarkupLine("[magenta]IP Auth successful. Retrying command...[/]");
-                        continue; // Retry the original command
+                        continue;
                     } else {
                          AnsiConsole.MarkupLine("[red]Automatic IP Auth failed. Treating as persistent network error.[/]");
-                         // Let it fall through to the Network Error handling below
                     }
                 } else {
                      AnsiConsole.MarkupLine("[yellow]IP Auth already in progress, treating as network error.[/]");
-                     // Fall through to network error
                 }
-                // If IP Auth fails or was already running, treat as a Network Error for infinite retry
                  AnsiConsole.MarkupLine($"[magenta]Persistent Proxy/Network issue. Retrying command in {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
-                 try { await Task.Delay(NETWORK_RETRY_DELAY_MS, _mainCts.Token); } catch (OperationCanceledException) { throw; }
+                 // === PERBAIKAN: Pakai globalCancelToken untuk delay ===
+                 try { await Task.Delay(NETWORK_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; }
                  continue;
             }
 
-            // 2. General Network Error (Includes EOF, connection refused, etc., or failed 407): Infinite Retry
             if (isNetworkError) {
                 AnsiConsole.MarkupLine($"[magenta]Network error detected. Retrying command in {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
                 AnsiConsole.MarkupLine($"[grey]   (Detail: {stderr.Split('\n').FirstOrDefault()?.Trim()})[/]");
-                try { await Task.Delay(NETWORK_RETRY_DELAY_MS, _mainCts.Token); } catch (OperationCanceledException) { throw; } // Allow cancel during delay
-                continue; // Retry the same command
+                // === PERBAIKAN: Pakai globalCancelToken untuk delay ===
+                try { await Task.Delay(NETWORK_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; }
+                continue;
             }
 
-            // 3. Fatal Errors (Auth, Rate Limit, Not Found): Give up immediately
             if (isAuthError || isRateLimit || isNotFoundError) {
                 string errorType = isAuthError ? "Authentication (401)" : isRateLimit ? "Rate Limit/Forbidden (403)" : "Not Found (404)";
                 AnsiConsole.MarkupLine($"[red]FATAL GH Error: {errorType}. Command failed permanently.[/]");
                 lastException = new Exception($"GH Command Failed ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim()}");
-                break; // Exit the while(true) loop
+                break;
             }
 
-            // 4. Other Unhandled Errors: Consider fatal after one immediate retry attempt
             AnsiConsole.MarkupLine($"[red]Unhandled gh command error (Exit {exitCode}). Attempting one immediate retry...[/]");
             lastException = new Exception($"Unhandled GH Command Failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim()}");
-            await Task.Delay(2000); // Short delay before one final try
-            // If it fails again, the loop will catch it, not recognize the error, and break with this lastException.
-            // If it succeeds on the retry, the loop will return the result.
-            // This acts as a single retry for truly weird errors.
+             // === PERBAIKAN: Pakai globalCancelToken untuk delay ===
+            try { await Task.Delay(2000, globalCancelToken); } catch (OperationCanceledException) { throw; }
             continue;
 
-        } // End while(true)
+        }
 
-        // If the loop was exited via 'break', throw the stored fatal exception
         throw lastException ?? new Exception("GH command failed after exhausting retry/error handling logic.");
-    } // End RunGhCommand
+    }
 
-    // --- RunCommandAsync, RunInteractive, RunInteractiveWithFullInput ---
-    // --- CreateStartInfo, SetEnvironmentVariables, SetFileNameAndArgs ---
-    // --- RunProcessAsync ---
-    // (These helper functions remain unchanged from the previous correct version)
-    // (Salin dari versi sebelumnya ke sini)
+    // --- Sisa Fungsi (RunCommandAsync, RunInteractive, dll.) TIDAK BERUBAH ---
+    // --- Cukup copy-paste dari versi sebelumnya yang sudah benar ---
 
-    public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
+     public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
     {
         // Pass CancellationToken.None as this is meant for non-cancellable background tasks mostly
         var startInfo = CreateStartInfo(command, args, token);
@@ -289,18 +282,14 @@ public static class ShellHelper
             ? command.ToLower().EndsWith("gh.exe") || command.ToLower() == "gh"
             : command == "gh";
         if (isGhCommand) {
-            // AnsiConsole.MarkupLine($"[grey]DEBUG: Setting GH_TOKEN: {TokenManager.MaskToken(token.Token)}[/]");
             startInfo.EnvironmentVariables["GH_TOKEN"] = token.Token;
         }
         if (!string.IsNullOrEmpty(token.Proxy)) {
-            // AnsiConsole.MarkupLine($"[grey]DEBUG: Setting Proxy: {TokenManager.MaskProxy(token.Proxy)}[/]");
             startInfo.EnvironmentVariables["https_proxy"] = token.Proxy; startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
             startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy; startInfo.EnvironmentVariables["HTTP_PROXY"] = token.Proxy;
-            // Set NO_PROXY for common local/internal addresses
-            string noProxy = "localhost,127.0.0.1,.github.com,github.com,api.github.com"; // Added github domains
+            string noProxy = "localhost,127.0.0.1,.github.com,github.com,api.github.com";
             startInfo.EnvironmentVariables["NO_PROXY"] = noProxy; startInfo.EnvironmentVariables["no_proxy"] = noProxy;
         } else {
-            // AnsiConsole.MarkupLine($"[grey]DEBUG: Unsetting Proxy variables[/]");
              startInfo.EnvironmentVariables.Remove("https_proxy"); startInfo.EnvironmentVariables.Remove("http_proxy");
              startInfo.EnvironmentVariables.Remove("HTTPS_PROXY"); startInfo.EnvironmentVariables.Remove("HTTP_PROXY");
              startInfo.EnvironmentVariables.Remove("NO_PROXY"); startInfo.EnvironmentVariables.Remove("no_proxy");
@@ -310,11 +299,9 @@ public static class ShellHelper
      private static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
          if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
             startInfo.FileName = "cmd.exe";
-            // Ensure proper quoting for cmd.exe /c
-            startInfo.Arguments = $"/c \"\"{command}\" {args}\""; // Encapsulate command and args
+            startInfo.Arguments = $"/c \"\"{command}\" {args}\"";
         } else {
             startInfo.FileName = "/bin/bash";
-            // Escape double quotes within the arguments string for bash -c "..."
             string escapedArgs = args.Replace("\"", "\\\"");
             startInfo.Arguments = $"-c \"{command} {escapedArgs}\"";
         }
@@ -325,72 +312,61 @@ public static class ShellHelper
         using var process = new Process { StartInfo = startInfo };
         var stdoutBuilder = new StringBuilder();
         var stderrBuilder = new StringBuilder();
-        // Use TaskCompletionSource with RunContinuationsAsynchronously for better performance
         var tcs = new TaskCompletionSource<(string, string, int)>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         process.EnableRaisingEvents = true;
 
-        // Use lambda expressions for handlers
         process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
         process.ErrorDataReceived += (s, e) => { if (e.Data != null) stderrBuilder.AppendLine(e.Data); };
         process.Exited += (s, e) => {
-             // Short delay might still be needed for streams to flush, but TrySetResult is safer
-             // Task.Delay(100).ContinueWith(_ => tcs.TrySetResult(...)); // Less ideal
              tcs.TrySetResult((stdoutBuilder.ToString().TrimEnd(), stderrBuilder.ToString().TrimEnd(), process.ExitCode));
         };
 
         CancellationTokenRegistration cancellationRegistration = default;
         try {
             if (!process.Start()) {
-                 // Throw exception if process fails to start
                  throw new InvalidOperationException($"Failed to start process: {startInfo.FileName}");
             }
 
-            // Begin reading output streams
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            // Register cancellation callback
             cancellationRegistration = cancellationToken.Register(() => {
-                // Use TrySetCanceled for proper cancellation propagation
                 if (tcs.TrySetCanceled(cancellationToken)) {
                     try {
                         if (!process.HasExited) {
                              AnsiConsole.MarkupLine($"[grey]DEBUG: Cancellation triggered, attempting to kill process {process.Id}...[/]");
-                             process.Kill(true); // Attempt to kill the entire process tree
+                             process.Kill(true);
                         }
                     } catch (InvalidOperationException) { /* Process already exited */ }
                     catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error during process kill on cancellation: {ex.Message}[/]"); }
                 }
             });
 
-            // Asynchronously wait for the task completion source (either exit or cancellation)
             return await tcs.Task;
         }
         catch (TaskCanceledException) {
-             // This is expected if cancellationToken is triggered
-             // AnsiConsole.MarkupLine($"[grey]DEBUG: RunProcessAsync TaskCanceledException caught.[/]");
-             throw; // Re-throw TaskCanceledException
+             throw;
         }
         catch (OperationCanceledException) {
-            // This might happen if the token passed in was already cancelled
-             // AnsiConsole.MarkupLine($"[grey]DEBUG: RunProcessAsync OperationCanceledException caught.[/]");
-            throw; // Re-throw OperationCanceledException
+            throw;
         }
         catch (Exception ex) {
-            // Catch other exceptions (e.g., process start failure)
             AnsiConsole.MarkupLine($"[red]Error in RunProcessAsync: {ex.Message}[/]");
-            // Try to ensure process is killed if it somehow started
             try { if (process != null && !process.HasExited) process.Kill(true); } catch { }
-            // Return failure state, including the exception message in stderr
             return (stdoutBuilder.ToString().TrimEnd(), (stderrBuilder.ToString().TrimEnd() + "\n" + ex.Message).Trim(), process?.ExitCode ?? -1);
         } finally {
-            // IMPORTANT: Dispose of the cancellation registration
             await cancellationRegistration.DisposeAsync();
         }
-    } // End RunProcessAsync
+    }
 
-    // Reference _mainCts from Program.cs for global cancellation signal
-    private static CancellationTokenSource _programExitCts => Program._mainCts;
+    // === PERBAIKAN: Hapus referensi _programExitCts, ganti cara ambil token ===
+    // Fungsi ini tidak lagi dibutuhkan, kita pakai Program.GetMainCancellationToken()
+    // private static CancellationTokenSource _programExitCts => Program._mainCts;
 
 } // End Class
+
+// === PERBAIKAN: Tambahkan ini di Program.cs untuk akses token global ===
+// Letakkan ini di dalam class Program
+public static CancellationToken GetMainCancellationToken() => _mainCts.Token;
+// === AKHIR PERBAIKAN ===
