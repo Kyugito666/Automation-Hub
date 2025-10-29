@@ -24,34 +24,50 @@ public static class CredentialMigrator
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory!, "..", "..", "..", ".."));
     }
     
-    private static string? GetOldPath()
+    // === PERBAIKAN: Ganti nama ke plural dan baca SEMUA path ===
+    private static List<string> GetOldPaths()
     {
+        var paths = new List<string>();
         if (!File.Exists(OldPathFile))
         {
             AnsiConsole.MarkupLine($"[red]✗ File '{OldPathFile}' tidak ditemukan.[/]");
-            AnsiConsole.MarkupLine($"[dim]   Buat file itu dan isi dengan path root lama (misal: D:\\SC)[/]");
-            return null;
+            AnsiConsole.MarkupLine($"[dim]   Buat file itu dan isi dengan path root lama (misal: D:\\SC\\PrivateKey)[/]");
+            return paths;
         }
         try
         {
-            var path = File.ReadAllLines(OldPathFile)
-                .Select(l => l.Trim())
-                .FirstOrDefault(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#"));
-            
-            if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+            var lines = File.ReadAllLines(OldPathFile);
+            foreach (var line in lines)
             {
-                AnsiConsole.MarkupLine($"[red]✗ Path di '{OldPathFile}' ('{path ?? "N/A"}') tidak valid atau tidak ditemukan.[/]");
-                return null;
+                var path = line.Trim();
+                if (string.IsNullOrEmpty(path) || path.StartsWith("#"))
+                    continue;
+
+                if (Directory.Exists(path))
+                {
+                    AnsiConsole.MarkupLine($"[green]✓ Path Lama Ditemukan:[/] {path}");
+                    paths.Add(path);
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine($"[yellow]✗ Path di '{OldPathFile}' ('{path}') tidak valid atau tidak ditemukan. Dilewati.[/]");
+                }
             }
-            AnsiConsole.MarkupLine($"[green]✓ Path Lama ditemukan:[/] {path}");
-            return path;
+
+            if (!paths.Any())
+            {
+                AnsiConsole.MarkupLine($"[red]✗ Tidak ada path lama yang valid di '{OldPathFile}'.[/]");
+            }
+            
+            return paths;
         }
         catch (Exception ex)
         {
             AnsiConsole.MarkupLine($"[red]✗ Gagal membaca '{OldPathFile}': {ex.Message.EscapeMarkup()}[/]");
-            return null;
+            return paths;
         }
     }
+    // === AKHIR PERBAIKAN ===
 
     private static List<string> LoadUploadFileList()
     {
@@ -74,8 +90,13 @@ public static class CredentialMigrator
         AnsiConsole.Write(new FigletText("Migrator").Color(Color.Orange1));
         AnsiConsole.MarkupLine("[bold]Memindahkan file kredensial LOKAL ke struktur repo.[/]");
         
-        var oldRootPath = GetOldPath();
-        if (oldRootPath == null) return;
+        // === PERBAIKAN: Gunakan GetOldPaths() (plural) ===
+        var oldRootPaths = GetOldPaths();
+        if (oldRootPaths == null || !oldRootPaths.Any())
+        {
+            AnsiConsole.MarkupLine($"[red]✗ Tidak ada path root lama yang valid. Isi 'config/localpath.txt' terlebih dahulu.[/]");
+            return;
+        }
         
         var config = BotConfig.Load();
         if (config == null || !config.BotsAndTools.Any())
@@ -92,6 +113,7 @@ public static class CredentialMigrator
         }
 
         AnsiConsole.MarkupLine($"[dim]Akan memindai {config.BotsAndTools.Count} bot untuk {filesToLookFor.Count} jenis file...[/]");
+        AnsiConsole.MarkupLine($"[dim]Mencari di {oldRootPaths.Count} path root...[/]");
         AnsiConsole.MarkupLine("[yellow]PERINGATAN: File yang ada di tujuan (repo /bots/...) AKAN DITIMPA![/]");
         if (!AnsiConsole.Confirm("\n[bold orange1]Lanjutkan migrasi?[/]", false))
         {
@@ -102,6 +124,7 @@ public static class CredentialMigrator
         int botsProcessed = 0;
         int filesCopied = 0;
         int filesSkipped = 0;
+        int botsSkipped = 0;
 
         await AnsiConsole.Progress()
             .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
@@ -114,33 +137,40 @@ public static class CredentialMigrator
                     if (cancellationToken.IsCancellationRequested) break;
                     
                     task.Description = $"[green]Cek:[/] {bot.Name}";
-                    
-                    // Dapatkan path LAMA (D:\SC\...)
-                    // Kita pakai logika lama dari BotUpdater/BotConfig
-                    var oldBotName = bot.Path.Split('/', '\\').Last();
-                    string oldBotDir;
-                    if (bot.Path.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
-                        oldBotDir = Path.Combine(oldRootPath, "PrivateKey", oldBotName);
-                    else if (bot.Path.Contains("token", StringComparison.OrdinalIgnoreCase))
-                        oldBotDir = Path.Combine(oldRootPath, "Token", oldBotName);
-                    else if (bot.Name == "ProxySync-Tool") // ProxySync tidak punya kredensial
+
+                    if (bot.Name == "ProxySync-Tool") // ProxySync tidak punya kredensial
                     {
                         task.Increment(1);
                         continue;
                     }
-                    else
-                        oldBotDir = Path.Combine(oldRootPath, oldBotName);
+                    
+                    // Dapatkan nama folder bot dari path config (e.g., "turnautobot-nte")
+                    var oldBotName = bot.Path.Split('/', '\\').Last();
+                    string? foundOldBotDir = null;
+
+                    // === PERBAIKAN: Cari folder bot di SEMUA root path ===
+                    foreach (var rootPath in oldRootPaths)
+                    {
+                        string potentialPath = Path.Combine(rootPath, oldBotName);
+                        if (Directory.Exists(potentialPath))
+                        {
+                            foundOldBotDir = potentialPath;
+                            break; // Ditemukan
+                        }
+                    }
 
                     // Dapatkan path BARU (automation-hub/bots/...)
-                    // Ini menggunakan logika BotConfig.cs yang SUDAH DIPERBARUI
                     string newBotDir = BotConfig.GetLocalBotPath(bot.Path);
 
-                    if (!Directory.Exists(oldBotDir))
+                    if (foundOldBotDir == null)
                     {
-                        // AnsiConsole.MarkupLine($"[dim]SKIP {bot.Name}: Folder lama tidak ada ({oldBotDir.EscapeMarkup()})[/]");
+                        // AnsiConsole.MarkupLine($"[dim]SKIP {bot.Name}: Folder lama '{oldBotName}' tidak ada di {oldRootPaths.Count} path root[/]");
+                        botsSkipped++;
                         task.Increment(1);
                         continue;
                     }
+                    
+                    // === AKHIR PERBAIKAN ===
                     
                     botsProcessed++;
                     Directory.CreateDirectory(newBotDir); // Buat folder baru jika belum ada
@@ -149,7 +179,7 @@ public static class CredentialMigrator
                     {
                         if (cancellationToken.IsCancellationRequested) break;
                         
-                        string oldFilePath = Path.Combine(oldBotDir, fileName);
+                        string oldFilePath = Path.Combine(foundOldBotDir, fileName);
                         string newFilePath = Path.Combine(newBotDir, fileName);
 
                         if (File.Exists(oldFilePath))
@@ -168,15 +198,15 @@ public static class CredentialMigrator
                         }
                     }
                     task.Increment(1);
-                    await Task.Delay(10, cancellationToken);
+                    await Task.Delay(5, cancellationToken); // Percepat delay
                 }
             });
         
         AnsiConsole.MarkupLine($"\n[bold green]✅ Migrasi Selesai.[/]");
-        AnsiConsole.MarkupLine($"[dim]   Bot diproses: {botsProcessed}[/]");
+        AnsiConsole.MarkupLine($"[dim]   Bot ditemukan & diproses: {botsProcessed} (Dilewati: {botsSkipped})[/]");
         AnsiConsole.MarkupLine($"[dim]   File disalin: {filesCopied}[/]");
         AnsiConsole.MarkupLine($"[dim]   File gagal: {filesSkipped}[/]");
-        AnsiConsole.MarkupLine($"[yellow]PENTING: Pastikan file di 'config/localpath.txt' sudah benar jika ada file yang terlewat.[/]");
+        AnsiConsole.MarkupLine($"[yellow]PENTING: Jika 'Bot diproses' masih 0, pastikan nama folder di D:\\SC... SAMA PERSIS dengan nama folder di 'path' bots_config.json.[/]");
         AnsiConsole.MarkupLine($"[red]Kredensial Anda sekarang ada di folder /bots/ di dalam repo ini. Folder ini sudah di-ignore oleh .gitignore.[/]");
     }
 }
