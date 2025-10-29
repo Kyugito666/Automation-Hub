@@ -14,7 +14,9 @@ internal static class Program
     private static CancellationTokenSource _mainCts = new CancellationTokenSource();
     private static CancellationTokenSource? _interactiveCts;
 
-    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromHours(3); // Tetap 3 jam
+    // === PERBAIKAN: Interval Keep-Alive jadi 3.5 Jam ===
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMinutes((3 * 60) + 30); // 3 jam 30 menit
+    // === AKHIR PERBAIKAN ===
     private static readonly TimeSpan ErrorRetryDelay = TimeSpan.FromMinutes(5);
 
     public static async Task Main(string[] args)
@@ -66,24 +68,19 @@ internal static class Program
             AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
             AnsiConsole.MarkupLine("[dim]Codespace Orchestrator - Local Control, Remote Execution[/]");
 
-            // === PERBAIKAN: Hapus Menu 5 & 6 ===
             var selection = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("\n[bold white]MAIN MENU[/]")
-                    .PageSize(7) // Kurangi PageSize
+                    .PageSize(7)
                     .WrapAround(true)
                     .AddChoices(new[] {
                         "1. Start/Manage Codespace Runner (Continuous Loop)",
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
-                        // "5. Deploy Secrets (Manual Upload)", // <-- DIHAPUS
-                        // "6. Delete ALL GitHub Secrets (Fix 200KB Error)", // <-- DIHAPUS
                         "0. Exit"
                     }));
-             // === AKHIR PERBAIKAN ===
 
-            // Ambil karakter pertama sebagai pilihan (misal "1", "2", "0")
             var choice = selection[0].ToString();
 
             try {
@@ -100,28 +97,18 @@ internal static class Program
                     case "4":
                         await ShowAttachMenuAsync(cancellationToken);
                         break;
-                    // === PERBAIKAN: Hapus Case 5 & 6 ===
-                    // case "5":
-                    //     AnsiConsole.MarkupLine("[yellow]Manual secret upload removed. Use auto-upload instead.[/]");
-                    //     Pause("Press Enter to continue...", cancellationToken);
-                    //     break;
-                    // case "6":
-                    //     await SecretCleanup.DeleteAllSecrets();
-                    //     Pause("Press Enter to continue...", cancellationToken);
-                    //     break;
-                    // === AKHIR PERBAIKAN ===
                     case "0":
-                        return; // Keluar dari fungsi RunInteractiveMenuAsync
+                        return;
                 }
             }
             catch (OperationCanceledException) {
                 AnsiConsole.MarkupLine("\n[yellow]Operation cancelled.[/]");
-                Pause("Press Enter to continue...", CancellationToken.None); // Tetap perlu CancellationToken.None di sini
+                Pause("Press Enter to continue...", CancellationToken.None);
             }
             catch (Exception ex) {
                 AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]");
                 AnsiConsole.WriteException(ex);
-                Pause("Press Enter to continue...", CancellationToken.None); // Tetap perlu CancellationToken.None di sini
+                Pause("Press Enter to continue...", CancellationToken.None);
             }
         }
     }
@@ -160,14 +147,12 @@ internal static class Program
                          await CollaboratorManager.AcceptInvitations(cancellationToken);
                          break;
                      case "4":
-                         // ShowStatus tidak async, jadi bisa langsung atau Task.Run
                          await Task.Run(() => TokenManager.ShowStatus(), cancellationToken);
                          break;
                  }
                  Pause("Press Enter to continue...", cancellationToken);
              } catch (OperationCanceledException) {
                  AnsiConsole.MarkupLine("\n[yellow]Operation cancelled in Setup Menu.[/]");
-                 // Tidak perlu pause lagi jika cancel
              } catch (Exception ex) {
                 AnsiConsole.MarkupLine($"[red]Error in Setup Menu: {ex.Message.EscapeMarkup()}[/]");
                 AnsiConsole.WriteException(ex);
@@ -268,27 +253,24 @@ internal static class Program
         AnsiConsole.MarkupLine("[red]⚠ Press Ctrl+C TWICE to force-quit if stuck attaching.[/]");
 
         _interactiveCts = new CancellationTokenSource();
-        // Gabungkan CancellationToken dari menu attach dengan CancellationToken utama
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_interactiveCts.Token, mainCancellationToken);
 
         try
         {
             string tmuxSessionName = "automation_hub_bots";
-            // Argumen harus di-escape dengan benar untuk shell remote
-            string escapedBotName = selectedBot.Replace("\"", "\\\""); // Escape double quotes
+            string escapedBotName = selectedBot.Replace("\"", "\\\"");
             string args = $"codespace ssh --codespace {activeCodespace} -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
 
             await ShellHelper.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCts.Token);
         }
         catch (OperationCanceledException)
         {
-            // Cek mana CancellationToken yang ter-trigger
             if (_interactiveCts?.IsCancellationRequested == true)
                  AnsiConsole.MarkupLine("\n[yellow]✓ Detached from bot session (Ctrl+C in tmux).[/]");
             else if (mainCancellationToken.IsCancellationRequested)
                  AnsiConsole.MarkupLine("\n[yellow]Main application shutdown requested during attach.[/]");
             else
-                 AnsiConsole.MarkupLine("\n[yellow]Attach operation cancelled.[/]"); // Kasus lain
+                 AnsiConsole.MarkupLine("\n[yellow]Attach operation cancelled.[/]");
         }
         catch (Exception ex)
         {
@@ -297,14 +279,11 @@ internal static class Program
         }
         finally
         {
-            // Bersihkan CancellationTokenSource untuk attach menu
             _interactiveCts?.Dispose();
             _interactiveCts = null;
         }
     }
 
-
-    // Fungsi RunOrchestratorLoopAsync tetap sama seperti versi terakhir (dengan fix CS7036)
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken)
     {
         AnsiConsole.Clear();
@@ -349,7 +328,6 @@ internal static class Program
                 }
 
                 AnsiConsole.MarkupLine("Ensuring healthy codespace...");
-                // Fix CS7036 ada di sini
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken, $"{currentToken.Owner}/{currentToken.Repo}");
 
                 bool isNewOrRecreatedCodespace = currentState.ActiveCodespaceName != activeCodespace;
@@ -364,9 +342,12 @@ internal static class Program
                 }
                 consecutiveErrors = 0;
 
+                // === PERBAIKAN: Gunakan interval baru (3.5 jam) ===
                 AnsiConsole.MarkupLine($"\n[yellow]⏱ Keep-Alive:[/] Sleeping for {KeepAliveInterval.TotalHours:F1} hours...");
                 AnsiConsole.MarkupLine($"[dim]Next check at: {DateTime.Now.Add(KeepAliveInterval):yyyy-MM-dd HH:mm:ss}[/]");
                 await Task.Delay(KeepAliveInterval, cancellationToken);
+                // === AKHIR PERBAIKAN ===
+
 
                 currentState = TokenManager.GetState();
                 activeCodespace = currentState.ActiveCodespaceName;
@@ -432,28 +413,18 @@ internal static class Program
 
     private static void Pause(string message, CancellationToken cancellationToken)
     {
-        // Hindari pause jika aplikasi diminta berhenti
         if (cancellationToken.IsCancellationRequested) return;
-
-        Console.WriteLine(); // Baris baru sebelum pesan
-        AnsiConsole.Markup($"[dim]{message}[/]"); // Tampilkan pesan dengan gaya dim
-
-        try
-        {
-            // Loop cek key press atau cancellation
-            while (!Console.KeyAvailable)
-            {
+        Console.WriteLine();
+        AnsiConsole.Markup($"[dim]{message}[/]");
+        try {
+            while (!Console.KeyAvailable) {
                 if (cancellationToken.IsCancellationRequested) return;
-                System.Threading.Thread.Sleep(100); // Tunggu sebentar
+                System.Threading.Thread.Sleep(100);
             }
-            // Baca key tanpa menampilkannya
             Console.ReadKey(true);
-        }
-        catch (InvalidOperationException)
-        {
-            // Fallback jika Console.KeyAvailable tidak support (misal di beberapa environment non-interaktif)
+        } catch (InvalidOperationException) {
             AnsiConsole.MarkupLine("[yellow] (Auto-continuing after 2 seconds...)[/]");
             System.Threading.Thread.Sleep(2000);
         }
     }
-}
+} // Akhir class Program
