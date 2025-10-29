@@ -1,0 +1,5 @@
+# Masukkan path root LOKAL tempat Anda menyimpan SEMUA folder bot (misal D:\SC)
+# Script migrasi akan meng-copy file dari sini ke folder /bots/ di dalam repo ini.
+# Contoh:
+D:\SC\PrivateKey
+D:\SC\Token
