@@ -14,14 +14,14 @@ internal static class Program
     private static CancellationTokenSource _mainCts = new CancellationTokenSource();
     private static CancellationTokenSource? _interactiveCts;
 
-    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromHours(3);
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromHours(3); // Tetap 3 jam
     private static readonly TimeSpan ErrorRetryDelay = TimeSpan.FromMinutes(5);
 
     public static async Task Main(string[] args)
     {
         Console.CancelKeyPress += (sender, e) => {
             e.Cancel = true;
-            
+
             if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested)
             {
                 AnsiConsole.MarkupLine("\n[yellow]Ctrl+C detected. Stopping interactive session...[/]");
@@ -31,10 +31,10 @@ internal static class Program
             {
                 AnsiConsole.MarkupLine("\n[red]Ctrl+C detected. Shutting down...[/]");
                 _mainCts.Cancel();
-            } 
-            else 
-            { 
-                AnsiConsole.MarkupLine("[yellow]Shutdown already in progress...[/]"); 
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]Shutdown already in progress...[/]");
             }
         };
 
@@ -46,15 +46,15 @@ internal static class Program
                 await RunInteractiveMenuAsync(_mainCts.Token);
             }
         }
-        catch (OperationCanceledException) { 
-            AnsiConsole.MarkupLine("\n[yellow]Operation cancelled by user.[/]"); 
+        catch (OperationCanceledException) {
+            AnsiConsole.MarkupLine("\n[yellow]Operation cancelled by user.[/]");
         }
-        catch (Exception ex) { 
-            AnsiConsole.MarkupLine("\n[red]FATAL ERROR in Main:[/]"); 
+        catch (Exception ex) {
+            AnsiConsole.MarkupLine("\n[red]FATAL ERROR in Main:[/]");
             AnsiConsole.WriteException(ex);
         }
-        finally { 
-            AnsiConsole.MarkupLine("\n[dim]Orchestrator shutdown complete.[/]"); 
+        finally {
+            AnsiConsole.MarkupLine("\n[dim]Orchestrator shutdown complete.[/]");
         }
     }
 
@@ -66,66 +66,71 @@ internal static class Program
             AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
             AnsiConsole.MarkupLine("[dim]Codespace Orchestrator - Local Control, Remote Execution[/]");
 
+            // === PERBAIKAN: Hapus Menu 5 & 6 ===
             var selection = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("\n[bold white]MAIN MENU[/]")
-                    .PageSize(10)
+                    .PageSize(7) // Kurangi PageSize
                     .WrapAround(true)
                     .AddChoices(new[] {
                         "1. Start/Manage Codespace Runner (Continuous Loop)",
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
-                        "5. Deploy Secrets (Manual Upload)",
-                        "6. Delete ALL GitHub Secrets (Fix 200KB Error)",
+                        // "5. Deploy Secrets (Manual Upload)", // <-- DIHAPUS
+                        // "6. Delete ALL GitHub Secrets (Fix 200KB Error)", // <-- DIHAPUS
                         "0. Exit"
                     }));
+             // === AKHIR PERBAIKAN ===
 
+            // Ambil karakter pertama sebagai pilihan (misal "1", "2", "0")
             var choice = selection[0].ToString();
-            
+
             try {
                 switch (choice) {
-                    case "1": 
-                        await RunOrchestratorLoopAsync(cancellationToken); 
+                    case "1":
+                        await RunOrchestratorLoopAsync(cancellationToken);
                         break;
-                    case "2": 
-                        await ShowSetupMenuAsync(cancellationToken); 
+                    case "2":
+                        await ShowSetupMenuAsync(cancellationToken);
                         break;
-                    case "3": 
-                        await ShowLocalMenuAsync(cancellationToken); 
+                    case "3":
+                        await ShowLocalMenuAsync(cancellationToken);
                         break;
-                    case "4": 
+                    case "4":
                         await ShowAttachMenuAsync(cancellationToken);
                         break;
-                    case "5":
-                        AnsiConsole.MarkupLine("[yellow]Manual secret upload removed. Use auto-cleanup instead.[/]");
-                        Pause("Press Enter to continue...", cancellationToken);
-                        break;
-                    case "6": 
-                        await SecretCleanup.DeleteAllSecrets();
-                        Pause("Press Enter to continue...", cancellationToken); 
-                        break;
-                    case "0": 
-                        return;
+                    // === PERBAIKAN: Hapus Case 5 & 6 ===
+                    // case "5":
+                    //     AnsiConsole.MarkupLine("[yellow]Manual secret upload removed. Use auto-upload instead.[/]");
+                    //     Pause("Press Enter to continue...", cancellationToken);
+                    //     break;
+                    // case "6":
+                    //     await SecretCleanup.DeleteAllSecrets();
+                    //     Pause("Press Enter to continue...", cancellationToken);
+                    //     break;
+                    // === AKHIR PERBAIKAN ===
+                    case "0":
+                        return; // Keluar dari fungsi RunInteractiveMenuAsync
                 }
             }
-            catch (OperationCanceledException) { 
-                AnsiConsole.MarkupLine("\n[yellow]Operation cancelled.[/]"); 
-                Pause("Press Enter to continue...", CancellationToken.None); 
+            catch (OperationCanceledException) {
+                AnsiConsole.MarkupLine("\n[yellow]Operation cancelled.[/]");
+                Pause("Press Enter to continue...", CancellationToken.None); // Tetap perlu CancellationToken.None di sini
             }
-            catch (Exception ex) { 
-                AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); 
-                AnsiConsole.WriteException(ex); 
-                Pause("Press Enter to continue...", CancellationToken.None); 
+            catch (Exception ex) {
+                AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]");
+                AnsiConsole.WriteException(ex);
+                Pause("Press Enter to continue...", CancellationToken.None); // Tetap perlu CancellationToken.None di sini
             }
         }
     }
 
     private static async Task ShowSetupMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
-             AnsiConsole.Clear(); 
+             AnsiConsole.Clear();
              AnsiConsole.Write(new FigletText("Setup").Centered().Color(Color.Yellow));
-             
+
              var selection = AnsiConsole.Prompt(
                  new SelectionPrompt<string>()
                      .Title("\n[bold white]TOKEN & COLLABORATOR SETUP[/]")
@@ -138,34 +143,44 @@ internal static class Program
                          "4. Show Token/Proxy Status",
                          "0. Back to Main Menu"
                      }));
-             
+
              var sel = selection[0].ToString();
              if (sel == "0") return;
 
-             switch (sel)
-             {
-                 case "1":
-                     await CollaboratorManager.ValidateAllTokens(cancellationToken);
-                     break;
-                 case "2":
-                     await CollaboratorManager.InviteCollaborators(cancellationToken);
-                     break;
-                 case "3":
-                     await CollaboratorManager.AcceptInvitations(cancellationToken);
-                     break;
-                 case "4":
-                     await Task.Run(() => TokenManager.ShowStatus(), cancellationToken);
-                     break;
+             try {
+                 switch (sel)
+                 {
+                     case "1":
+                         await CollaboratorManager.ValidateAllTokens(cancellationToken);
+                         break;
+                     case "2":
+                         await CollaboratorManager.InviteCollaborators(cancellationToken);
+                         break;
+                     case "3":
+                         await CollaboratorManager.AcceptInvitations(cancellationToken);
+                         break;
+                     case "4":
+                         // ShowStatus tidak async, jadi bisa langsung atau Task.Run
+                         await Task.Run(() => TokenManager.ShowStatus(), cancellationToken);
+                         break;
+                 }
+                 Pause("Press Enter to continue...", cancellationToken);
+             } catch (OperationCanceledException) {
+                 AnsiConsole.MarkupLine("\n[yellow]Operation cancelled in Setup Menu.[/]");
+                 // Tidak perlu pause lagi jika cancel
+             } catch (Exception ex) {
+                AnsiConsole.MarkupLine($"[red]Error in Setup Menu: {ex.Message.EscapeMarkup()}[/]");
+                AnsiConsole.WriteException(ex);
+                Pause("Press Enter to continue...", CancellationToken.None);
              }
-             Pause("Press Enter to continue...", cancellationToken);
         }
      }
 
     private static async Task ShowLocalMenuAsync(CancellationToken cancellationToken) {
         while (!cancellationToken.IsCancellationRequested) {
-             AnsiConsole.Clear(); 
+             AnsiConsole.Clear();
              AnsiConsole.Write(new FigletText("Proxy").Centered().Color(Color.Green));
-             
+
              var selection = AnsiConsole.Prompt(
                  new SelectionPrompt<string>()
                      .Title("\n[bold white]LOCAL PROXY MANAGEMENT[/]")
@@ -175,89 +190,121 @@ internal static class Program
                          "1. Run ProxySync (Update TUI's proxy list)",
                          "0. Back to Main Menu"
                      }));
-             
+
              var sel = selection[0].ToString();
              if (sel == "0") return;
-             
-             if (sel == "1") await ProxyManager.DeployProxies(cancellationToken);
-             
-             Pause("Press Enter to continue...", cancellationToken);
+
+             try {
+                if (sel == "1") await ProxyManager.DeployProxies(cancellationToken);
+                Pause("Press Enter to continue...", cancellationToken);
+             } catch (OperationCanceledException) {
+                 AnsiConsole.MarkupLine("\n[yellow]Operation cancelled in Proxy Menu.[/]");
+             } catch (Exception ex) {
+                AnsiConsole.MarkupLine($"[red]Error in Proxy Menu: {ex.Message.EscapeMarkup()}[/]");
+                AnsiConsole.WriteException(ex);
+                Pause("Press Enter to continue...", CancellationToken.None);
+             }
         }
     }
-    
-private static async Task ShowAttachMenuAsync(CancellationToken mainCancellationToken)
-{
-    AnsiConsole.Clear();
-    AnsiConsole.Write(new FigletText("Attach").Centered().Color(Color.Blue));
-    
-    var currentToken = TokenManager.GetCurrentToken();
-    var state = TokenManager.GetState();
-    var activeCodespace = state.ActiveCodespaceName;
 
-    if (string.IsNullOrEmpty(activeCodespace))
+    private static async Task ShowAttachMenuAsync(CancellationToken mainCancellationToken)
     {
-        AnsiConsole.MarkupLine("[red]Error: No active codespace found.[/]");
-        AnsiConsole.MarkupLine("[yellow]Please run 'Start/Manage Codespace' (Menu 1) first.[/]");
-        Pause("Press Enter to continue...", mainCancellationToken);
-        return;
+        AnsiConsole.Clear();
+        AnsiConsole.Write(new FigletText("Attach").Centered().Color(Color.Blue));
+
+        var currentToken = TokenManager.GetCurrentToken();
+        var state = TokenManager.GetState();
+        var activeCodespace = state.ActiveCodespaceName;
+
+        if (string.IsNullOrEmpty(activeCodespace))
+        {
+            AnsiConsole.MarkupLine("[red]Error: No active codespace found.[/]");
+            AnsiConsole.MarkupLine("[yellow]Please run 'Start/Manage Codespace' (Menu 1) first.[/]");
+            Pause("Press Enter to continue...", mainCancellationToken);
+            return;
+        }
+
+        List<string> sessions;
+        try
+        {
+            sessions = await CodespaceManager.GetTmuxSessions(currentToken, activeCodespace);
+        }
+        catch (OperationCanceledException) {
+            AnsiConsole.MarkupLine("\n[yellow]Operation cancelled while fetching sessions.[/]");
+            return;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error fetching sessions: {ex.Message.EscapeMarkup()}[/]");
+            Pause("Press Enter to continue...", mainCancellationToken);
+            return;
+        }
+
+
+        if (!sessions.Any())
+        {
+            AnsiConsole.MarkupLine("[yellow]No running bot sessions found in tmux.[/]");
+            AnsiConsole.MarkupLine("[dim]Bots might still be starting up. Check remote logs if needed.[/]");
+            Pause("Press Enter to continue...", mainCancellationToken);
+            return;
+        }
+
+        var backOption = "[ (Back to Main Menu) ]";
+        sessions.Add(backOption);
+
+        var selectedBot = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title($"Select bot to attach (in [green]{activeCodespace}[/]):")
+                .PageSize(15)
+                .WrapAround(true)
+                .AddChoices(sessions)
+        );
+
+        if (selectedBot == backOption) return;
+
+        AnsiConsole.MarkupLine($"\n[cyan]Attaching to [yellow]{selectedBot}[/].[/]");
+        AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]D[/] to detach from session)[/]");
+        AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]N[/] (next) / [bold]P[/] (prev) to switch bot window)[/]");
+        AnsiConsole.MarkupLine("[red]⚠ Press Ctrl+C TWICE to force-quit if stuck attaching.[/]");
+
+        _interactiveCts = new CancellationTokenSource();
+        // Gabungkan CancellationToken dari menu attach dengan CancellationToken utama
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_interactiveCts.Token, mainCancellationToken);
+
+        try
+        {
+            string tmuxSessionName = "automation_hub_bots";
+            // Argumen harus di-escape dengan benar untuk shell remote
+            string escapedBotName = selectedBot.Replace("\"", "\\\""); // Escape double quotes
+            string args = $"codespace ssh --codespace {activeCodespace} -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
+
+            await ShellHelper.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cek mana CancellationToken yang ter-trigger
+            if (_interactiveCts?.IsCancellationRequested == true)
+                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from bot session (Ctrl+C in tmux).[/]");
+            else if (mainCancellationToken.IsCancellationRequested)
+                 AnsiConsole.MarkupLine("\n[yellow]Main application shutdown requested during attach.[/]");
+            else
+                 AnsiConsole.MarkupLine("\n[yellow]Attach operation cancelled.[/]"); // Kasus lain
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]");
+            Pause("Press Enter to continue...", CancellationToken.None);
+        }
+        finally
+        {
+            // Bersihkan CancellationTokenSource untuk attach menu
+            _interactiveCts?.Dispose();
+            _interactiveCts = null;
+        }
     }
-    
-    var sessions = await CodespaceManager.GetTmuxSessions(currentToken, activeCodespace);
-    if (!sessions.Any())
-    {
-        AnsiConsole.MarkupLine("[yellow]No running bot sessions found in tmux.[/]");
-        AnsiConsole.MarkupLine("[dim]Bots might still be starting up. Check 'auto-start.sh' log.[/]");
-        Pause("Press Enter to continue...", mainCancellationToken);
-        return;
-    }
 
-    var backOption = "[ (Back to Main Menu) ]";
-    sessions.Add(backOption);
 
-    var selectedBot = AnsiConsole.Prompt(
-        new SelectionPrompt<string>()
-            .Title($"Select bot to attach (in [green]{activeCodespace}[/]):")
-            .PageSize(15)
-            .WrapAround(true)
-            .AddChoices(sessions)
-    );
-
-    if (selectedBot == backOption) return;
-
-    AnsiConsole.MarkupLine($"\n[cyan]Attaching to [yellow]{selectedBot}[/].[/]");
-    AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]D[/] to detach from session)[/]");
-    AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B[/] then [bold]N[/] (next) / [bold]P[/] (prev) to switch bot)[/]");
-    AnsiConsole.MarkupLine("[red]⚠ Press Ctrl+C TWICE to force-quit if stuck.[/]");
-
-    _interactiveCts = new CancellationTokenSource();
-    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_interactiveCts.Token, mainCancellationToken);
-
-    try
-    {
-        string tmuxSessionName = "automation_hub_bots";
-        string args = $"codespace ssh --codespace {activeCodespace} -- tmux attach-session -t {tmuxSessionName} -w \"{selectedBot}\"";
-        
-        await ShellHelper.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCts.Token);
-    }
-    catch (OperationCanceledException)
-    {
-        if (_interactiveCts.IsCancellationRequested)
-            AnsiConsole.MarkupLine("\n[yellow]✓ Detached from bot session.[/]");
-        else
-            AnsiConsole.MarkupLine("\n[yellow]Main app shutdown requested.[/]");
-    }
-    catch (Exception ex)
-    {
-        AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]");
-        Pause("Press Enter to continue...", CancellationToken.None);
-    }
-    finally
-    {
-        _interactiveCts?.Dispose();
-        _interactiveCts = null;
-    }
-}
-
+    // Fungsi RunOrchestratorLoopAsync tetap sama seperti versi terakhir (dengan fix CS7036)
     private static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken)
     {
         AnsiConsole.Clear();
@@ -288,144 +335,95 @@ private static async Task ShowAttachMenuAsync(CancellationToken mainCancellation
                 if (!billingInfo.IsQuotaOk)
                 {
                     AnsiConsole.MarkupLine("[yellow]⚠ Quota insufficient. Rotating to next token...[/]");
-
-                    if (!string.IsNullOrEmpty(activeCodespace))
-                    {
-                        // Coba hapus codespace lama sebelum ganti token
-                        try
-                        {
-                            await CodespaceManager.DeleteCodespace(currentToken, activeCodespace);
-                        }
-                        catch (Exception ex)
-                        {
-                            AnsiConsole.MarkupLine($"[yellow]Warn: Failed to delete old codespace {activeCodespace}: {ex.Message.Split('\n').FirstOrDefault()}[/]");
-                        }
-                        currentState.ActiveCodespaceName = null;
-                        TokenManager.SaveState(currentState);
+                    if (!string.IsNullOrEmpty(activeCodespace)) {
+                         try { await CodespaceManager.DeleteCodespace(currentToken, activeCodespace); }
+                         catch (Exception ex) { AnsiConsole.MarkupLine($"[yellow]Warn: Failed delete old codespace {activeCodespace}: {ex.Message.Split('\n').FirstOrDefault()}[/]"); }
+                         currentState.ActiveCodespaceName = null;
+                         TokenManager.SaveState(currentState);
                     }
-
-                    currentToken = TokenManager.SwitchToNextToken(); // Rotasi token di sini
-                    activeCodespace = null; // Reset active codespace setelah rotasi
+                    currentToken = TokenManager.SwitchToNextToken();
+                    activeCodespace = null;
                     consecutiveErrors = 0;
                     await Task.Delay(5000, cancellationToken);
-                    continue; // Lanjut ke iterasi loop berikutnya dengan token baru
+                    continue;
                 }
 
                 AnsiConsole.MarkupLine("Ensuring healthy codespace...");
-                // === PERBAIKAN DI SINI ===
-                // Tambahkan argumen kedua: $"{currentToken.Owner}/{currentToken.Repo}"
+                // Fix CS7036 ada di sini
                 activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken, $"{currentToken.Owner}/{currentToken.Repo}");
-                // === AKHIR PERBAIKAN ===
 
                 bool isNewOrRecreatedCodespace = currentState.ActiveCodespaceName != activeCodespace;
-
                 currentState.ActiveCodespaceName = activeCodespace;
                 TokenManager.SaveState(currentState);
 
-                if (isNewOrRecreatedCodespace)
-                {
+                if (isNewOrRecreatedCodespace) {
                     AnsiConsole.MarkupLine($"[green]✓ New/Recreated codespace activated: {activeCodespace}[/]");
                     AnsiConsole.MarkupLine("[dim]Bots should be starting automatically via auto-start.sh[/]");
-                }
-                else
-                {
+                } else {
                     AnsiConsole.MarkupLine($"[green]✓ Reusing existing codespace: {activeCodespace}[/]");
                 }
-
-                consecutiveErrors = 0; // Reset error count on success
+                consecutiveErrors = 0;
 
                 AnsiConsole.MarkupLine($"\n[yellow]⏱ Keep-Alive:[/] Sleeping for {KeepAliveInterval.TotalHours:F1} hours...");
                 AnsiConsole.MarkupLine($"[dim]Next check at: {DateTime.Now.Add(KeepAliveInterval):yyyy-MM-dd HH:mm:ss}[/]");
-
                 await Task.Delay(KeepAliveInterval, cancellationToken);
 
-                // Re-fetch state and active codespace after sleep, maybe it was deleted manually?
                 currentState = TokenManager.GetState();
                 activeCodespace = currentState.ActiveCodespaceName;
-
-                if (string.IsNullOrEmpty(activeCodespace))
-                {
+                if (string.IsNullOrEmpty(activeCodespace)) {
                     AnsiConsole.MarkupLine("[yellow]⚠ No active codespace found after sleep. Will check/recreate next cycle.[/]");
-                    continue; // Skip keep-alive check if no codespace is tracked
+                    continue;
                 }
 
                 AnsiConsole.MarkupLine("\n[yellow]⏱ Keep-Alive Check:[/] Verifying codespace health...");
-
-                // Lakukan health check sederhana dulu sebelum trigger
-                if (!await CodespaceManager.CheckHealthWithRetry(currentToken, activeCodespace))
-                {
+                if (!await CodespaceManager.CheckHealthWithRetry(currentToken, activeCodespace)) {
                     AnsiConsole.MarkupLine("[red]✗ Keep-Alive: Health check FAILED![/]");
                     AnsiConsole.MarkupLine("[yellow]Marking codespace for recreation...[/]");
                     currentState.ActiveCodespaceName = null;
                     TokenManager.SaveState(currentState);
-                    // Langsung lanjut ke siklus berikutnya, akan recreate
                     continue;
-                }
-                else
-                {
+                } else {
                     AnsiConsole.MarkupLine("[green]✓ Keep-Alive: Health check OK.[/]");
-
-                    try
-                    {
+                    try {
                         AnsiConsole.MarkupLine("[dim]Triggering startup script (git pull & restart bots if needed)...[/]");
                         await CodespaceManager.TriggerStartupScript(currentToken, activeCodespace);
                         AnsiConsole.MarkupLine("[green]✓ Startup script triggered successfully[/]");
-                    }
-                    catch (Exception ex)
-                    {
-                        // Jika trigger gagal, mungkin codespace-nya bermasalah
+                    } catch (Exception ex) {
                         AnsiConsole.MarkupLine($"[yellow]⚠ Warning: Keep-alive startup trigger failed: {ex.Message.Split('\n').FirstOrDefault()}[/]");
                         AnsiConsole.MarkupLine("[yellow]Assuming codespace issue, marking for recreation...[/]");
                         currentState.ActiveCodespaceName = null;
                         TokenManager.SaveState(currentState);
-                        // Lanjut ke siklus berikutnya, akan recreate
                         continue;
                     }
                 }
             }
-            catch (OperationCanceledException)
-            {
+            catch (OperationCanceledException) {
                 AnsiConsole.MarkupLine("\n[yellow]⚠ Loop cancelled by user.[/]");
-                break; // Keluar dari loop while
+                break;
             }
-            catch (Exception ex)
-            {
+            catch (Exception ex) {
                 consecutiveErrors++;
                 AnsiConsole.MarkupLine("\n[red]✗ ERROR in orchestrator loop:[/]");
-                AnsiConsole.WriteException(ex); // Tampilkan detail error
-
-                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS)
-                {
+                AnsiConsole.WriteException(ex);
+                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
                     AnsiConsole.MarkupLine($"\n[red]CRITICAL: {MAX_CONSECUTIVE_ERRORS} consecutive errors![/]");
                     AnsiConsole.MarkupLine("[yellow]Attempting full recovery (token rotation + codespace reset)...[/]");
-
-                    // Coba hapus codespace yang bermasalah (jika ada)
-                    if (!string.IsNullOrEmpty(currentState.ActiveCodespaceName))
-                    {
-                        try
-                        {
-                            await CodespaceManager.DeleteCodespace(currentToken, currentState.ActiveCodespaceName);
-                        }
+                    if (!string.IsNullOrEmpty(currentState.ActiveCodespaceName)) {
+                        try { await CodespaceManager.DeleteCodespace(currentToken, currentState.ActiveCodespaceName); }
                         catch { /* Abaikan error delete saat recovery */ }
                     }
-
-                    currentState.ActiveCodespaceName = null; // Reset nama codespace di state
+                    currentState.ActiveCodespaceName = null;
                     TokenManager.SaveState(currentState);
-
-                    // Rotasi ke token berikutnya
                     currentToken = TokenManager.SwitchToNextToken();
-                    consecutiveErrors = 0; // Reset error count setelah rotasi
-
+                    consecutiveErrors = 0;
                     AnsiConsole.MarkupLine("[cyan]Waiting 30 seconds before retry with new token...[/]");
                     await Task.Delay(30000, cancellationToken);
-                }
-                else
-                {
+                } else {
                     AnsiConsole.MarkupLine($"[yellow]⚠ Retrying in {ErrorRetryDelay.TotalMinutes} minutes... (Error {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS})[/]");
                     await Task.Delay(ErrorRetryDelay, cancellationToken);
                 }
             }
-        } // Akhir loop while
+        }
 
         AnsiConsole.MarkupLine("\n[cyan]═══════════════════════════════════════════════════════════════[/]");
         AnsiConsole.MarkupLine("[cyan]   ORCHESTRATOR LOOP STOPPED[/]");
@@ -434,22 +432,27 @@ private static async Task ShowAttachMenuAsync(CancellationToken mainCancellation
 
     private static void Pause(string message, CancellationToken cancellationToken)
     {
+        // Hindari pause jika aplikasi diminta berhenti
         if (cancellationToken.IsCancellationRequested) return;
-        
-        Console.WriteLine();
-        Console.Write(message);
-        
+
+        Console.WriteLine(); // Baris baru sebelum pesan
+        AnsiConsole.Markup($"[dim]{message}[/]"); // Tampilkan pesan dengan gaya dim
+
         try
         {
+            // Loop cek key press atau cancellation
             while (!Console.KeyAvailable)
             {
                 if (cancellationToken.IsCancellationRequested) return;
-                System.Threading.Thread.Sleep(100);
+                System.Threading.Thread.Sleep(100); // Tunggu sebentar
             }
+            // Baca key tanpa menampilkannya
             Console.ReadKey(true);
         }
         catch (InvalidOperationException)
         {
+            // Fallback jika Console.KeyAvailable tidak support (misal di beberapa environment non-interaktif)
+            AnsiConsole.MarkupLine("[yellow] (Auto-continuing after 2 seconds...)[/]");
             System.Threading.Thread.Sleep(2000);
         }
     }
