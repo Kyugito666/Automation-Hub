@@ -625,18 +625,24 @@ def backup_file(file_path, backup_path):
 
 
 def check_proxy_final(proxy):
-    if GITHUB_TEST_TOKEN is None: return proxy, False, "Token GitHub?"
+    if GITHUB_TEST_TOKEN is None: return proxy, False, "Token GitHub?" # Gagal kalo token gak ada
     proxies_dict = {"http": proxy, "https": proxy}
     headers = {'User-Agent': 'ProxySync-Tester/3.0', 'Authorization': f'Bearer {GITHUB_TEST_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
     try:
+        # INI BAGIAN PENTINGNYA: Cuma GET ke GitHub API
         response = requests.get(GITHUB_API_TEST_URL, proxies=proxies_dict, timeout=PROXY_TIMEOUT, headers=headers)
+
+        # Cek error standar
         if response.status_code == 401: return proxy, False, "GitHub Auth (401)"
         if response.status_code == 403: return proxy, False, "GitHub Forbidden (403)"
         if response.status_code == 407: return proxy, False, "Proxy Auth (407)"
         if response.status_code == 429: return proxy, False, "GitHub Rate Limit (429)"
-        response.raise_for_status()
+        response.raise_for_status() # Gagal kalo status >= 400 (selain yg udah dicek)
+
+        # INI KRITERIA LOLOSNYA: Asal response ada isinya (lebih dari 5 char)
         if response.text and len(response.text) > 5: return proxy, True, "OK"
-        else: return proxy, False, "Respons GitHub?"
+        else: return proxy, False, "Respons GitHub?" # Gagal kalo respons aneh/kosong
+
     except requests.exceptions.Timeout: return proxy, False, f"Timeout ({PROXY_TIMEOUT}s)"
     except requests.exceptions.ProxyError as e: reason = str(e).split(':')[-1].strip(); return proxy, False, f"Proxy Error ({reason[:30]})"
     except requests.exceptions.RequestException as e: reason = str(e.__class__.__name__); return proxy, False, f"Koneksi Gagal ({reason})"
