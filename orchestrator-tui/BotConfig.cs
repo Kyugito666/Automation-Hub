@@ -118,21 +118,3 @@ public class BotEntry
     [JsonIgnore]
     public bool IsBot => Path.Contains("/privatekey/") || Path.Contains("/token/");
 }
-```
-
----
-
-## Logic Path:
-```
-Config: bots/privatekey/turnautobot-nte
-  ↓ contains "privatekey"
-Scan:  D:\SC\MyProject\SC\PrivateKey\
-  ↓ case-insensitive match
-Found: D:\SC\MyProject\SC\PrivateKey\TurnAutoBot-NTE\
-```
-```
-Config: bots/token/billion-bot
-  ↓ contains "token"
-Scan:  D:\SC\MyProject\SC\Token\
-  ↓ case-insensitive match
-Found: D:\SC\MyProject\SC\Token\Billion-Bot\
