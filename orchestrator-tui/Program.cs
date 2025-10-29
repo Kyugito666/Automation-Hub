@@ -13,6 +13,10 @@ internal static class Program
 {
     private static CancellationTokenSource _mainCts = new CancellationTokenSource();
     private static CancellationTokenSource? _interactiveCts;
+    
+    // === PERBAIKAN: Tambahkan Task untuk Graceful Shutdown ===
+    private static Task? _shutdownTask = null;
+    // === AKHIR PERBAIKAN ===
 
     private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMinutes((3 * 60) + 30);
     private static readonly TimeSpan ErrorRetryDelay = TimeSpan.FromMinutes(5);
@@ -21,27 +25,40 @@ internal static class Program
     {
         bool forceQuitRequested = false;
         
+        // === PERBAIKAN: Logika Ctrl+C yang diperbarui ===
         Console.CancelKeyPress += (sender, e) => {
-            e.Cancel = true;
+            e.Cancel = true; // Selalu cegah exit default
             
-            if (forceQuitRequested)
+            if (_shutdownTask != null) // Shutdown sudah berjalan
             {
-                AnsiConsole.MarkupLine("\n[red]Force quit confirmed. Exiting...[/]");
-                Environment.Exit(1);
+                if (forceQuitRequested) // Ctrl+C kedua (atau ketiga)
+                {
+                    AnsiConsole.MarkupLine("\n[red]Force quit confirmed. Exiting immediately...[/]");
+                    Environment.Exit(1);
+                }
+                AnsiConsole.MarkupLine("\n[red]Shutdown already in progress. Press Ctrl+C again to force quit.[/]");
+                forceQuitRequested = true;
+                Task.Delay(3000).ContinueWith(_ => forceQuitRequested = false); // Reset flag force quit
+                return;
             }
             
-            if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested)
+            if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested) // Sedang dalam mode interaktif (Attach)
             {
                 AnsiConsole.MarkupLine("\n[yellow]Ctrl+C: Stopping operation... (Press Ctrl+C again to force quit)[/]");
                 forceQuitRequested = true;
                 Task.Delay(3000).ContinueWith(_ => forceQuitRequested = false);
                 _interactiveCts.Cancel();
             }
-            else if (!_mainCts.IsCancellationRequested)
+            else if (!_mainCts.IsCancellationRequested) // Berada di Menu Utama atau Loop Menu 1
             {
-                AnsiConsole.MarkupLine("\n[yellow]Ctrl+C: Shutting down... (Press Ctrl+C again within 3s to force quit)[/]");
-                forceQuitRequested = true;
-                Task.Delay(3000).ContinueWith(_ => forceQuitRequested = false);
+                AnsiConsole.MarkupLine("\n[red]SHUTDOWN TRIGGERED! Stopping remote codespace...[/]");
+                AnsiConsole.MarkupLine("[dim](Press Ctrl+C again to force quit)[/]");
+                forceQuitRequested = true; // Aktifkan mode force quit untuk Ctrl+C berikutnya
+
+                // Mulai shutdown task (JANGAN di-await di sini)
+                _shutdownTask = PerformGracefulShutdownAsync(); 
+                
+                // Beri sinyal ke loop utama untuk berhenti
                 _mainCts.Cancel();
             }
             else
@@ -50,6 +67,7 @@ internal static class Program
                 forceQuitRequested = true;
             }
         };
+        // === AKHIR PERBAIKAN ===
         
         try {
             TokenManager.Initialize();
@@ -57,8 +75,57 @@ internal static class Program
             else { await RunInteractiveMenuAsync(_mainCts.Token); }
         } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Cancelled.[/]"); }
         catch (Exception ex) { AnsiConsole.MarkupLine("\n[red]FATAL ERROR:[/]"); AnsiConsole.WriteException(ex); }
-        finally { AnsiConsole.MarkupLine("\n[dim]Shutdown complete.[/]"); }
+        finally {
+            // === PERBAIKAN: Tunggu Graceful Shutdown Selesai ===
+            if (_shutdownTask != null)
+            {
+                AnsiConsole.MarkupLine("\n[dim]Waiting for remote stop command to finish...[/]");
+                try
+                {
+                    // Beri waktu 20 detik agar perintah 'gh codespace stop' (yang timeout 120s)
+                    // setidaknya berhasil *terkirim* sebelum aplikasi exit.
+                    _shutdownTask.Wait(TimeSpan.FromSeconds(20));
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLine($"[yellow]Shutdown task error (continuing exit): {ex.Message.Split('\n').FirstOrDefault()}[/]");
+                }
+            }
+            // === AKHIR PERBAIKAN ===
+            AnsiConsole.MarkupLine("\n[dim]Shutdown complete.[/]");
+        }
     }
+
+    // === PERBAIKAN: Fungsi Baru untuk Graceful Shutdown ===
+    private static async Task PerformGracefulShutdownAsync()
+    {
+        try
+        {
+            var token = TokenManager.GetCurrentToken();
+            var state = TokenManager.GetState();
+            var activeCodespace = state.ActiveCodespaceName;
+
+            if (!string.IsNullOrEmpty(activeCodespace))
+            {
+                AnsiConsole.MarkupLine($"[yellow]Sending STOP command to {activeCodespace}...[/]");
+                // Memanggil fungsi public baru dari CodespaceManager
+                // Perintah ini memiliki timeout internal sendiri (STOP_TIMEOUT_MS)
+                // dan tidak bergantung pada _mainCts yang sudah dibatalkan.
+                await CodespaceManager.StopCodespace(token, activeCodespace);
+                AnsiConsole.MarkupLine($"[green]✓ Stop command sent to {activeCodespace}.[/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]No active codespace found to stop.[/]");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Tangkap error jika terjadi (misal: token invalid)
+            AnsiConsole.MarkupLine($"[red]Error during graceful shutdown: {ex.Message.Split('\n').FirstOrDefault()}[/]");
+        }
+    }
+    // === AKHIR PERBAIKAN ===
 
     private static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken)
     {
@@ -70,14 +137,14 @@ internal static class Program
             var selection = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("\n[bold white]MAIN MENU[/]")
-                    .PageSize(8) // <-- Diubah ke 8
+                    .PageSize(8)
                     .WrapAround(true)
                     .AddChoices(new[] {
                         "1. Start/Manage Codespace Runner (Continuous Loop)",
                         "2. Token & Collaborator Management",
                         "3. Proxy Management (Local TUI Proxy)",
                         "4. Attach to Bot Session (Remote)",
-                        "5. Migrasi Kredensial Lokal (Jalankan 1x)", // <-- MENU BARU
+                        "5. Migrasi Kredensial Lokal (Jalankan 1x)",
                         "0. Exit"
                     }));
 
@@ -88,7 +155,7 @@ internal static class Program
                     case "2": await ShowSetupMenuAsync(cancellationToken); break;
                     case "3": await ShowLocalMenuAsync(cancellationToken); break;
                     case "4": await ShowAttachMenuAsync(cancellationToken); break;
-                    case "5": await CredentialMigrator.RunMigration(cancellationToken); Pause("Tekan Enter...", cancellationToken); break; // <-- MENU BARU
+                    case "5": await CredentialMigrator.RunMigration(cancellationToken); Pause("Tekan Enter...", cancellationToken); break;
                     case "0": AnsiConsole.MarkupLine("Exiting..."); _mainCts.Cancel(); return;
                 }
             } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { AnsiConsole.MarkupLine("\n[yellow]Sub-menu cancelled.[/]"); Pause("Press Enter...", CancellationToken.None); }
