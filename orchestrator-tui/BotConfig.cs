@@ -8,7 +8,8 @@ public class BotConfig
 {
     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string ConfigFile = Path.Combine(ProjectRoot, "config", "bots_config.json");
-    private static readonly string LocalBotRoot = @"D:\SC";
+    // === PERBAIKAN: Hapus D:\SC ===
+    // private static readonly string LocalBotRoot = @"D:\SC";
 
     private static string GetProjectRoot()
     {
@@ -60,42 +61,23 @@ public class BotConfig
         }
     }
     
+    // === PERBAIKAN: Mengganti path D:\SC menjadi path portable di dalam repo ===
     public static string GetLocalBotPath(string configPath)
     {
-        var botName = configPath.Split('/', '\\').Last();
+        // configPath contoh: "bots/privatekey/nama-bot"
+        // ProjectRoot contoh: "D:\Projects\automation-hub"
+        // Hasil: "D:\Projects\automation-hub\bots\privatekey\nama-bot"
         
-        string searchRoot;
-        if (configPath.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
-        {
-            searchRoot = Path.Combine(LocalBotRoot, "PrivateKey");
-        }
-        else if (configPath.Contains("token", StringComparison.OrdinalIgnoreCase))
-        {
-            searchRoot = Path.Combine(LocalBotRoot, "Token");
-        }
-        else
-        {
-            searchRoot = LocalBotRoot;
-        }
+        // Normalisasi path separator untuk Windows/Linux
+        var relativePath = configPath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
         
-        if (!Directory.Exists(searchRoot))
-        {
-            AnsiConsole.MarkupLine($"[red]ERROR: Search root tidak ada: {searchRoot}[/]");
-            return Path.Combine(searchRoot, botName);
-        }
+        // Gabungkan ProjectRoot dengan path relatif dari config
+        var fullPath = Path.Combine(ProjectRoot, relativePath);
         
-        var matchingDir = Directory.GetDirectories(searchRoot, "*", SearchOption.TopDirectoryOnly)
-            .Select(d => new DirectoryInfo(d))
-            .FirstOrDefault(d => d.Name.Equals(botName, StringComparison.OrdinalIgnoreCase));
-        
-        if (matchingDir != null)
-        {
-            return matchingDir.FullName;
-        }
-        
-        AnsiConsole.MarkupLine($"[yellow]WARN: Bot '{botName}' tidak ketemu di {searchRoot}[/]");
-        return Path.Combine(searchRoot, botName);
+        // Pastikan path yang dihasilkan adalah path yang bersih (tanpa ../ atau ./)
+        return Path.GetFullPath(fullPath);
     }
+    // === AKHIR PERBAIKAN ===
 }
 
 public class BotEntry
