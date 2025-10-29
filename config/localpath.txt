@@ -1,5 +1,5 @@
-# Masukkan path root LOKAL tempat Anda menyimpan SEMUA folder bot (misal D:\SC)
-# Script migrasi akan meng-copy file dari sini ke folder /bots/ di dalam repo ini.
-# Contoh:
+# Masukkan SEMUA path root LOKAL tempat folder bot Anda berada.
+# Script akan mencari folder bot (misal: 'turnautobot-nte') DI DALAM path ini.
 D:\SC\PrivateKey
 D:\SC\Token
+# Tambahkan path lain jika perlu, misal D:\FolderBotLain
