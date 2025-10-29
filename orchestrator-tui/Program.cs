@@ -19,16 +19,38 @@ internal static class Program
 
     public static async Task Main(string[] args)
     {
+        bool forceQuitRequested = false;
+        
         Console.CancelKeyPress += (sender, e) => {
             e.Cancel = true;
-            if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested) {
-                AnsiConsole.MarkupLine("\n[yellow]Ctrl+C: Stopping interactive...[/]");
+            
+            if (forceQuitRequested)
+            {
+                AnsiConsole.MarkupLine("\n[red]Force quit confirmed. Exiting...[/]");
+                Environment.Exit(1);
+            }
+            
+            if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested)
+            {
+                AnsiConsole.MarkupLine("\n[yellow]Ctrl+C: Stopping operation... (Press Ctrl+C again to force quit)[/]");
+                forceQuitRequested = true;
+                Task.Delay(3000).ContinueWith(_ => forceQuitRequested = false);
                 _interactiveCts.Cancel();
-            } else if (!_mainCts.IsCancellationRequested) {
-                AnsiConsole.MarkupLine("\n[red]Ctrl+C: Shutting down...[/]");
+            }
+            else if (!_mainCts.IsCancellationRequested)
+            {
+                AnsiConsole.MarkupLine("\n[yellow]Ctrl+C: Shutting down... (Press Ctrl+C again within 3s to force quit)[/]");
+                forceQuitRequested = true;
+                Task.Delay(3000).ContinueWith(_ => forceQuitRequested = false);
                 _mainCts.Cancel();
-            } else { AnsiConsole.MarkupLine("[yellow]Shutdown in progress...[/]"); }
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]Shutdown in progress... (Press Ctrl+C again to force quit)[/]");
+                forceQuitRequested = true;
+            }
         };
+        
         try {
             TokenManager.Initialize();
             if (args.Length > 0 && args[0].ToLower() == "--run") { await RunOrchestratorLoopAsync(_mainCts.Token); }
@@ -45,20 +67,18 @@ internal static class Program
             AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
             AnsiConsole.MarkupLine("[dim]Local Control, Remote Execution[/]");
 
-            // === BALIKIN NAMA MENU ===
             var selection = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("\n[bold white]MAIN MENU[/]")
                     .PageSize(7)
                     .WrapAround(true)
                     .AddChoices(new[] {
-                        "1. Start/Manage Codespace Runner (Continuous Loop)", // <-- Balikin
-                        "2. Token & Collaborator Management",                 // <-- Balikin
-                        "3. Proxy Management (Local TUI Proxy)",              // <-- Balikin
-                        "4. Attach to Bot Session (Remote)",                  // <-- Balikin
+                        "1. Start/Manage Codespace Runner (Continuous Loop)",
+                        "2. Token & Collaborator Management",
+                        "3. Proxy Management (Local TUI Proxy)",
+                        "4. Attach to Bot Session (Remote)",
                         "0. Exit"
                     }));
-            // === AKHIR BALIKIN NAMA MENU ===
 
             var choice = selection[0].ToString();
             try {
@@ -174,8 +194,25 @@ internal static class Program
                     currentToken = TokenManager.SwitchToNextToken(); activeCodespace = null; consecutiveErrors = 0;
                     await Task.Delay(5000, cancellationToken); continue;
                 }
-                cancellationToken.ThrowIfCancellationRequested(); AnsiConsole.MarkupLine("Ensuring codespace...");
-                activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken, $"{currentToken.Owner}/{currentToken.Repo}", cancellationToken);
+                
+                cancellationToken.ThrowIfCancellationRequested(); 
+                AnsiConsole.MarkupLine("Ensuring codespace...");
+                
+                try {
+                    activeCodespace = await CodespaceManager.EnsureHealthyCodespace(currentToken, $"{currentToken.Owner}/{currentToken.Repo}", cancellationToken);
+                } catch (OperationCanceledException) {
+                    AnsiConsole.MarkupLine("\n[yellow]Codespace creation/check cancelled by user.[/]");
+                    throw;
+                } catch (Exception csEx) {
+                    AnsiConsole.MarkupLine($"\n[red]━━━ ERROR ENSURING CODESPACE ━━━[/]");
+                    AnsiConsole.WriteException(csEx);
+                    consecutiveErrors++;
+                    AnsiConsole.MarkupLine($"\n[yellow]Consecutive errors: {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS}[/]");
+                    AnsiConsole.MarkupLine("\n[yellow]Press Enter to retry or Ctrl+C to abort...[/]");
+                    try { Console.ReadLine(); } catch { }
+                    continue;
+                }
+                
                 cancellationToken.ThrowIfCancellationRequested();
                 bool isNew = currentState.ActiveCodespaceName != activeCodespace; currentState.ActiveCodespaceName = activeCodespace; TokenManager.SaveState(currentState);
                 if (isNew) { AnsiConsole.MarkupLine($"[green]✓ New/Recreated CS: {activeCodespace}[/]"); } else { AnsiConsole.MarkupLine($"[green]✓ Reusing CS: {activeCodespace}[/]"); }
@@ -196,7 +233,7 @@ internal static class Program
             }
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Loop cancelled.[/]"); break; }
             catch (Exception ex) {
-                consecutiveErrors++; AnsiConsole.MarkupLine("\n[red]Loop ERROR:[/]"); AnsiConsole.WriteException(ex);
+                consecutiveErrors++; AnsiConsole.MarkupLine("\n[red]━━━ LOOP ERROR ━━━[/]"); AnsiConsole.WriteException(ex);
                 if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
                     AnsiConsole.MarkupLine($"\n[red]CRITICAL: {MAX_CONSECUTIVE_ERRORS} errors![/]"); AnsiConsole.MarkupLine("[yellow]Recovery: Rotating token + reset...[/]");
                     if (!string.IsNullOrEmpty(currentState.ActiveCodespaceName)) { try { await CodespaceManager.DeleteCodespace(currentToken, currentState.ActiveCodespaceName); } catch {} }
@@ -219,5 +256,4 @@ internal static class Program
         try { while (!Console.KeyAvailable) { if (cancellationToken.IsCancellationRequested) return; Thread.Sleep(100); } Console.ReadKey(true); }
         catch (InvalidOperationException) { AnsiConsole.MarkupLine("[yellow](Auto-continue...)[/]"); Thread.Sleep(2000); }
     }
-
-} // End class Program
+}
