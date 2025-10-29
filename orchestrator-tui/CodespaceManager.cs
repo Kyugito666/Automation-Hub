@@ -106,11 +106,10 @@ public static class CodespaceManager
                         task.Description = $"[green]Checking:[/] {bot.Name}";
                         if (!bot.Enabled) { task.Increment(1); continue; }
                         
-                        // === PERBAIKAN: Khusus ProxySync, pakai path repo remote ===
+                        // === PERBAIKAN: Khusus ProxySync, skip upload (ada di repo remote) ===
                         string localBotDir;
                         if (bot.Name == "ProxySync-Tool")
                         {
-                            // ProxySync ada di repo remote, bukan lokal D:\SC
                             AnsiConsole.MarkupLine($"[dim]SKIP {bot.Name}: No credential upload (handled by repo)[/]");
                             botsSkipped++;
                             task.Increment(1);
@@ -187,7 +186,7 @@ public static class CodespaceManager
                             catch {
                                 // === PERBAIKAN: Log failed upload disederhanakan ===
                                 filesSkipped++;
-                                // Tidak print error detail, sudah di-handle ShellHelper
+                                // Error detail sudah di-handle ShellHelper.RunGhCommand
                                 // === AKHIR PERBAIKAN ===
                             }
 
@@ -216,11 +215,7 @@ public static class CodespaceManager
     }
 
 
-    public static async Task TriggerStartupScript(TokenEntry token, string codespaceName) { AnsiConsole.MarkupLine("[cyan]Triggering auto-start.sh...[/]"); string repo = token.Repo.ToLower(); string script = $"/workspaces/{repo}/auto-start.sh"; AnsiConsole.Markup("[dim]Executing (detached)... [/]"); string cmd = $"nohup bash \"{script}\" > /tmp/startup.log 2>&1 &"; string args = $"codespace ssh -c \"{codespaceName}\" -- {cmd}"; try { await ShellHelper.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]OK[/]"); } catch (Exception ex) { AnsiConsole.MarkupLine($"[yellow]Warn: {ex.Message.Split('\n').FirstOrDefault()}[/]"); } }
-    public static async Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName) { AnsiConsole.MarkupLine($"[dim]Fetching tmux sessions...[/]"); string args = $"codespace ssh -c \"{codespaceName}\" -- tmux list-windows -t automation_hub_bots -F \"#{{window_name}}\""; try { string result = await ShellHelper.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS); return result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(s => s != "dashboard" && s != "bash").OrderBy(s => s).ToList(); } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Failed fetch tmux: {ex.Message.Split('\n').FirstOrDefault()}[/]"); return new List<string>(); } }
-    private class CodespaceInfo { [JsonPropertyName("name")] public string Name{get;set;}=""; [JsonPropertyName("displayName")] public string DisplayName{get;set;}=""; [JsonPropertyName("state")] public string State{get;set;}=""; [JsonPropertyName("createdAt")] public string CreatedAt{get;set;}=""; }
-
-}<string> EnsureHealthyCodespace(TokenEntry token, string repoFullName, CancellationToken cancellationToken)
+    public static async Task<string> EnsureHealthyCodespace(TokenEntry token, string repoFullName, CancellationToken cancellationToken)
     {
         AnsiConsole.MarkupLine("\n[cyan]Ensuring Codespace...[/]");
         CodespaceInfo? codespace = null; Stopwatch stopwatch = Stopwatch.StartNew();
@@ -377,4 +372,7 @@ public static class CodespaceManager
     private static async Task<bool> WaitForState(TokenEntry token, string codespaceName, string targetState, TimeSpan timeout, CancellationToken cancellationToken) { Stopwatch sw = Stopwatch.StartNew(); AnsiConsole.Markup($"[cyan]Waiting state '{targetState}'...[/]"); while(sw.Elapsed < timeout) { cancellationToken.ThrowIfCancellationRequested(); var state = await GetCodespaceState(token, codespaceName); if (state == targetState) { AnsiConsole.MarkupLine($"[green]✓ {targetState}[/]"); return true; } if (state == null || state == "Failed" || state == "Error" || state.Contains("Shutting")) { AnsiConsole.MarkupLine($"[red]{state ?? "Lost"}[/]"); return false; } await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000, cancellationToken); } AnsiConsole.MarkupLine($"[yellow]Timeout[/]"); return false; }
     private static async Task<bool> WaitForSshReadyWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken) { Stopwatch sw = Stopwatch.StartNew(); AnsiConsole.Markup($"[cyan]Waiting SSH ready...[/]"); while(sw.Elapsed.TotalMinutes < SSH_READY_MAX_DURATION_MIN) { cancellationToken.ThrowIfCancellationRequested(); try { string res = await ShellHelper.RunGhCommand(token, $"codespace ssh -c \"{codespaceName}\" -- echo ready", SSH_PROBE_TIMEOUT_MS); if (res.Contains("ready")) { AnsiConsole.MarkupLine("[green]✓ SSH Ready[/]"); return true; } } catch (OperationCanceledException) { throw; } catch { } await Task.Delay(SSH_READY_POLL_INTERVAL_SEC * 1000, cancellationToken); } AnsiConsole.MarkupLine($"[yellow]SSH Timeout[/]"); return false; }
     public static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken) { Stopwatch sw = Stopwatch.StartNew(); AnsiConsole.Markup($"[cyan]Checking health...[/]"); int sshOk = 0; const int SSH_OK_THRESHOLD = 2; while(sw.Elapsed.TotalMinutes < HEALTH_CHECK_MAX_DURATION_MIN) { cancellationToken.ThrowIfCancellationRequested(); string result = ""; try { string args = $"codespace ssh -c \"{codespaceName}\" -- \"if [ -f {HEALTH_CHECK_FAIL_PROXY} ] || [ -f {HEALTH_CHECK_FAIL_DEPLOY} ]; then echo FAILED; elif [ -f {HEALTH_CHECK_FILE} ]; then echo HEALTHY; else echo NOT_READY; fi\""; result = await ShellHelper.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); if (result.Contains("FAILED")) { AnsiConsole.MarkupLine($"[red]✗ Startup failed[/]"); return false; } if (result.Contains("HEALTHY")) { AnsiConsole.MarkupLine("[green]✓ Healthy[/]"); return true; } if (result.Contains("NOT_READY")) { sshOk++; } if (sshOk >= SSH_OK_THRESHOLD && sw.Elapsed.TotalMinutes >= 1) { AnsiConsole.MarkupLine($"[cyan]SSH stable. Assuming OK.[/]"); return true; } } catch (OperationCanceledException) { throw; } catch { sshOk = 0; } await Task.Delay(HEALTH_CHECK_POLL_INTERVAL_SEC * 1000, cancellationToken); } AnsiConsole.MarkupLine($"[yellow]Health Timeout[/]"); return false; }
-    public static async Task
+    public static async Task TriggerStartupScript(TokenEntry token, string codespaceName) { AnsiConsole.MarkupLine("[cyan]Triggering auto-start.sh...[/]"); string repo = token.Repo.ToLower(); string script = $"/workspaces/{repo}/auto-start.sh"; AnsiConsole.Markup("[dim]Executing (detached)... [/]"); string cmd = $"nohup bash \"{script}\" > /tmp/startup.log 2>&1 &"; string args = $"codespace ssh -c \"{codespaceName}\" -- {cmd}"; try { await ShellHelper.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]OK[/]"); } catch (Exception ex) { AnsiConsole.MarkupLine($"[yellow]Warn: {ex.Message.Split('\n').FirstOrDefault()}[/]"); } }
+    public static async Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName) { AnsiConsole.MarkupLine($"[dim]Fetching tmux sessions...[/]"); string args = $"codespace ssh -c \"{codespaceName}\" -- tmux list-windows -t automation_hub_bots -F \"#{{window_name}}\""; try { string result = await ShellHelper.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS); return result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(s => s != "dashboard" && s != "bash").OrderBy(s => s).ToList(); } catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Failed fetch tmux: {ex.Message.Split('\n').FirstOrDefault()}[/]"); return new List<string>(); } }
+    private class CodespaceInfo { [JsonPropertyName("name")] public string Name{get;set;}=""; [JsonPropertyName("displayName")] public string DisplayName{get;set;}=""; [JsonPropertyName("state")] public string State{get;set;}=""; [JsonPropertyName("createdAt")] public string CreatedAt{get;set;}=""; }
+}
