@@ -22,6 +22,7 @@ public static class ShellHelper
 
         while (true) {
             try {
+                // Token CancellationTokenSource (cts) di sini adalah untuk TIMEOUT
                 var cts = new CancellationTokenSource(timeoutMilliseconds);
                 var (stdout, stderr, exitCode) = await RunProcessAsync(startInfo, cts.Token);
                 
@@ -61,14 +62,27 @@ public static class ShellHelper
                 }
                 return stdout;
             }
-            catch (TaskCanceledException) {
-                if (timeoutRetryCount < MAX_RETRY_ON_TIMEOUT) { timeoutRetryCount++; AnsiConsole.MarkupLine($"[yellow]Timeout. Retrying... ({timeoutRetryCount}/{MAX_RETRY_ON_TIMEOUT})[/]"); await Task.Delay(5000); continue; }
-                lastException = new Exception($"Command timed out after retries."); break;
+            // --- PERBAIKAN BUG ---
+            // Tangkap TaskCanceledException (spesifik untuk timeout) SECARA TERPISAH
+            catch (TaskCanceledException) { 
+                if (timeoutRetryCount < MAX_RETRY_ON_TIMEOUT) { 
+                    timeoutRetryCount++; 
+                    AnsiConsole.MarkupLine($"[yellow]Timeout. Retrying... ({timeoutRetryCount}/{MAX_RETRY_ON_TIMEOUT})[/]"); 
+                    await Task.Delay(5000); 
+                    continue; // Lanjutkan (coba lagi)
+                }
+                // Jika retry habis, JANGAN throw TaskCanceledException,
+                // tapi buat Exception baru agar ditangani sebagai error biasa (csEx)
+                lastException = new Exception($"Command timed out after {MAX_RETRY_ON_TIMEOUT + 1} attempts."); 
+                break; // Keluar loop retry, lempar 'lastException' di bawah
             }
             catch (OperationCanceledException) {
-                AnsiConsole.MarkupLine("[yellow]Command cancelled by user.[/]");
-                throw;
+                // Ini HANYA akan tertangkap jika token Ctr+C global (yang saat ini tidak di-pass)
+                // atau jika RunProcessAsync salah melempar.
+                AnsiConsole.MarkupLine("[yellow]Command cancelled by user (OperationCanceled).[/]");
+                throw; // Lempar ulang agar loop utama (Menu 1) bisa berhenti
             }
+            // --- AKHIR PERBAIKAN ---
             catch (Exception ex) {
                 lastException = ex;
                 if (networkRetryCount == 0 && proxyRetryCount == 0 && timeoutRetryCount == 0) {
@@ -171,6 +185,7 @@ public static class ShellHelper
 
     private static async Task<(string stdout, string stderr, int exitCode)> RunProcessAsync(ProcessStartInfo startInfo, CancellationToken cancellationToken)
     {
+        // 'cancellationToken' di sini adalah token TIMEOUT dari RunGhCommand
         using var process = new Process { StartInfo = startInfo };
         var stdoutBuilder = new StringBuilder();
         var stderrBuilder = new StringBuilder();
@@ -186,28 +201,31 @@ public static class ShellHelper
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
+            // --- PERBAIKAN BUG ---
+            // 'using var reg' adalah cara standar untuk menangani timeout
             using var reg = cancellationToken.Register(() => {
                 try {
                     if (!process.HasExited) {
                         process.Kill(true);
-                        tcs.TrySetCanceled();
+                        // Ini akan menyebabkan tcs.Task melempar TaskCanceledException
+                        tcs.TrySetCanceled(cancellationToken); 
                     }
                 } catch { }
             });
 
-            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, cancellationToken));
-            
-            if (cancellationToken.IsCancellationRequested) {
-                try { if (!process.HasExited) process.Kill(true); } catch { }
-                throw new OperationCanceledException();
-            }
-
+            // Hapus blok 'if (cancellationToken.IsCancellationRequested)' yang salah
+            // Cukup await tcs.Task. Jika timeout, 'reg' akan membatalkannya.
             return await tcs.Task;
         }
-        catch (OperationCanceledException) {
+        catch (TaskCanceledException) { // <-- Tangkap TaskCanceledException secara eksplisit
             try { if (!process.HasExited) process.Kill(true); } catch { }
-            throw;
+            throw; // Lempar ulang sebagai TaskCanceledException
         }
+        catch (OperationCanceledException) { // <-- Tangkap OperationCanceled (jika terjadi)
+             try { if (!process.HasExited) process.Kill(true); } catch { }
+            throw; // Lempar ulang sebagai OperationCanceledException
+        }
+        // --- AKHIR PERBAIKAN ---
         catch (Exception ex) {
             try { if (!process.HasExited) process.Kill(true); } catch { }
             return (stdoutBuilder.ToString().Trim(), stderrBuilder.ToString().Trim() + "\n" + ex.Message, process.HasExited ? process.ExitCode : -1);
