@@ -1,0 +1,12 @@
+pk.txt
+privatekey.txt
+token.txt
+tokens.txt
+.env
+config.json
+data.txt
+query.txt
+wallet.txt
+settings.yaml
+# Baris yang diawali # bakal diabaikan
+# Kasih nama file apa aja yang lu butuhin
