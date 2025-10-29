@@ -64,8 +64,26 @@ public class BotConfig
     {
         var lastSegment = configPath.Split('/', '\\').Last();
         
-        var localDir = new DirectoryInfo(LocalBotRoot);
-        if (!localDir.Exists) return Path.Combine(LocalBotRoot, lastSegment);
+        string targetFolder;
+        if (configPath.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
+        {
+            targetFolder = Path.Combine(LocalBotRoot, "PrivateKey");
+        }
+        else if (configPath.Contains("token", StringComparison.OrdinalIgnoreCase))
+        {
+            targetFolder = Path.Combine(LocalBotRoot, "Token");
+        }
+        else
+        {
+            targetFolder = LocalBotRoot;
+        }
+        
+        var localDir = new DirectoryInfo(targetFolder);
+        if (!localDir.Exists)
+        {
+            AnsiConsole.MarkupLine($"[red]ERROR: Folder tidak ditemukan: {targetFolder}[/]");
+            return Path.Combine(targetFolder, lastSegment);
+        }
         
         var matchingDir = localDir.GetDirectories()
             .FirstOrDefault(d => d.Name.Equals(lastSegment, StringComparison.OrdinalIgnoreCase));
@@ -75,7 +93,8 @@ public class BotConfig
             return matchingDir.FullName;
         }
         
-        return Path.Combine(LocalBotRoot, lastSegment);
+        AnsiConsole.MarkupLine($"[yellow]WARN: Folder '{lastSegment}' tidak ditemukan di {targetFolder}[/]");
+        return Path.Combine(targetFolder, lastSegment);
     }
 }
 
@@ -99,3 +118,21 @@ public class BotEntry
     [JsonIgnore]
     public bool IsBot => Path.Contains("/privatekey/") || Path.Contains("/token/");
 }
+```
+
+---
+
+## Logic Path:
+```
+Config: bots/privatekey/turnautobot-nte
+  ↓ contains "privatekey"
+Scan:  D:\SC\MyProject\SC\PrivateKey\
+  ↓ case-insensitive match
+Found: D:\SC\MyProject\SC\PrivateKey\TurnAutoBot-NTE\
+```
+```
+Config: bots/token/billion-bot
+  ↓ contains "token"
+Scan:  D:\SC\MyProject\SC\Token\
+  ↓ case-insensitive match
+Found: D:\SC\MyProject\SC\Token\Billion-Bot\
