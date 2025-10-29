@@ -106,7 +106,6 @@ public static class CodespaceManager
                         task.Description = $"[green]Checking:[/] {bot.Name}";
                         if (!bot.Enabled) { task.Increment(1); continue; }
                         
-                        // === PERBAIKAN: Khusus ProxySync, skip upload (ada di repo remote) ===
                         string localBotDir;
                         if (bot.Name == "ProxySync-Tool")
                         {
@@ -117,9 +116,9 @@ public static class CodespaceManager
                         }
                         else
                         {
+                            // === Menggunakan path baru yang portable (dari update sebelumnya) ===
                             localBotDir = BotConfig.GetLocalBotPath(bot.Path);
                         }
-                        // === AKHIR PERBAIKAN ===
 
                         if (!Directory.Exists(localBotDir))
                         {
@@ -184,10 +183,7 @@ public static class CodespaceManager
                                 throw;
                             }
                             catch {
-                                // === PERBAIKAN: Log failed upload disederhanakan ===
                                 filesSkipped++;
-                                // Error detail sudah di-handle ShellHelper.RunGhCommand
-                                // === AKHIR PERBAIKAN ===
                             }
 
                             try {
@@ -230,11 +226,9 @@ public static class CodespaceManager
                 cancellationToken.ThrowIfCancellationRequested();
                 AnsiConsole.Markup($"[dim]({stopwatch.Elapsed:mm\\:ss}) Finding CS... [/]");
                 
-                // === PERBAIKAN: Hapus pencarian "secret" dan "cleanup stuck" ===
                 var codespaceList = await ListAllCodespaces(token);
                 cancellationToken.ThrowIfCancellationRequested();
                 codespace = codespaceList.FirstOrDefault(cs => cs.DisplayName == CODESPACE_DISPLAY_NAME && cs.State != "Deleted");
-                // === AKHIR PERBAIKAN ===
 
                 if (codespace == null) {
                     AnsiConsole.MarkupLine("[yellow]Not found[/]");
@@ -350,7 +344,6 @@ public static class CodespaceManager
         }
     }
 
-    // === PERBAIKAN: Fungsi helper baru (ganti FindExistingCodespace) ===
     private static async Task<List<CodespaceInfo>> ListAllCodespaces(TokenEntry token)
     {
         string args = "codespace list --json name,displayName,state,createdAt";
@@ -362,12 +355,15 @@ public static class CodespaceManager
             return new List<CodespaceInfo>();
         }
     }
-    // === AKHIR PERBAIKAN ===
 
     private static async Task<string?> GetCodespaceState(TokenEntry token, string codespaceName) { try { string json = await ShellHelper.RunGhCommand(token, $"codespace view --json state -c \"{codespaceName}\"", SSH_PROBE_TIMEOUT_MS); using var doc = JsonDocument.Parse(json); return doc.RootElement.TryGetProperty("state", out var p) ? p.GetString() : null; } catch { return null; } }
     private static async Task<DateTime?> GetRepoLastCommitDate(TokenEntry token) { try { using var c = TokenManager.CreateHttpClient(token); var r = await c.GetAsync($"https://api.github.com/repos/{token.Owner}/{token.Repo}/commits?per_page=1"); if (!r.IsSuccessStatusCode) return null; var j = await r.Content.ReadAsStringAsync(); using var d = JsonDocument.Parse(j); if (d.RootElement.GetArrayLength() == 0) return null; var s = d.RootElement[0].GetProperty("commit").GetProperty("committer").GetProperty("date").GetString(); return DateTime.TryParse(s, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var dt) ? dt : null; } catch { return null; } }
     public static async Task DeleteCodespace(TokenEntry token, string codespaceName) { AnsiConsole.MarkupLine($"[yellow]Deleting {codespaceName}...[/]"); try { await ShellHelper.RunGhCommand(token, $"codespace delete -c \"{codespaceName}\" --force", SSH_COMMAND_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]✓ Deleted[/]"); } catch (Exception ex) { if (ex.Message.Contains("404") || ex.Message.Contains("find")) AnsiConsole.MarkupLine($"[dim]Gone[/]"); else AnsiConsole.MarkupLine($"[yellow]Fail: {ex.Message.Split('\n').FirstOrDefault()}[/]"); } await Task.Delay(3000); }
-    private static async Task StopCodespace(TokenEntry token, string codespaceName) { AnsiConsole.Markup($"[dim]Stopping {codespaceName}... [/]"); try { await ShellHelper.RunGhCommand(token, $"codespace stop --codespace \"{codespaceName}\"", STOP_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]OK[/]"); } catch (Exception ex) { if (ex.Message.Contains("stopped")) AnsiConsole.MarkupLine("[dim]Already stopped[/]"); else AnsiConsole.MarkupLine($"[yellow]Stop error: {ex.Message.Split('\n').FirstOrDefault()}[/]"); } await Task.Delay(2000); }
+    
+    // === PERBAIKAN: Ubah 'private' menjadi 'public' ===
+    public static async Task StopCodespace(TokenEntry token, string codespaceName) { AnsiConsole.Markup($"[dim]Stopping {codespaceName}... [/]"); try { await ShellHelper.RunGhCommand(token, $"codespace stop --codespace \"{codespaceName}\"", STOP_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]OK[/]"); } catch (Exception ex) { if (ex.Message.Contains("stopped")) AnsiConsole.MarkupLine("[dim]Already stopped[/]"); else AnsiConsole.MarkupLine($"[yellow]Stop error: {ex.Message.Split('\n').FirstOrDefault()}[/]"); } await Task.Delay(2000); }
+    // === AKHIR PERBAIKAN ===
+
     private static async Task StartCodespace(TokenEntry token, string codespaceName) { AnsiConsole.Markup($"[dim]Starting {codespaceName}... [/]"); try { await ShellHelper.RunGhCommand(token, $"codespace start --codespace \"{codespaceName}\"", START_TIMEOUT_MS); AnsiConsole.MarkupLine("[green]OK[/]"); } catch (Exception ex) { if(!ex.Message.Contains("available")) AnsiConsole.MarkupLine($"[yellow]Start warn: {ex.Message.Split('\n').FirstOrDefault()}[/]"); else AnsiConsole.MarkupLine($"[dim]Already available[/]"); } }
     private static async Task<bool> WaitForState(TokenEntry token, string codespaceName, string targetState, TimeSpan timeout, CancellationToken cancellationToken) { Stopwatch sw = Stopwatch.StartNew(); AnsiConsole.Markup($"[cyan]Waiting state '{targetState}'...[/]"); while(sw.Elapsed < timeout) { cancellationToken.ThrowIfCancellationRequested(); var state = await GetCodespaceState(token, codespaceName); if (state == targetState) { AnsiConsole.MarkupLine($"[green]✓ {targetState}[/]"); return true; } if (state == null || state == "Failed" || state == "Error" || state.Contains("Shutting")) { AnsiConsole.MarkupLine($"[red]{state ?? "Lost"}[/]"); return false; } await Task.Delay(STATE_POLL_INTERVAL_SEC * 1000, cancellationToken); } AnsiConsole.MarkupLine($"[yellow]Timeout[/]"); return false; }
     private static async Task<bool> WaitForSshReadyWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken) { Stopwatch sw = Stopwatch.StartNew(); AnsiConsole.Markup($"[cyan]Waiting SSH ready...[/]"); while(sw.Elapsed.TotalMinutes < SSH_READY_MAX_DURATION_MIN) { cancellationToken.ThrowIfCancellationRequested(); try { string res = await ShellHelper.RunGhCommand(token, $"codespace ssh -c \"{codespaceName}\" -- echo ready", SSH_PROBE_TIMEOUT_MS); if (res.Contains("ready")) { AnsiConsole.MarkupLine("[green]✓ SSH Ready[/]"); return true; } } catch (OperationCanceledException) { throw; } catch { } await Task.Delay(SSH_READY_POLL_INTERVAL_SEC * 1000, cancellationToken); } AnsiConsole.MarkupLine($"[yellow]SSH Timeout[/]"); return false; }
