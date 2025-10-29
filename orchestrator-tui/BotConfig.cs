@@ -8,7 +8,7 @@ public class BotConfig
 {
     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string ConfigFile = Path.Combine(ProjectRoot, "config", "bots_config.json");
-    private static readonly string LocalBotRoot = @"D:\SC\MyProject\SC";
+    private static readonly string LocalBotRoot = @"D:\SC";
 
     private static string GetProjectRoot()
     {
