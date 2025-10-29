@@ -8,7 +8,7 @@ public class BotConfig
 {
     private static readonly string ProjectRoot = GetProjectRoot();
     private static readonly string ConfigFile = Path.Combine(ProjectRoot, "config", "bots_config.json");
-    private static readonly string LocalBotRoot = @"D:\SC";
+    private static readonly string LocalBotRoot = @"D:\SC\MyProject\SC";
 
     private static string GetProjectRoot()
     {
@@ -62,22 +62,20 @@ public class BotConfig
     
     public static string GetLocalBotPath(string configPath)
     {
-        configPath = configPath.Replace('/', '\\');
-        var botName = Path.GetFileName(configPath).ToLowerInvariant();
+        var lastSegment = configPath.Split('/', '\\').Last();
         
-        if (configPath.Contains("privatekey", StringComparison.OrdinalIgnoreCase))
+        var localDir = new DirectoryInfo(LocalBotRoot);
+        if (!localDir.Exists) return Path.Combine(LocalBotRoot, lastSegment);
+        
+        var matchingDir = localDir.GetDirectories()
+            .FirstOrDefault(d => d.Name.Equals(lastSegment, StringComparison.OrdinalIgnoreCase));
+        
+        if (matchingDir != null)
         {
-            return Path.Combine(LocalBotRoot, "PrivateKey", botName);
+            return matchingDir.FullName;
         }
-        else if (configPath.Contains("token", StringComparison.OrdinalIgnoreCase))
-        {
-            return Path.Combine(LocalBotRoot, "Token", botName);
-        }
-        else
-        {
-            AnsiConsole.MarkupLine($"[dim]   Path non-standar: {configPath}. Ditaro di root D:\\SC[/]");
-            return Path.Combine(LocalBotRoot, botName);
-        }
+        
+        return Path.Combine(LocalBotRoot, lastSegment);
     }
 }
 
