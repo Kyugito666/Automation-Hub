@@ -112,7 +112,13 @@ namespace Orchestrator.Codespace
                             try {
                                 await GhService.RunGhCommandNoProxyAsync(token, sshMkdirArgs, 120000);
                                 AnsiConsole.MarkupLine($"[green]✓ All {allBotPaths.Count} directories created[/]");
-                                await Task.Delay(2000, cancellationToken); // Tunggu sebentar
+                                
+                                // === INI PERBAIKANNYA ===
+                                // Kasih 10 detik buat filesystem codespace 'settle'
+                                AnsiConsole.MarkupLine("[dim]   Waiting 10s for remote filesystem sync...[/]");
+                                await Task.Delay(10000, cancellationToken);
+                                // === AKHIR PERBAIKAN ===
+                                
                             } catch (Exception mkdirEx) {
                                 AnsiConsole.MarkupLine($"[red]✗ Failed create directories: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
                                 throw new Exception("Critical: Directory creation failed");
