@@ -1,15 +1,14 @@
 using Spectre.Console;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Net.Http; // Diperlukan untuk HttpClient
-using System.Threading.Tasks; // Diperlukan untuk Task
-using System.Collections.Generic; // Diperlukan untuk List
-using System.Linq; // Diperlukan untuk .Any()
-using Orchestrator.Core; // Menggunakan Core.TokenManager
+using System.Net.Http; 
+using System.Threading.Tasks; 
+using System.Collections.Generic; 
+using System.Linq; 
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.Services // Namespace baru
+namespace Orchestrator.Services 
 {
-    // Ganti nama kelas
     public static class SecretService
     {
         public static async Task<bool> AutoCleanupBeforeCreate(TokenEntry token)
@@ -95,7 +94,7 @@ namespace Orchestrator.Services // Namespace baru
             AnsiConsole.MarkupLine("\n[cyan]═══ [[3/3]] Repository Codespace Secrets ═══[/]");
             totalDeleted += await DeleteSecretsFromEndpoint(client, 
                 $"https://api.github.com/repos/{owner}/{repo}/codespaces/secrets", 
-                $"repos/{owner}/{repo}/codespaces/secrets");
+                $"repos/{token.Owner}/{token.Repo}/codespaces/secrets");
 
             AnsiConsole.MarkupLine("\n[cyan]═══════════════════════════════════════════════════════════════[/]");
             if (totalDeleted > 0)
@@ -170,7 +169,6 @@ namespace Orchestrator.Services // Namespace baru
             }
         }
 
-        // Kelas DTO (tetap sama)
         private class GitHubSecretList
         {
             [JsonPropertyName("total_count")]
