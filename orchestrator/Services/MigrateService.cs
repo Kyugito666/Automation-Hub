@@ -2,11 +2,10 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Spectre.Console;
-using Orchestrator.Core; // Menggunakan Core.BotConfig
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.Services // Namespace baru
+namespace Orchestrator.Services 
 {
-    // Ganti nama kelas
     public static class MigrateService
     {
         private static readonly string ProjectRoot = GetProjectRoot();
@@ -26,7 +25,6 @@ namespace Orchestrator.Services // Namespace baru
             return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory!, "..", "..", "..", ".."));
         }
         
-        // === PERBAIKAN (dari file asli): Ganti nama ke plural dan baca SEMUA path ===
         private static List<string> GetOldPaths()
         {
             var paths = new List<string>();
@@ -69,11 +67,9 @@ namespace Orchestrator.Services // Namespace baru
                 return paths;
             }
         }
-        // === AKHIR PERBAIKAN ===
 
         private static List<string> LoadUploadFileList()
         {
-            // (Logika tidak berubah)
             if (!File.Exists(UploadFilesListPath)) {
                 AnsiConsole.MarkupLine($"[yellow]Warn: '{UploadFilesListPath}' not found. Using defaults.[/]");
                 return new List<string> { "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", "config.json", "data.txt", "query.txt", "wallet.txt", "settings.yaml", "mnemonics.txt" };
@@ -92,7 +88,6 @@ namespace Orchestrator.Services // Namespace baru
             AnsiConsole.Write(new FigletText("Migrator").Color(Color.Orange1));
             AnsiConsole.MarkupLine("[bold]Memindahkan file kredensial LOKAL ke struktur repo.[/]");
             
-            // === PERBAIKAN (dari file asli): Gunakan GetOldPaths() (plural) ===
             var oldRootPaths = GetOldPaths();
             if (oldRootPaths == null || !oldRootPaths.Any())
             {
@@ -149,7 +144,6 @@ namespace Orchestrator.Services // Namespace baru
                         var oldBotName = bot.Path.Split('/', '\\').Last();
                         string? foundOldBotDir = null;
 
-                        // === PERBAIKAN (dari file asli): Cari folder bot di SEMUA root path ===
                         foreach (var rootPath in oldRootPaths)
                         {
                             string potentialPath = Path.Combine(rootPath, oldBotName);
@@ -168,7 +162,6 @@ namespace Orchestrator.Services // Namespace baru
                             task.Increment(1);
                             continue;
                         }
-                        // === AKHIR PERBAIKAN ===
                         
                         botsProcessed++;
                         Directory.CreateDirectory(newBotDir); 
@@ -185,7 +178,7 @@ namespace Orchestrator.Services // Namespace baru
                                 try
                                 {
                                     task.Description = $"[cyan]Copy:[/] {bot.Name}/{fileName}";
-                                    File.Copy(oldFilePath, newFilePath, true); // Overwrite = true
+                                    File.Copy(oldFilePath, newFilePath, true); 
                                     filesCopied++;
                                 }
                                 catch (Exception ex)
