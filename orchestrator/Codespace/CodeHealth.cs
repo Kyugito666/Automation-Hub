@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 using System; 
 using Orchestrator.Services; 
 using Orchestrator.Core; 
+using System.Collections.Generic; // <-- TAMBAHKAN
+using System.Linq; // <-- TAMBAHKAN
 
 namespace Orchestrator.Codespace
 {
@@ -17,15 +19,17 @@ namespace Orchestrator.Codespace
         
         private const int SSH_PROBE_TIMEOUT_MS = 30000; 
         
+        // Flag file di /tmp
         private const string HEALTH_CHECK_FILE = "/tmp/auto_start_done";
         private const string HEALTH_CHECK_FAIL_PROXY = "/tmp/auto_start_failed_proxysync";
         private const string HEALTH_CHECK_FAIL_DEPLOY = "/tmp/auto_start_failed_deploy";
+        
+        // Interval polling log
+        private const int LOG_POLL_INTERVAL_SEC = 5;
 
-        private const string MAGIC_STRING_HEALTHY = "[ORCHESTRATOR_HEALTH_CHECK:HEALTHY]";
-        private const string MAGIC_STRING_FAILED_PROXY = "[ORCHESTRATOR_HEALTH_CHECK:FAILED_PROXY]";
-        private const string MAGIC_STRING_FAILED_DEPLOY = "[ORCHESTRATOR_HEALTH_CHECK:FAILED_DEPLOY]";
 
-
+        // (Fungsi WaitForState dan WaitForSshReadyWithRetry tidak berubah)
+        #region "Fungsi Lama (Tidak Berubah)"
         internal static async Task<bool> WaitForState(TokenEntry token, string codespaceName, string targetState, TimeSpan timeout, CancellationToken cancellationToken, bool useFastPolling = false)
         {
             Stopwatch sw = Stopwatch.StartNew(); 
@@ -110,95 +114,117 @@ namespace Orchestrator.Codespace
             await Task.Delay(500, CancellationToken.None);
             return result; 
         }
+        #endregion
 
+        // === PERBAIKAN: GANTI STREAMING JADI LOG POLLING ===
         internal static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
             AnsiConsole.MarkupLine("[cyan]Attaching to remote log stream...[/]");
-            AnsiConsole.MarkupLine("[dim]   (Waiting for auto-start.sh to finish... this might take 10-15 mins)[/]");
+            AnsiConsole.MarkupLine($"[dim]   (Polling log every {LOG_POLL_INTERVAL_SEC} seconds... this might take 10-15 mins)[/]");
 
             string remoteLogFile = $"/workspaces/{token.Repo.ToLowerInvariant()}/startup.log";
             
+            // Command ini nge-dump semua status dalam satu kali jalan
             string remoteCommand = $@"
-touch {remoteLogFile}
-# === INI FIX-NYA: 'stdbuf -o0' (unbuffered output) ===
-stdbuf -o0 tail -f {remoteLogFile} &
-# === AKHIR FIX ===
-tail_pid=$!
-echo ""[ORCHESTRATOR_MONITOR:STREAM_STARTED]""
-while true; do
-    if [ -f {HEALTH_CHECK_FAIL_PROXY} ]; then
-        echo ""{MAGIC_STRING_FAILED_PROXY}""
-        kill $tail_pid 2>/dev/null
-        break
-    elif [ -f {HEALTH_CHECK_FAIL_DEPLOY} ]; then
-        echo ""{MAGIC_STRING_FAILED_DEPLOY}""
-        kill $tail_pid 2>/dev/null
-        break
-    elif [ -f {HEALTH_CHECK_FILE} ]; then
-        echo ""{MAGIC_STRING_HEALTHY}""
-        kill $tail_pid 2>/dev/null
-        break
-    fi
-    sleep 5
-done
+cat {remoteLogFile} 2>/dev/null;
+echo ""[ORCHESTRATOR_STATUS_CHECK]""
+if [ -f {HEALTH_CHECK_FAIL_PROXY} ]; then
+    echo ""FAILED_PROXY""
+elif [ -f {HEALTH_CHECK_FAIL_DEPLOY} ]; then
+    echo ""FAILED_DEPLOY""
+elif [ -f {HEALTH_CHECK_FILE} ]; then
+    echo ""HEALTHY""
+else
+    echo ""NOT_READY""
+fi
 ";
             
             string args = $"codespace ssh -c \"{codespaceName}\" -- \"{remoteCommand}\"";
             bool healthResult = false;
-            bool streamStarted = false;
-
-            Func<string, bool> onStdOut = (line) => {
-                string trimmedLine = line.Trim();
-                
-                if (trimmedLine.Contains(MAGIC_STRING_HEALTHY)) {
-                    AnsiConsole.MarkupLine($"[bold green]✓ Remote script finished successfully.[/]");
-                    healthResult = true;
-                    return true; // Stop streaming
-                }
-                if (trimmedLine.Contains(MAGIC_STRING_FAILED_PROXY)) {
-                    AnsiConsole.MarkupLine($"[bold red]✗ Remote script FAILED (ProxySync).[/]");
-                    healthResult = false;
-                    return true; // Stop streaming
-                }
-                if (trimmedLine.Contains(MAGIC_STRING_FAILED_DEPLOY)) {
-                    AnsiConsole.MarkupLine($"[bold red]✗ Remote script FAILED (Bot Deploy).[/]");
-                    healthResult = false;
-                    return true; // Stop streaming
-                }
-                
-                if (trimmedLine.Contains("[ORCHESTRATOR_MONITOR:STREAM_STARTED]")) {
-                    streamStarted = true;
-                    return false; // Lanjut streaming
-                }
-
-                if (streamStarted) {
-                    AnsiConsole.MarkupLine($"[grey]   [REMOTE] {line.EscapeMarkup()}[/]");
-                }
-                return false; // Lanjut streaming
-            };
+            
+            // Simpan berapa baris log yang udah kita print
+            int linesPrinted = 0;
+            bool scriptFinished = false;
 
             try
             {
-                await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken, onStdOut);
-                
-                if (!healthResult && !cancellationToken.IsCancellationRequested)
+                while (!scriptFinished && !cancellationToken.IsCancellationRequested)
                 {
-                    AnsiConsole.MarkupLine("[yellow]Stream finished but health status unknown (no magic string detected). Assuming failure.[/]");
-                    healthResult = false;
+                    string fullOutput = "";
+                    try
+                    {
+                        // Panggil GhService versi biasa (bukan streaming)
+                        fullOutput = await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS);
+                    }
+                    catch (OperationCanceledException) { throw; } // Biar ditangkep di luar
+                    catch (Exception ex)
+                    {
+                        AnsiConsole.MarkupLine($"[yellow]Log poll failed (SSH Error): {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                        AnsiConsole.MarkupLine($"[dim]   (Retrying in {LOG_POLL_INTERVAL_SEC}s...)[/]");
+                    }
+
+                    if (!string.IsNullOrEmpty(fullOutput))
+                    {
+                        var parts = fullOutput.Split(new[] { "[ORCHESTRATOR_STATUS_CHECK]" }, StringSplitOptions.None);
+                        string logContent = parts[0];
+                        string status = parts.Length > 1 ? parts[1].Trim() : "NOT_READY";
+
+                        // Logika nge-print log baru
+                        var allLines = logContent.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                        if (allLines.Length > linesPrinted)
+                        {
+                            var newLines = allLines.Skip(linesPrinted);
+                            foreach (var line in newLines)
+                            {
+                                AnsiConsole.MarkupLine($"[grey]   [REMOTE] {line.EscapeMarkup()}[/]");
+                            }
+                            linesPrinted = allLines.Length; // Update counter
+                        }
+
+                        // Logika cek status
+                        if (status == "HEALTHY")
+                        {
+                            AnsiConsole.MarkupLine($"[bold green]✓ Remote script finished successfully.[/]");
+                            healthResult = true;
+                            scriptFinished = true;
+                        }
+                        else if (status == "FAILED_PROXY")
+                        {
+                            AnsiConsole.MarkupLine($"[bold red]✗ Remote script FAILED (ProxySync).[/]");
+                            healthResult = false;
+                            scriptFinished = true;
+                        }
+                        else if (status == "FAILED_DEPLOY")
+                        {
+                            AnsiConsole.MarkupLine($"[bold red]✗ Remote script FAILED (Bot Deploy).[/]");
+                            healthResult = false;
+                            scriptFinished = true;
+                        }
+                        else // NOT_READY
+                        {
+                            // Diem aja, lanjut polling
+                        }
+                    }
+                    
+                    if (!scriptFinished)
+                    {
+                        await Task.Delay(LOG_POLL_INTERVAL_SEC * 1000, cancellationToken);
+                    }
                 }
             }
             catch (OperationCanceledException) {
-                AnsiConsole.MarkupLine("\n[yellow]Log streaming cancelled by user.[/]");
+                AnsiConsole.MarkupLine("\n[yellow]Log polling cancelled by user.[/]");
                 throw; 
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"\n[red]FATAL: Log streaming failed: {ex.Message.EscapeMarkup()}[/]");
+                AnsiConsole.MarkupLine($"\n[red]FATAL: Log polling failed: {ex.Message.EscapeMarkup()}[/]");
                 healthResult = false; 
             }
 
-            AnsiConsole.MarkupLine($"[cyan]Log stream finished. Health Status: {(healthResult ? "OK" : "Failed")}[/]");
+            AnsiConsole.MarkupLine($"[cyan]Log polling finished. Health Status: {(healthResult ? "OK" : "Failed")}[/]");
             return healthResult;
         }
+        // === AKHIR PERBAIKAN ===
     }
 }
