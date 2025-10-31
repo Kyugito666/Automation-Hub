@@ -8,16 +8,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 
-// Namespace diubah
 namespace Orchestrator.Core
 {
-    // Kelas TokenEntry dan TokenState dipindah ke file ini agar rapi
     public class TokenEntry { public string Token{get;set;}=""; public string? Proxy{get;set;} public string? Username{get;set;} public string Owner{get;set;}=""; public string Repo{get;set;}=""; }
     public class TokenState { [JsonPropertyName("current_index")] public int CurrentIndex{get;set;}=0; [JsonPropertyName("active_codespace_name")] public string? ActiveCodespaceName{get;set;}=null; }
 
     public static class TokenManager
     {
-        // === PERBAIKAN PATH ===
         private static readonly string ProjectRoot = GetProjectRoot(); 
         private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
         private static readonly string ProxySyncRoot = Path.Combine(ProjectRoot, "proxysync"); 
@@ -27,7 +24,6 @@ namespace Orchestrator.Core
         private static readonly string FallbackProxyListPath = Path.Combine(ProxySyncRoot, "proxy.txt");
         private static readonly string StatePath = Path.Combine(ProjectRoot, ".token-state.json");
         private static readonly string TokenCachePath = Path.Combine(ProjectRoot, ".token-cache.json");
-        // === AKHIR PERBAIKAN PATH ===
 
         private static List<TokenEntry> _tokens = new();
         private static List<string> _availableProxies = new();
@@ -52,7 +48,6 @@ namespace Orchestrator.Core
             }
             return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory!, "..", "..", "..", ".."));
         }
-
 
         public static void Initialize() { LoadTokens(); LoadProxyList(); LoadState(); LoadTokenCache(); AssignProxiesAndUsernames(); }
 
