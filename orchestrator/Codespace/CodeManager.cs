@@ -154,10 +154,6 @@ namespace Orchestrator.Codespace
         private static async Task<string> CreateNewCodespace(TokenEntry token, string repoFullName, CancellationToken cancellationToken)
         {
             AnsiConsole.MarkupLine($"\n[cyan]Attempting create new codespace...[/]");
-            
-            // --- PRE-FLIGHT CLEANUP (DIHAPUS) ---
-            // Panggilan ke SecretService.AutoCleanupBeforeCreate(token) telah dihapus.
-            // --- END PRE-FLIGHT ---
 
             string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m"; 
             Stopwatch createStopwatch = Stopwatch.StartNew(); 
@@ -173,7 +169,7 @@ namespace Orchestrator.Codespace
                 }
                 else { 
                     newName = newName.Trim(); 
-                    AnsiConsole.MarkupLine($"[green]✓ Create command likely OK: {newName.EscapeMarkup()}[/] ({createStopwatch.Elapsed:mm\\:ss})"); 
+                    AnsiConsole.MarkupLine($"[green]✓ Create command OK: {newName.EscapeMarkup()}[/] ({createStopwatch.Elapsed:mm\\:ss})"); 
                 }
                 
                 if (string.IsNullOrWhiteSpace(newName)) { 
@@ -187,19 +183,23 @@ namespace Orchestrator.Codespace
                     AnsiConsole.MarkupLine($"[green]✓ Fallback found: {newName.EscapeMarkup()}[/]"); 
                 }
                 
-                AnsiConsole.MarkupLine("[cyan]Waiting for Available state...[/]"); 
-                if (!await CodeHealth.WaitForState(token, newName, "Available", TimeSpan.FromMinutes(6), cancellationToken, useFastPolling: true)) 
-                    throw new Exception($"CS '{newName}' failed reach Available"); 
+                // === ALUR BARU: Stop langsung setelah create ===
+                AnsiConsole.MarkupLine("[yellow]Stopping codespace immediately (avoid heavy startup)...[/]"); 
+                await CodeActions.StopCodespace(token, newName);
+                await Task.Delay(3000, cancellationToken); // Tunggu sebentar
                 
-                AnsiConsole.MarkupLine("[cyan]State Available. Verifying SSH...[/]"); 
+                // Langsung start lagi (akan lebih cepat dari Available awal)
+                AnsiConsole.MarkupLine("[cyan]Starting codespace...[/]"); 
+                await CodeActions.StartCodespace(token, newName);
+                
+                // Tunggu SSH ready (tanpa tunggu state Available)
+                AnsiConsole.MarkupLine("[cyan]Waiting SSH ready...[/]"); 
                 if (!await CodeHealth.WaitForSshReadyWithRetry(token, newName, cancellationToken, useFastPolling: true)) 
                     throw new Exception($"SSH to '{newName}' failed"); 
                 
-                AnsiConsole.MarkupLine("[cyan]SSH OK. Uploading credentials...[/]"); 
+                // Upload credentials (sudah diubah logikanya di CodeUpload.cs)
+                AnsiConsole.MarkupLine("[cyan]Uploading credentials...[/]"); 
                 await CodeUpload.UploadCredentialsToCodespace(token, newName, cancellationToken);
-                
-                AnsiConsole.MarkupLine("[dim]Finalizing...[/]"); 
-                await Task.Delay(5000, cancellationToken);
                 
                 AnsiConsole.MarkupLine("[cyan]Triggering auto-start...[/]"); 
                 await CodeActions.TriggerStartupScript(token, newName);
@@ -231,5 +231,4 @@ namespace Orchestrator.Codespace
                 throw new Exception($"FATAL: Create failed{info}. Err: {ex.Message}"); 
             }
         }
-    }
 }
