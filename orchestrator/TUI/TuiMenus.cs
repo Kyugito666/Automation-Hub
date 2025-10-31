@@ -4,16 +4,16 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Orchestrator.Services; // Menggunakan Services
-using Orchestrator.Codespace; // Menggunakan Codespace
-using Orchestrator.Util; // Menggunakan ShellUtil
+using Orchestrator.Services; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Codespace; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Util; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.TUI // Namespace baru
+namespace Orchestrator.TUI 
 {
     internal static class TuiMenus
     {
-        // --- Menu Interaktif Utama ---
-        internal static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken) // Token utama (_mainCts)
+        internal static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken) 
         {
             while (!cancellationToken.IsCancellationRequested) {
                 AnsiConsole.Clear();
@@ -39,14 +39,13 @@ namespace Orchestrator.TUI // Namespace baru
                 var choice = selection[0].ToString();
 
                 var interactiveCts = new CancellationTokenSource();
-                Program.SetInteractiveCts(interactiveCts); // Daftarkan CTS interaktif ke Program
+                Program.SetInteractiveCts(interactiveCts); 
 
                 using var linkedCtsMenu = CancellationTokenSource.CreateLinkedTokenSource(interactiveCts.Token, cancellationToken);
 
                 try {
                     switch (choice) {
                         case "1":
-                            // Memanggil TuiLoop
                             await TuiLoop.RunOrchestratorLoopAsync(cancellationToken);
                             if (cancellationToken.IsCancellationRequested) return; 
                             break; 
@@ -54,18 +53,16 @@ namespace Orchestrator.TUI // Namespace baru
                         case "3": await ShowLocalMenuAsync(linkedCtsMenu.Token); break; 
                         case "4": await ShowAttachMenuAsync(linkedCtsMenu.Token); break; 
                         case "5": 
-                            // Menggunakan MigrateService (dulu CredentialMigrator)
                             await MigrateService.RunMigration(linkedCtsMenu.Token); 
                             Program.Pause("Tekan Enter...", linkedCtsMenu.Token); break; 
                         case "6": await ShowRemoteShellAsync(linkedCtsMenu.Token); break; 
                         case "7":
-                            // Menggunakan SecretService (dulu SecretCleanup)
-                            await SecretService.DeleteAllSecrets(/* linkedCtsMenu.Token */);
+                            await SecretService.DeleteAllSecrets();
                             Program.Pause("Tekan Enter...", linkedCtsMenu.Token); 
                             break;
                         case "0":
                             AnsiConsole.MarkupLine("Exiting...");
-                            Program.TriggerFullShutdown(); // Panggil shutdown TUI
+                            Program.TriggerFullShutdown(); 
                             return; 
                     }
                 }
@@ -88,13 +85,11 @@ namespace Orchestrator.TUI // Namespace baru
                 }
                 finally {
                     interactiveCts?.Dispose();
-                    Program.ClearInteractiveCts(); // Hapus CTS interaktif dari Program
+                    Program.ClearInteractiveCts(); 
                 }
-            } // End while menu loop
+            } 
             AnsiConsole.MarkupLine("[yellow]Exiting Menu loop due to main cancellation.[/]");
         } 
-
-        // --- Sub-menu (Logika tidak berubah) ---
 
         private static async Task ShowSetupMenuAsync(CancellationToken linkedCancellationToken) {
             while (!linkedCancellationToken.IsCancellationRequested) {
@@ -106,7 +101,6 @@ namespace Orchestrator.TUI // Namespace baru
 
                  try {
                      switch (sel) {
-                         // Menggunakan CollabService (dulu CollaboratorManager)
                          case "1": await CollabService.ValidateAllTokens(linkedCancellationToken); break;
                          case "2": await CollabService.InviteCollaborators(linkedCancellationToken); break;
                          case "3": await CollabService.AcceptInvitations(linkedCancellationToken); break;
@@ -127,7 +121,6 @@ namespace Orchestrator.TUI // Namespace baru
                  var sel = selection[0].ToString(); if (sel == "0") return;
 
                  try {
-                    // Menggunakan ProxyService (dulu ProxyManager)
                     if (sel == "1") await ProxyService.DeployProxies(linkedCancellationToken); 
                     Program.Pause("Press Enter...", linkedCancellationToken); 
                  } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]ProxySync operation cancelled.[/]"); return; } 
@@ -145,7 +138,6 @@ namespace Orchestrator.TUI // Namespace baru
             AnsiConsole.MarkupLine($"[dim]Checking active codespace: [blue]{activeCodespace.EscapeMarkup()}[/][/]");
             List<string> sessions;
             try {
-                 // Menggunakan CodeManager (dulu CodespaceManager)
                  sessions = await CodeManager.GetTmuxSessions(currentToken, activeCodespace);
                  linkedCancellationToken.ThrowIfCancellationRequested(); 
             } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Fetching sessions cancelled.[/]"); return; }
@@ -165,7 +157,6 @@ namespace Orchestrator.TUI // Namespace baru
             try {
                 string tmuxSessionName = "automation_hub_bots"; string escapedBotName = selectedBot.Replace("\"", "\\\"");
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
-                // Menggunakan ShellUtil
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken);
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
             }
@@ -187,7 +178,6 @@ namespace Orchestrator.TUI // Namespace baru
 
             try {
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
-                // Menggunakan ShellUtil
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken);
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
             }
