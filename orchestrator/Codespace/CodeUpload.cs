@@ -6,7 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core; 
 using Orchestrator.Services; 
-using System; // <-- Tambahkan
+using Orchestrator.Util; // <-- WAJIB
+using System; // <-- WAJIB
 
 namespace Orchestrator.Codespace
 {
@@ -50,7 +51,6 @@ namespace Orchestrator.Codespace
         {
             var existingFiles = new List<string>();
             if (!Directory.Exists(localBotDir)) {
-                 // Ini bukan warning, ini normal jika folder bot tidak ada di lokal
                  return existingFiles; 
             }
             foreach (var fileName in allPossibleFiles) {
@@ -60,9 +60,10 @@ namespace Orchestrator.Codespace
             return existingFiles; 
         }
 
+        // === PERBAIKAN: Menggunakan RunProcessWithFileStdinAsync ===
         internal static async Task UploadCredentialsToCodespace(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
-            AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials & Configs via SSH (Base64 Mode) ═══[/]");
+            AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials & Configs via SSH (Stdin Stream Mode) ═══[/]");
             var config = BotConfig.Load();
             if (config == null) { AnsiConsole.MarkupLine("[red]✗ Gagal load bots_config.json. Upload batal.[/]"); return; }
 
@@ -77,7 +78,6 @@ namespace Orchestrator.Codespace
                 await AnsiConsole.Progress()
                     .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
                     .StartAsync(async ctx => {
-                        // === PERBAIKAN: Logic di-flat, per-file, dan pakai base64 ===
                         var task = ctx.AddTask("[green]Processing bots & configs...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count + 1 });
 
                         // STEP 1: Bot Credentials
@@ -93,7 +93,8 @@ namespace Orchestrator.Codespace
                             var filesToUpload = GetFilesToUploadForBot(localBotDir, botCredentialFiles);
                             if (!filesToUpload.Any()) { botsSkipped++; task.Increment(1); continue; }
 
-                            foreach (var credFileName in filesToUpload) {
+                            foreach (var credFileName in filesToUpload)
+                            {
                                 if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
                                 
                                 string localFilePath = Path.Combine(localBotDir, credFileName); 
@@ -102,25 +103,27 @@ namespace Orchestrator.Codespace
 
                                 task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
 
-                                try { 
-                                    // Baca file sebagai base64
-                                    byte[] fileBytes = await File.ReadAllBytesAsync(localFilePath, cancellationToken);
-                                    string base64Content = Convert.ToBase64String(fileBytes);
-
+                                try
+                                {
                                     // Buat command gabungan
-                                    string cmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}' && echo '{base64Content}' | base64 -d > '{remoteFilePath.Replace("'", "'\\''")}'";
+                                    string cmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}' && cat > '{remoteFilePath.Replace("'", "'\\''")}'";
                                     string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
-
-                                    await GhService.RunGhCommandNoProxyAsync(token, sshArgs, 300000); 
+                                    
+                                    // Siapkan ProcessStartInfo
+                                    var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); // No proxy untuk 'gh'
+                                    
+                                    // Panggil helper baru untuk streaming
+                                    await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localFilePath, cancellationToken);
+                                    
                                     filesUploaded++; 
                                 }
                                 catch (OperationCanceledException) { throw; }
-                                catch (Exception cpEx) {
-                                    AnsiConsole.MarkupLine($"[red]✗ Upload FAILED (Base64):[/] {bot.Name}/{credFileName}");
+                                catch (Exception cpEx)
+                                {
+                                    AnsiConsole.MarkupLine($"[red]✗ Upload FAILED (Stream):[/] {bot.Name}/{credFileName}");
                                     AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
                                     filesSkipped++; 
                                 }
-                                // Delay kecil untuk stabilitas
                                 try { await Task.Delay(50, cancellationToken); } catch (OperationCanceledException) { throw; }
                             }
                             botsProcessed++;
@@ -132,7 +135,8 @@ namespace Orchestrator.Codespace
                         var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
                         string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config".Replace('\\', '/');
                         
-                        foreach (var configFileName in proxySyncConfigFiles) {
+                        foreach (var configFileName in proxySyncConfigFiles)
+                        {
                              if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
                              
                              string localConfigPath = Path.Combine(ConfigRoot, configFileName); 
@@ -142,21 +146,24 @@ namespace Orchestrator.Codespace
                              
                              task.Description = $"[cyan]Uploading:[/] proxysync/{configFileName}";
 
-                             try { 
-                                 // Baca file sebagai base64
-                                byte[] fileBytes = await File.ReadAllBytesAsync(localConfigPath, cancellationToken);
-                                string base64Content = Convert.ToBase64String(fileBytes);
-
+                             try
+                             { 
                                 // Buat command gabungan
-                                string cmd = $"mkdir -p '{remoteProxySyncConfigDir.Replace("'", "'\\''")}' && echo '{base64Content}' | base64 -d > '{remoteConfigPath.Replace("'", "'\\''")}'";
+                                string cmd = $"mkdir -p '{remoteProxySyncConfigDir.Replace("'", "'\\''")}' && cat > '{remoteConfigPath.Replace("'", "'\\''")}'";
                                 string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
 
-                                 await GhService.RunGhCommandNoProxyAsync(token, sshArgs, 120000); 
-                                 filesUploaded++; 
+                                // Siapkan ProcessStartInfo
+                                var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); // No proxy untuk 'gh'
+
+                                // Panggil helper baru untuk streaming
+                                await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localConfigPath, cancellationToken);
+                                
+                                filesUploaded++; 
                              }
                              catch (OperationCanceledException) { throw; }
-                             catch (Exception cpEx) {
-                                AnsiConsole.MarkupLine($"[red]✗ Upload FAILED (Base64):[/] proxysync/{configFileName}");
+                             catch (Exception cpEx)
+                             {
+                                AnsiConsole.MarkupLine($"[red]✗ Upload FAILED (Stream):[/] proxysync/{configFileName}");
                                 AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
                                 filesSkipped++; 
                              }
