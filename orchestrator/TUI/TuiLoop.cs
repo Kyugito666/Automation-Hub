@@ -2,23 +2,21 @@ using Spectre.Console;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Orchestrator.Services; // Menggunakan Services
-using Orchestrator.Codespace; // Menggunakan Codespace
+using Orchestrator.Services; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Codespace; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.TUI // Namespace baru
+namespace Orchestrator.TUI 
 {
     internal static class TuiLoop
     {
-        // Flag ini khusus untuk loop orkestrasi
         private static bool _isAttemptingIpAuth = false;
 
-        // Konstanta dipindah ke sini
-        private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMinutes((3 * 60) + 30); // 3.5 jam
+        private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMinutes((3 * 60) + 30); 
         private static readonly TimeSpan ErrorRetryDelay = TimeSpan.FromMinutes(5);
         private const int MAX_CONSECUTIVE_ERRORS = 3;
 
-        // --- Loop Orkestrasi Utama ---
-        internal static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) // Ini adalah _mainCts.Token
+        internal static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) 
         {
             AnsiConsole.Clear(); AnsiConsole.MarkupLine("[cyan]Starting Orchestrator Loop...[/]"); AnsiConsole.MarkupLine("[dim](Press Ctrl+C ONCE for graceful shutdown)[/]");
             int consecutiveErrors = 0;
@@ -30,17 +28,14 @@ namespace Orchestrator.TUI // Namespace baru
                 try {
                     cancellationToken.ThrowIfCancellationRequested();
                     AnsiConsole.MarkupLine("Checking billing...");
-                    // Menggunakan BillingService (dulu BillingManager)
                     var billingInfo = await BillingService.GetBillingInfo(currentToken); 
                     cancellationToken.ThrowIfCancellationRequested();
                     BillingService.DisplayBilling(billingInfo, currentToken.Username ?? "unknown");
 
                     if (!billingInfo.IsQuotaOk) {
-                        // Menggunakan BillingService.PersistentProxyError
                         if (billingInfo.Error == BillingService.PersistentProxyError && !_isAttemptingIpAuth) {
                             AnsiConsole.MarkupLine("[magenta]Proxy error detected. Attempting recovery...[/]");
                             _isAttemptingIpAuth = true;
-                            // Menggunakan ProxyService (dulu ProxyManager)
                             bool ipAuthSuccess = await ProxyService.RunIpAuthorizationOnlyAsync(cancellationToken); 
                             _isAttemptingIpAuth = false; cancellationToken.ThrowIfCancellationRequested();
                             if (ipAuthSuccess) {
@@ -54,7 +49,6 @@ namespace Orchestrator.TUI // Namespace baru
                         AnsiConsole.MarkupLine("[yellow]Quota low/billing failed/recovery failed. Rotating token...[/]");
                         if (!string.IsNullOrEmpty(activeCodespace)) { 
                             AnsiConsole.MarkupLine($"[dim]Deleting {activeCodespace.EscapeMarkup()}...[/]"); 
-                            // Menggunakan CodeManager (dulu CodespaceManager)
                             try { await CodeManager.DeleteCodespace(currentToken, activeCodespace); } catch {} 
                         } 
                         currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState);
@@ -66,7 +60,6 @@ namespace Orchestrator.TUI // Namespace baru
                     cancellationToken.ThrowIfCancellationRequested(); AnsiConsole.MarkupLine("Ensuring codespace...");
                     string ensuredCodespaceName;
                     try { 
-                        // Menggunakan CodeManager (dulu CodespaceManager)
                         ensuredCodespaceName = await CodeManager.EnsureHealthyCodespace(currentToken, $"{currentToken.Owner}/{currentToken.Repo}", cancellationToken); 
                     } 
                     catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Codespace ensure cancelled.[/]"); throw; } 
@@ -84,14 +77,12 @@ namespace Orchestrator.TUI // Namespace baru
                     cancellationToken.ThrowIfCancellationRequested(); currentState = TokenManager.GetState(); activeCodespace = currentState.ActiveCodespaceName;
                     if (string.IsNullOrEmpty(activeCodespace)) { AnsiConsole.MarkupLine("[yellow]No active codespace after sleep. Restarting cycle.[/]"); continue; }
                     AnsiConsole.MarkupLine("\n[yellow]Performing Keep-Alive check...[/]");
-                    // Menggunakan CodeManager (dulu CodespaceManager)
                     if (!await CodeManager.CheckHealthWithRetry(currentToken, activeCodespace, cancellationToken)) { 
                         AnsiConsole.MarkupLine("[red]Keep-alive FAILED! Resetting state...[/]"); currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState); continue;
                     } else {
                         AnsiConsole.MarkupLine("[green]Health OK.[/]");
                         try { 
                             AnsiConsole.MarkupLine("[dim]Triggering keep-alive script...[/]"); 
-                            // Menggunakan CodeManager (dulu CodespaceManager)
                             await CodeManager.TriggerStartupScript(currentToken, activeCodespace); 
                             AnsiConsole.MarkupLine("[green]Keep-alive triggered.[/]"); 
                         } 
@@ -104,7 +95,6 @@ namespace Orchestrator.TUI // Namespace baru
                     if (cancellationToken.IsCancellationRequested) break; 
                     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
                         AnsiConsole.MarkupLine($"\n[bold red]CRITICAL: {MAX_CONSECUTIVE_ERRORS} errors! Emergency recovery...[/]");
-                        // Menggunakan CodeManager (dulu CodespaceManager)
                         if (!string.IsNullOrEmpty(currentState.ActiveCodespaceName)) { try { await CodeManager.DeleteCodespace(currentToken, currentState.ActiveCodespaceName); } catch {} } 
                         currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState); currentToken = TokenManager.SwitchToNextToken(); consecutiveErrors = 0;
                         AnsiConsole.MarkupLine($"[cyan]Recovery: Switched token. Waiting 30s...[/]");
@@ -114,7 +104,7 @@ namespace Orchestrator.TUI // Namespace baru
                         try { await Task.Delay(ErrorRetryDelay, cancellationToken); } catch (OperationCanceledException) { break; } 
                     }
                 }
-            } // End while loop
+            } 
             AnsiConsole.MarkupLine("\n[cyan]Orchestrator Loop Stopped.[/]");
         }
     }
