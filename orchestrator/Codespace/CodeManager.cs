@@ -105,7 +105,7 @@ namespace Orchestrator.Codespace
                             }
                         case "Stopped": case "Shutdown":
                             AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Starting...[/]"); 
-                            await CodeActions.StartCodespace(token, codespace.Name);
+                            await CodeActions.StartCodespace(token, codespace.Name); // Ini pakai 'revive'
                             if (!await CodeHealth.WaitForState(token, codespace.Name, "Available", TimeSpan.FromMinutes(4), cancellationToken, useFastPolling: false)) { 
                                 AnsiConsole.MarkupLine("[red]Failed start. Deleting...[/]"); 
                                 await CodeActions.DeleteCodespace(token, codespace.Name); 
@@ -183,26 +183,20 @@ namespace Orchestrator.Codespace
                     AnsiConsole.MarkupLine($"[green]✓ Fallback found: {newName.EscapeMarkup()}[/]"); 
                 }
                 
-                // === INI PERBAIKANNYA (Error 3) ===
-                // Tunggu 15 detik agar backend GitHub 'catch up' sebelum stop
-                AnsiConsole.MarkupLine("[yellow]Waiting 15s for codespace to stabilize before stop...[/]");
-                try { await Task.Delay(15000, cancellationToken); } catch (OperationCanceledException) { throw; }
-                // === AKHIR PERBAIKAN ===
+                // === INI PERBAIKANNYA ===
+                // Hapus logic stop/start. Langsung tunggu SSH ready.
                 
-                AnsiConsole.MarkupLine("[yellow]Stopping codespace immediately (avoid heavy startup)...[/]"); 
-                await CodeActions.StopCodespace(token, newName);
-                await Task.Delay(3000, cancellationToken); // Tunggu sebentar
+                // (Hapus Delay 15s)
+                // (Hapus StopCodespace)
+                // (Hapus StartCodespace)
                 
-                // Langsung start lagi (akan lebih cepat dari Available awal)
-                AnsiConsole.MarkupLine("[cyan]Starting codespace...[/]"); 
-                await CodeActions.StartCodespace(token, newName);
-                
-                // Tunggu SSH ready (tanpa tunggu state Available)
+                // Langsung tunggu SSH ready (seperti logic di Nexus)
                 AnsiConsole.MarkupLine("[cyan]Waiting SSH ready...[/]"); 
                 if (!await CodeHealth.WaitForSshReadyWithRetry(token, newName, cancellationToken, useFastPolling: true)) 
                     throw new Exception($"SSH to '{newName}' failed"); 
                 
-                // Upload credentials (sudah diubah logikanya di CodeUpload.cs)
+                // === AKHIR PERBAIKAN ===
+                
                 AnsiConsole.MarkupLine("[cyan]Uploading credentials...[/]"); 
                 await CodeUpload.UploadCredentialsToCodespace(token, newName, cancellationToken);
                 
