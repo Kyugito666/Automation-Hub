@@ -41,7 +41,10 @@ def run_full_process():
     ui.console.print(f"Siap tes {len(proxies)} proksi unik."); ui.console.print("-" * 40)
     ui.console.print("[bold cyan]Langkah 2: Tes Akurat GitHub...[/bold cyan]")
     
-    good_proxies = ui.run_concurrent_checks_display(proxies, tester.check_proxy_final, MAX_WORKERS, FAIL_PROXY_FILE) # Panggil dari tester
+    # === PERBAIKAN: Kirim lambda dengan is_auto=False untuk mode Manual ===
+    check_func_manual = lambda p: tester.check_proxy_final(p, is_auto=False)
+    good_proxies = ui.run_concurrent_checks_display(proxies, check_func_manual, MAX_WORKERS, FAIL_PROXY_FILE) # Panggil dari tester
+    # === AKHIR PERBAIKAN ===
     
     if not good_proxies: ui.console.print("[bold red]Stop: Tidak ada proksi lolos.[/bold red]"); return
     
@@ -100,7 +103,7 @@ def main_interactive():
         elif choice == "3":
             operation_name = "Konversi Proxy"
             result = utils.convert_proxylist_to_http() # Panggil dari utils
-        elif choice == "4":
+        elif choice == "4S":
             operation_name = "Tes & Distribusi"
             run_full_process()
             result = True
@@ -137,24 +140,34 @@ if __name__ == "__main__":
             success = webshare.run_webshare_ip_sync() # Panggil dari webshare
             if success: success = flows.download_proxies_from_api(is_auto=True) # Panggil dari flows
             if success: success = utils.convert_proxylist_to_http() # Panggil dari utils
-            if success: success = flows.run_automated_test_and_save() # Panggil dari flows
+            
+            # === PERBAIKAN: Kirim is_auto=True ===
+            if success: success = flows.run_automated_test_and_save(is_auto=True) # Panggil dari flows
+            # === AKHIR PERBAIKAN ===
+            
             if success: ui.console.print("\n[bold green]✅ FULL AUTO MODE SELESAI.[/bold green]")
             else: ui.console.print("\n[bold red]❌ FULL AUTO MODE GAGAL PADA SALAH SATU LANGKAH.[/bold red]"); exit_code = 1
+        
         elif args.ip_auth_only:
             ui.console.print("[bold cyan]--- PROXYSYNC IP AUTH ONLY MODE ---[/bold cyan]")
             success = webshare.run_webshare_ip_sync() # Panggil dari webshare
             if success: ui.console.print("\n[bold green]✅ IP AUTH ONLY SELESAI.[/bold green]")
             else: ui.console.print("\n[bold red]❌ IP AUTH ONLY GAGAL.[/bold red]"); exit_code = 1
+        
         elif args.get_urls_only:
              ui.console.print("[bold cyan]--- PROXYSYNC GET URLS ONLY MODE ---[/bold cyan]")
              success = flows.download_proxies_from_api(get_urls_only=True) # Panggil dari flows
              if success: ui.console.print("\n[bold green]✅ GET URLS ONLY SELESAI.[/bold green]")
              else: ui.console.print("\n[bold red]❌ GET URLS ONLY GAGAL.[/bold red]"); exit_code = 1
+        
         elif args.test_and_save_only:
              ui.console.print("[bold cyan]--- PROXYSYNC TEST AND SAVE ONLY MODE ---[/bold cyan]")
-             success = flows.run_automated_test_and_save() # Panggil dari flows
+             # === PERBAIKAN: Kirim is_auto=True (karena --test-and-save-only juga otomatis) ===
+             success = flows.run_automated_test_and_save(is_auto=True) # Panggil dari flows
+             # === AKHIR PERBAIKAN ===
              if success: ui.console.print("\n[bold green]✅ TEST AND SAVE ONLY SELESAI.[/bold green]")
              else: ui.console.print("\n[bold red]❌ TEST AND SAVE ONLY GAGAL.[/bold red]"); exit_code = 1
+        
         else:
             main_interactive()
     except Exception as e:
