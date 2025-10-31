@@ -40,7 +40,13 @@ else
 fi
 
 echo "[1/3] Self-update (git pull)..."
-git pull || { echo "   ⚠️  WARNING: git pull failed, continuing with existing code..."; }
+# === PERBAIKAN: Cek dulu apa ini repo git ===
+if [ -d ".git" ]; then
+    git pull || { echo "   ⚠️  WARNING: git pull failed, continuing with existing code..."; }
+else
+    echo "   ⚠️  WARNING: .git directory not found. Skipping git pull."
+fi
+# === AKHIR PERBAIKAN ===
 
 echo "[2/3] Running ProxySync (IP Auth, Download, Test)..."
 if ! command -v python3 &> /dev/null; then
