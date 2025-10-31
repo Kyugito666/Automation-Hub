@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core; 
 using Orchestrator.Services; 
+using System; // <-- Tambahkan
 
 namespace Orchestrator.Codespace
 {
@@ -49,7 +50,7 @@ namespace Orchestrator.Codespace
         {
             var existingFiles = new List<string>();
             if (!Directory.Exists(localBotDir)) {
-                 AnsiConsole.MarkupLine($"[yellow]Warn: Local dir not found: {localBotDir.EscapeMarkup()}[/]");
+                 // Ini bukan warning, ini normal jika folder bot tidak ada di lokal
                  return existingFiles; 
             }
             foreach (var fileName in allPossibleFiles) {
@@ -61,7 +62,7 @@ namespace Orchestrator.Codespace
 
         internal static async Task UploadCredentialsToCodespace(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
-            AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials & Configs via gh cp ═══[/]");
+            AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials & Configs via SSH (Base64 Mode) ═══[/]");
             var config = BotConfig.Load();
             if (config == null) { AnsiConsole.MarkupLine("[red]✗ Gagal load bots_config.json. Upload batal.[/]"); return; }
 
@@ -76,55 +77,10 @@ namespace Orchestrator.Codespace
                 await AnsiConsole.Progress()
                     .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
                     .StartAsync(async ctx => {
+                        // === PERBAIKAN: Logic di-flat, per-file, dan pakai base64 ===
                         var task = ctx.AddTask("[green]Processing bots & configs...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count + 1 });
 
-                        // STEP 1: MKDIR SEMUA FOLDER DULU
-                        AnsiConsole.MarkupLine("\n[bold cyan]STEP 1: Creating all directories inside codespace...[/]");
-                        var allBotPaths = new List<string>();
-                        
-                        foreach (var bot in config.BotsAndTools)
-                        {
-                            if (bot.Name == "ProxySync-Tool") continue;
-                            if (!bot.Enabled) continue;
-                            
-                            string localBotDir = BotConfig.GetLocalBotPath(bot.Path);
-                            if (!Directory.Exists(localBotDir)) continue;
-                            
-                            var filesToUpload = GetFilesToUploadForBot(localBotDir, botCredentialFiles);
-                            if (!filesToUpload.Any()) continue;
-                            
-                            string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/');
-                            allBotPaths.Add(remoteBotDir);
-                        }
-                        
-                        string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config";
-                        allBotPaths.Add(remoteProxySyncConfigDir);
-                        
-                        if (allBotPaths.Any())
-                        {
-                            AnsiConsole.MarkupLine($"[cyan]Creating {allBotPaths.Count} directories via SSH...[/]");
-                            string allPathsEscaped = string.Join(" ", allBotPaths.Select(p => $"'{p.Replace("'", "'\\''")}'"));
-                            string mkdirCmd = $"mkdir -p {allPathsEscaped}";
-                            string sshMkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
-                            
-                            try {
-                                await GhService.RunGhCommandNoProxyAsync(token, sshMkdirArgs, 120000);
-                                
-                                // FIX: Ganti verification ping dengan simple delay
-                                AnsiConsole.MarkupLine($"[green]✓ All {allBotPaths.Count} directories created[/]");
-                                AnsiConsole.MarkupLine("[dim]   Waiting 6 seconds for filesystem sync...[/]");
-                                await Task.Delay(6000, cancellationToken);
-                                AnsiConsole.MarkupLine("[green]   ✓ Sync delay complete[/]");
-                                
-                            } catch (Exception mkdirEx) {
-                                AnsiConsole.MarkupLine($"[red]✗ Failed create directories: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
-                                throw new Exception("Critical: Directory creation failed");
-                            }
-                        }
-
-                        // STEP 2: UPLOAD FILES
-                        AnsiConsole.MarkupLine("\n[bold cyan]STEP 2: Uploading files from local...[/]");
-                        
+                        // STEP 1: Bot Credentials
                         foreach (var bot in config.BotsAndTools)
                         {
                             if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
@@ -134,56 +90,80 @@ namespace Orchestrator.Codespace
                             if (!bot.Enabled) { botsSkipped++; task.Increment(1); continue; }
 
                             string localBotDir = BotConfig.GetLocalBotPath(bot.Path);
-                            if (!Directory.Exists(localBotDir)) { botsSkipped++; task.Increment(1); continue; }
-
                             var filesToUpload = GetFilesToUploadForBot(localBotDir, botCredentialFiles);
                             if (!filesToUpload.Any()) { botsSkipped++; task.Increment(1); continue; }
 
-                            string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/');
-
                             foreach (var credFileName in filesToUpload) {
                                 if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
-                                string localFilePath = Path.Combine(localBotDir, credFileName); 
-                                string remoteFilePath = $"{remoteBotDir}/{credFileName}";
-                                task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
-                                string localAbsPath = Path.GetFullPath(localFilePath); 
-                                string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteFilePath}\"";
                                 
+                                string localFilePath = Path.Combine(localBotDir, credFileName); 
+                                string remoteFilePath = $"{remoteWorkspacePath}/{bot.Path}/{credFileName}".Replace('\\', '/');
+                                string remoteBotDir = Path.GetDirectoryName(remoteFilePath)!.Replace('\\', '/');
+
+                                task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
+
                                 try { 
-                                    await GhService.RunGhCommandNoProxyAsync(token, cpArgs, 300000); 
+                                    // Baca file sebagai base64
+                                    byte[] fileBytes = await File.ReadAllBytesAsync(localFilePath, cancellationToken);
+                                    string base64Content = Convert.ToBase64String(fileBytes);
+
+                                    // Buat command gabungan
+                                    string cmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}' && echo '{base64Content}' | base64 -d > '{remoteFilePath.Replace("'", "'\\''")}'";
+                                    string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
+
+                                    await GhService.RunGhCommandNoProxyAsync(token, sshArgs, 300000); 
                                     filesUploaded++; 
                                 }
                                 catch (OperationCanceledException) { throw; }
-                                catch { filesSkipped++; }
-                                try { await Task.Delay(200, cancellationToken); } catch (OperationCanceledException) { throw; }
+                                catch (Exception cpEx) {
+                                    AnsiConsole.MarkupLine($"[red]✗ Upload FAILED (Base64):[/] {bot.Name}/{credFileName}");
+                                    AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                                    filesSkipped++; 
+                                }
+                                // Delay kecil untuk stabilitas
+                                try { await Task.Delay(50, cancellationToken); } catch (OperationCanceledException) { throw; }
                             }
                             botsProcessed++;
                             task.Increment(1);
                         } 
 
-                        // Upload ProxySync configs
+                        // STEP 2: ProxySync Configs
                         task.Description = "[cyan]Uploading ProxySync Configs...";
                         var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
-                        string remoteProxySyncConfigDir2 = $"{remoteWorkspacePath}/proxysync/config";
+                        string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config".Replace('\\', '/');
                         
                         foreach (var configFileName in proxySyncConfigFiles) {
                              if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
-                             string localConfigPath = Path.Combine(ConfigRoot, configFileName); 
-                             string remoteConfigPath = $"{remoteProxySyncConfigDir2}/{configFileName}";
-                             if (!File.Exists(localConfigPath)) { continue; }
-                             task.Description = $"[cyan]Uploading:[/] proxysync/{configFileName}";
-                             string localAbsPath = Path.GetFullPath(localConfigPath); 
-                             string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteConfigPath}\"";
                              
+                             string localConfigPath = Path.Combine(ConfigRoot, configFileName); 
+                             string remoteConfigPath = $"{remoteProxySyncConfigDir}/{configFileName}".Replace('\\', '/');
+
+                             if (!File.Exists(localConfigPath)) { continue; }
+                             
+                             task.Description = $"[cyan]Uploading:[/] proxysync/{configFileName}";
+
                              try { 
-                                 await GhService.RunGhCommandNoProxyAsync(token, cpArgs, 120000); 
+                                 // Baca file sebagai base64
+                                byte[] fileBytes = await File.ReadAllBytesAsync(localConfigPath, cancellationToken);
+                                string base64Content = Convert.ToBase64String(fileBytes);
+
+                                // Buat command gabungan
+                                string cmd = $"mkdir -p '{remoteProxySyncConfigDir.Replace("'", "'\\''")}' && echo '{base64Content}' | base64 -d > '{remoteConfigPath.Replace("'", "'\\''")}'";
+                                string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
+
+                                 await GhService.RunGhCommandNoProxyAsync(token, sshArgs, 120000); 
                                  filesUploaded++; 
                              }
                              catch (OperationCanceledException) { throw; }
-                             catch { filesSkipped++; }
-                             try { await Task.Delay(100, cancellationToken); } catch (OperationCanceledException) { throw; }
+                             catch (Exception cpEx) {
+                                AnsiConsole.MarkupLine($"[red]✗ Upload FAILED (Base64):[/] proxysync/{configFileName}");
+                                AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                                filesSkipped++; 
+                             }
+                             try { await Task.Delay(50, cancellationToken); } catch (OperationCanceledException) { throw; }
                         }
                         task.Increment(1);
+                        // === SELESAI BLOK PERBAIKAN ===
                     }); 
             } catch (OperationCanceledException) { 
                 AnsiConsole.MarkupLine("\n[yellow]Upload cancelled.[/]"); 
