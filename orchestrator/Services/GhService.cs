@@ -9,26 +9,20 @@ namespace Orchestrator.Services
 {
     public static class GhService
     {
-        private const int DEFAULT_TIMEOUT_MS = 120000;
+        private const int DEFAULT_TIMEOUT_MS = 60000;
         private const int NETWORK_RETRY_DELAY_MS = 30000;
         private const int TIMEOUT_RETRY_DELAY_MS = 15000;
 
         private static bool _isAttemptingIpAuth = false;
 
-        // --- FUNGSI INI DIUBAH ---
-        // Sekarang cuma jadi shortcut ke RunGhCommand
         public static async Task<string> RunGhCommandNoProxyAsync(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
         {
             AnsiConsole.MarkupLine($"[dim]   (Running 'gh {args.Split(' ')[0]}...' [bold yellow]NO PROXY[/])[/]");
-            // Panggil RunGhCommand dengan flag useProxy: false
             return await RunGhCommand(token, args, timeoutMilliseconds, useProxy: false);
         }
-
-        // --- FUNGSI INI DIUBAH ---
-        // Tambah parameter bool useProxy = true
+        
         public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS, bool useProxy = true)
         {
-            // Teruskan flag useProxy ke CreateStartInfo
             var startInfo = ShellUtil.CreateStartInfo("gh", args, token, useProxy);
             Exception? lastException = null;
             var globalCancelToken = Program.GetMainCancellationToken(); 
@@ -37,19 +31,14 @@ namespace Orchestrator.Services
             {
                 globalCancelToken.ThrowIfCancellationRequested(); 
 
-                // === INI PERBAIKANNYA ===
-                // Jika ini command 'ssh', JANGAN pakai timeout pendek.
-                // 'gh codespace ssh' punya logic wait internal sendiri.
                 bool isSshCommand = args.Contains("codespace ssh");
                 int effectiveTimeout = isSshCommand ? System.Threading.Timeout.Infinite : timeoutMilliseconds;
 
-                // Set CancellationTokenSource. Gunakan 'infinite' jika ini command ssh.
                 using var commandTimeoutCts = new CancellationTokenSource();
                 if (effectiveTimeout != System.Threading.Timeout.Infinite)
                 {
                     commandTimeoutCts.CancelAfter(effectiveTimeout);
                 }
-                // === AKHIR PERBAIKAN ===
                 
                 string stdout = "", stderr = ""; int exitCode = -1;
 
@@ -64,7 +53,6 @@ namespace Orchestrator.Services
                     AnsiConsole.MarkupLine($"[grey]   ERR: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup() ?? "No stderr"}[/]");
                 }
                 catch (OperationCanceledException) when (commandTimeoutCts.IsCancellationRequested && !globalCancelToken.IsCancellationRequested) {
-                    // Ini HANYA akan ke-trigger jika BUKAN command ssh
                     AnsiConsole.MarkupLine($"[yellow]Command timed out ({timeoutMilliseconds / 1000}s). Retrying in {TIMEOUT_RETRY_DELAY_MS / 1000}s...[/]");
                     AnsiConsole.MarkupLine($"[grey]   CMD: gh {args.EscapeMarkup()}[/]");
                     try { await Task.Delay(TIMEOUT_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; } 
@@ -83,25 +71,33 @@ namespace Orchestrator.Services
 
                 string lowerStderr = stderr.ToLowerInvariant();
                 
-                // Tangani "is not running" (dari 'gh stop') sebagai non-error
                 bool isBenignStopError = (lowerStderr.Contains("is not running") || lowerStderr.Contains("already stopped")) && args.Contains("codespace stop");
                 if (isBenignStopError) {
                     AnsiConsole.MarkupLine("[dim]   (Interpreted benign 'stop' error as success)[/]");
-                    return stdout; // Kembalikan stdout (kosong), seolah-olah exit code 0
+                    return stdout; 
                 }
-                
+
+                // === INI PERBAIKANNYA ===
+                // 1. Deteksi error 'gh' internal timeout
+                bool isCodespaceStartTimeout = lowerStderr.Contains("timed out while waiting for the codespace to start");
+
                 bool isRateLimit = lowerStderr.Contains("api rate limit exceeded") || lowerStderr.Contains("403 forbidden");
                 bool isAuthError = lowerStderr.Contains("bad credentials") || lowerStderr.Contains("401 unauthorized");
                 bool isProxyAuthError = lowerStderr.Contains("407 proxy authentication required");
-                bool isNetworkError = lowerStderr.Contains("dial tcp") || lowerStderr.Contains("connection refused") ||
-                                      lowerStderr.Contains("i/o timeout") || lowerStderr.Contains("error connecting") ||
+                
+                // 2. Modifikasi 'isNetworkError' biar GAK salah klasifikasi
+                bool isNetworkError = (lowerStderr.Contains("dial tcp") || lowerStderr.Contains("connection refused") ||
+                                      lowerStderr.Contains("i/o timeout") || lowerStderr.Contains("error connecting") || // 'error connecting' bisa jadi 'gh timeout'
                                       lowerStderr.Contains("wsarecv") || lowerStderr.Contains("forcibly closed") ||
                                       lowerStderr.Contains("resolve host") || lowerStderr.Contains("tls handshake timeout") ||
                                       lowerStderr.Contains("unreachable network") || lowerStderr.Contains("unexpected eof") ||
-                                      lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed");
+                                      lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed"))
+                                      && !isCodespaceStartTimeout; // <-- 3. Pengecualian
+                // === AKHIR PERBAIKAN ===
+
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
-                if (isProxyAuthError) {
+                if (isProxyAuthError) { // Ini HANYA ke-trigger kalo proxy ON dan error 407
                     AnsiConsole.MarkupLine($"[yellow]Proxy Auth Error (407). Trying different account...[/]");
                     string? oldAccount = ExtractProxyAccount(token.Proxy);
                     
@@ -128,10 +124,8 @@ namespace Orchestrator.Services
                         if (ipAuthSuccess) { 
                             AnsiConsole.MarkupLine("[magenta]IP Auth successful. Testing & reloading...[/]"); 
                             await ProxyService.RunProxyTestAndSaveAsync(globalCancelToken);
-                            
                             AnsiConsole.MarkupLine("[cyan]Reloading all configs...[/]");
                             TokenManager.ReloadAllConfigs();
-                            
                             AnsiConsole.MarkupLine("[green]Retrying command...[/]"); 
                             continue; 
                         }
@@ -139,8 +133,15 @@ namespace Orchestrator.Services
                     } else { AnsiConsole.MarkupLine("[yellow]IP Auth in progress. Treating as network error.[/]"); }
                 }
 
-                if ((isNetworkError || isProxyAuthError) && !isNotFoundError) { 
-                    AnsiConsole.MarkupLine($"[magenta]Network/Proxy error. Retrying in {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
+                if (isNetworkError && !isNotFoundError) { 
+                    // === INI PERBAIKANNYA ===
+                    // 4. Cek apakah proxy global ON atau OFF pas nampilin error
+                    string errorMsg = TokenManager.IsProxyGloballyEnabled() 
+                        ? "[magenta]Network/Proxy error. Retrying in" 
+                        : "[magenta]Network error (No Proxy). Retrying in";
+                    
+                    AnsiConsole.MarkupLine($"{errorMsg} {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
+                    // === AKHIR PERBAIKAN ===
                     AnsiConsole.MarkupLine($"[grey]   (Detail: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()})[/]");
                     try { await Task.Delay(NETWORK_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; }
                     continue; 
@@ -153,6 +154,10 @@ namespace Orchestrator.Services
                     break; 
                 }
 
+                // Jika errornya 'isCodespaceStartTimeout', dia akan lolos dari 'isNetworkError'
+                // dan jatuh ke sini. Ini yang kita mau.
+                // Loop 'WaitForSshReadyWithRetry' di 'CodeHealth.cs' akan nangkep exception ini
+                // dan nge-retry loop-nya (ping terus menerus).
                 AnsiConsole.MarkupLine($"[red]FATAL Unhandled gh command error (Exit {exitCode}). Command failed permanently.[/]");
                 lastException = new Exception($"Unhandled GH Command Failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
                 break; 
