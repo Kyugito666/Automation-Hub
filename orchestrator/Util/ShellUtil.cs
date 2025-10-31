@@ -79,7 +79,15 @@ namespace Orchestrator.Util
                 AnsiConsole.MarkupLine($"[bold green]▶ Starting Full Interactive Session[/]");
                 AnsiConsole.MarkupLine($"[dim]Cmd: {command} {args.EscapeMarkup()}[/]");
                 AnsiConsole.MarkupLine($"[dim]Dir: {workingDir?.EscapeMarkup() ?? "current"}[/]");
-                if (!useProxy) AnsiConsole.MarkupLine($"[dim]Proxy: [bold yellow]OFF[/]");
+                
+                // === INI PERBAIKANNYA ===
+                // Tampilkan status proxy berdasarkan global switch
+                if (!TokenManager.IsProxyGloballyEnabled()) 
+                    AnsiConsole.MarkupLine($"[dim]Proxy: [bold yellow]OFF (Global)[/]");
+                else if (!useProxy)
+                    AnsiConsole.MarkupLine($"[dim]Proxy: [bold yellow]OFF (NoProxy Call)[/]");
+                // === AKHIR PERBAIKAN ===
+                    
                 AnsiConsole.MarkupLine("[yellow]"+ new string('═', 60) +"[/]");
 
                 if (!process.Start()) throw new InvalidOperationException("Failed to start full interactive process.");
@@ -148,8 +156,11 @@ namespace Orchestrator.Util
              startInfo.EnvironmentVariables.Remove("HTTPS_PROXY"); startInfo.EnvironmentVariables.Remove("HTTP_PROXY");
              startInfo.EnvironmentVariables.Remove("NO_PROXY"); startInfo.EnvironmentVariables.Remove("no_proxy");
             
-            // Hanya set proxy jika useProxy = true
-            if (useProxy && !string.IsNullOrEmpty(token.Proxy)) {
+            // === INI PERBAIKANNYA ===
+            // 5. Cek flag global SEBELUM set environment proxy
+            // Hanya set proxy jika useProxy = true DAN diaktifkan global
+            if (useProxy && TokenManager.IsProxyGloballyEnabled() && !string.IsNullOrEmpty(token.Proxy)) {
+            // === AKHIR PERBAIKAN ===
                 startInfo.EnvironmentVariables["https_proxy"] = token.Proxy;
                 startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
                 startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy;
