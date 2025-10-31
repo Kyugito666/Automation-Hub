@@ -1,9 +1,10 @@
 using Spectre.Console;
 using System.Threading;
 using System.Threading.Tasks;
-using Orchestrator.Util; // Menggunakan ShellUtil
+using Orchestrator.Util;      // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core;      // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.Services // Namespace baru
+namespace Orchestrator.Services 
 {
     public static class GhService
     {
@@ -11,13 +12,10 @@ namespace Orchestrator.Services // Namespace baru
         private const int NETWORK_RETRY_DELAY_MS = 30000;
         private const int TIMEOUT_RETRY_DELAY_MS = 15000;
 
-        // Flag ini mencegah RunGhCommand memanggil IP Auth jika sudah ada panggilan lain
         private static bool _isAttemptingIpAuth = false;
 
-        // --- RunGhCommand (Logika inti tidak berubah) ---
         public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
         {
-            // Menggunakan helper 'internal' dari ShellUtil
             var startInfo = ShellUtil.CreateStartInfo("gh", args, token);
             Exception? lastException = null;
             var globalCancelToken = Program.GetMainCancellationToken(); 
@@ -30,7 +28,6 @@ namespace Orchestrator.Services // Namespace baru
 
                 try {
                     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(commandTimeoutCts.Token, globalCancelToken);
-                    // Menggunakan helper 'internal' dari ShellUtil
                     (stdout, stderr, exitCode) = await ShellUtil.RunProcessAsync(startInfo, linkedCts.Token);
 
                     if (exitCode == 0) return stdout; 
@@ -56,7 +53,6 @@ namespace Orchestrator.Services // Namespace baru
                     continue; 
                 }
 
-                // --- Analisa Error (Logika tidak berubah) ---
                 string lowerStderr = stderr.ToLowerInvariant();
                 bool isRateLimit = lowerStderr.Contains("api rate limit exceeded") || lowerStderr.Contains("403 forbidden");
                 bool isAuthError = lowerStderr.Contains("bad credentials") || lowerStderr.Contains("401 unauthorized");
@@ -69,11 +65,10 @@ namespace Orchestrator.Services // Namespace baru
                                       lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed");
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
-                // --- Error Handling Logic ---
                 if (isProxyAuthError) {
                     AnsiConsole.MarkupLine($"[yellow]Proxy Auth Error (407). Rotating proxy...[/]");
                     if (TokenManager.RotateProxyForToken(token)) {
-                        startInfo = ShellUtil.CreateStartInfo("gh", args, token); // Update startInfo
+                        startInfo = ShellUtil.CreateStartInfo("gh", args, token); 
                         AnsiConsole.MarkupLine($"[cyan]Proxy rotated. Retrying command...[/]");
                         try { await Task.Delay(1000, globalCancelToken); } catch (OperationCanceledException) { throw; }
                         continue; 
@@ -81,7 +76,6 @@ namespace Orchestrator.Services // Namespace baru
                     AnsiConsole.MarkupLine("[yellow]Proxy rotation failed. Attempting IP Auth...[/]");
                     if (!_isAttemptingIpAuth) {
                         _isAttemptingIpAuth = true;
-                        // Memanggil ProxyService (dulu ProxyManager)
                         bool ipAuthSuccess = await ProxyService.RunIpAuthorizationOnlyAsync(globalCancelToken);
                         _isAttemptingIpAuth = false;
                         if (ipAuthSuccess) { AnsiConsole.MarkupLine("[magenta]IP Auth successful. Retrying command...[/]"); continue; }
@@ -107,7 +101,7 @@ namespace Orchestrator.Services // Namespace baru
                 lastException = new Exception($"Unhandled GH Command Failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
                 break; 
 
-            } // Akhir while(true)
+            } 
 
             throw lastException ?? new Exception("GH command failed unexpectedly after error handling.");
         }
