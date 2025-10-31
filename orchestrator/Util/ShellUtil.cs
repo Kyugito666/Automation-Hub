@@ -5,8 +5,8 @@ using Spectre.Console;
 using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core; 
-using System.IO; // <-- TAMBAHKAN
-using System; // <-- TAMBAHKAN
+using System.IO; 
+using System; 
 
 namespace Orchestrator.Util 
 {
@@ -14,9 +14,10 @@ namespace Orchestrator.Util
     {
         private const int DEFAULT_TIMEOUT_MS = 120000;
 
+        // (Fungsi RunCommandAsync, RunInteractive, RunInteractiveWithFullInput tidak berubah)
+        #region "Fungsi Lama (Tidak Berubah)"
         public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
         {
-            // Fungsi ini tidak diubah, defaultnya useProxy = true
             var startInfo = CreateStartInfo(command, args, token, useProxy: true);
             if (workingDir != null) startInfo.WorkingDirectory = workingDir;
             
@@ -35,73 +36,8 @@ namespace Orchestrator.Util
                 throw new TimeoutException($"Command '{command} {args.EscapeMarkup()}' timed out after {DEFAULT_TIMEOUT_MS / 1000} seconds.");
             }
         }
-
-        // === FUNGSI BARU UNTUK STREAMING STDIN DARI FILE ===
-        public static async Task RunProcessWithFileStdinAsync(ProcessStartInfo startInfo, string localFilePath, CancellationToken cancellationToken)
-        {
-            startInfo.RedirectStandardInput = true; // WAJIB
-            startInfo.RedirectStandardOutput = true; // Opsional tapi bagus untuk logging
-            startInfo.RedirectStandardError = true;  // Opsional tapi bagus untuk logging
-
-            using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-            var stdoutBuilder = new StringBuilder();
-            var stderrBuilder = new StringBuilder();
-            var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
-            process.ErrorDataReceived += (s, e) => { if (e.Data != null) stderrBuilder.AppendLine(e.Data); };
-            process.Exited += (s, e) => tcs.TrySetResult(process.ExitCode);
-
-            using var cancellationRegistration = cancellationToken.Register(() => {
-                if (tcs.TrySetCanceled(cancellationToken)) {
-                    try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
-                }
-            });
-
-            try
-            {
-                if (!process.Start())
-                {
-                    throw new InvalidOperationException($"Failed to start process: {startInfo.FileName}");
-                }
-
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-
-                // Mulai streaming file ke stdin proses
-                using (var fileStream = new FileStream(localFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
-                {
-                    // Copy file stream ke StandardInput (stdin) proses
-                    await fileStream.CopyToAsync(process.StandardInput.BaseStream, cancellationToken);
-                }
-                
-                // Tutup stdin untuk sinyal 'EOF' (End of File) ke 'cat'
-                process.StandardInput.Close();
-
-                // Tunggu proses selesai
-                int exitCode = await tcs.Task; 
-
-                if (exitCode != 0)
-                {
-                    string stderr = stderrBuilder.ToString().TrimEnd();
-                    throw new Exception($"Command '{startInfo.FileName} {startInfo.Arguments.EscapeMarkup()}' failed (Exit Code: {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
-                }
-            }
-            catch (TaskCanceledException ex) { throw new OperationCanceledException("Process run (stdin) was canceled.", ex, cancellationToken); }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"[red]Error in RunProcessWithFileStdinAsync: {ex.Message.EscapeMarkup()}[/]");
-                try { if (process != null && !process.HasExited) process.Kill(true); } catch { /* Ignored */ }
-                throw;
-            }
-        }
-        // === AKHIR FUNGSI BARU ===
-
-
         public static async Task RunInteractive(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
         {
-            // Fungsi ini tidak diubah, defaultnya useProxy = true
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
             if (workingDir != null) startInfo.WorkingDirectory = workingDir;
             if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy: true);
@@ -125,44 +61,30 @@ namespace Orchestrator.Util
                 throw; 
             }
         }
-
-        // --- PERUBAHAN: Tambah parameter useProxy ---
         public static async Task RunInteractiveWithFullInput(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default, bool useProxy = true)
         {
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
             if (workingDir != null) startInfo.WorkingDirectory = workingDir;
-            // Teruskan flag useProxy
             if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy);
             SetFileNameAndArgs(startInfo, command, args); 
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Program.GetMainCancellationToken());
             var processExitedTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-
             process.Exited += (s, e) => processExitedTcs.TrySetResult(process.ExitCode);
-
             try {
                 AnsiConsole.MarkupLine($"[bold green]▶ Starting Full Interactive Session[/]");
                 AnsiConsole.MarkupLine($"[dim]Cmd: {command} {args.EscapeMarkup()}[/]");
                 AnsiConsole.MarkupLine($"[dim]Dir: {workingDir?.EscapeMarkup() ?? "current"}[/]");
-                
-                // === INI PERBAIKANNYA ===
-                // Tampilkan status proxy berdasarkan global switch
                 if (!TokenManager.IsProxyGloballyEnabled()) 
                     AnsiConsole.MarkupLine($"[dim]Proxy: [bold yellow]OFF (Global)[/]");
                 else if (!useProxy)
                     AnsiConsole.MarkupLine($"[dim]Proxy: [bold yellow]OFF (NoProxy Call)[/]");
-                // === AKHIR PERBAIKAN ===
-                    
                 AnsiConsole.MarkupLine("[yellow]"+ new string('═', 60) +"[/]");
-
                 if (!process.Start()) throw new InvalidOperationException("Failed to start full interactive process.");
-
                 var cancellationTask = Task.Delay(Timeout.Infinite, linkedCts.Token);
                 var processTask = processExitedTcs.Task;
                 var completedTask = await Task.WhenAny(processTask, cancellationTask);
-
                 AnsiConsole.MarkupLine("\n[yellow]"+ new string('═', 60) +"[/]");
-
                 if (completedTask == cancellationTask || linkedCts.Token.IsCancellationRequested) {
                     AnsiConsole.MarkupLine("[yellow]Cancellation requested during interactive session. Terminating process...[/]");
                     try {
@@ -175,14 +97,12 @@ namespace Orchestrator.Util
                     
                     linkedCts.Token.ThrowIfCancellationRequested();
                 }
-
                 int exitCode = await processTask; 
                 if (exitCode == 0) {
                     AnsiConsole.MarkupLine($"[green]✓ Process exited normally (Code: {exitCode})[/]");
                 } else {
                     AnsiConsole.MarkupLine($"[yellow]Process exited with non-zero code: {exitCode}[/]");
                 }
-
             }
             catch (OperationCanceledException) {
                  AnsiConsole.MarkupLine("[yellow]Interactive session cancelled.[/]");
@@ -195,21 +115,62 @@ namespace Orchestrator.Util
                  throw; 
             }
         }
-
-        // --- PERUBAHAN: Tambah parameter useProxy ---
+        public static async Task RunProcessWithFileStdinAsync(ProcessStartInfo startInfo, string localFilePath, CancellationToken cancellationToken)
+        {
+            startInfo.RedirectStandardInput = true; 
+            startInfo.RedirectStandardOutput = true; 
+            startInfo.RedirectStandardError = true;  
+            using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            var stdoutBuilder = new StringBuilder();
+            var stderrBuilder = new StringBuilder();
+            var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
+            process.ErrorDataReceived += (s, e) => { if (e.Data != null) stderrBuilder.AppendLine(e.Data); };
+            process.Exited += (s, e) => tcs.TrySetResult(process.ExitCode);
+            using var cancellationRegistration = cancellationToken.Register(() => {
+                if (tcs.TrySetCanceled(cancellationToken)) {
+                    try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
+                }
+            });
+            try
+            {
+                if (!process.Start())
+                {
+                    throw new InvalidOperationException($"Failed to start process: {startInfo.FileName}");
+                }
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                using (var fileStream = new FileStream(localFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
+                {
+                    await fileStream.CopyToAsync(process.StandardInput.BaseStream, cancellationToken);
+                }
+                process.StandardInput.Close();
+                int exitCode = await tcs.Task; 
+                if (exitCode != 0)
+                {
+                    string stderr = stderrBuilder.ToString().TrimEnd();
+                    throw new Exception($"Command '{startInfo.FileName} {startInfo.Arguments.EscapeMarkup()}' failed (Exit Code: {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
+                }
+            }
+            catch (TaskCanceledException ex) { throw new OperationCanceledException("Process run (stdin) was canceled.", ex, cancellationToken); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Error in RunProcessWithFileStdinAsync: {ex.Message.EscapeMarkup()}[/]");
+                try { if (process != null && !process.HasExited) process.Kill(true); } catch { /* Ignored */ }
+                throw;
+            }
+        }
         internal static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token, bool useProxy = true) {
             var startInfo = new ProcessStartInfo {
                  RedirectStandardOutput = true, RedirectStandardError = true,
                 UseShellExecute = false, CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
             startInfo.Arguments = args; 
-            // Teruskan flag useProxy
             if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy);
             SetFileNameAndArgs(startInfo, command, args); 
             return startInfo;
         }
-
-        // --- PERUBAHAN: Tambah parameter useProxy ---
         internal static void SetEnvironmentVariables(ProcessStartInfo startInfo, TokenEntry token, string command, bool useProxy = true) {
             bool isGhCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? command.ToLower().EndsWith("gh.exe") || command.ToLower() == "gh"
@@ -221,18 +182,13 @@ namespace Orchestrator.Util
              startInfo.EnvironmentVariables.Remove("HTTPS_PROXY"); startInfo.EnvironmentVariables.Remove("HTTP_PROXY");
              startInfo.EnvironmentVariables.Remove("NO_PROXY"); startInfo.EnvironmentVariables.Remove("no_proxy");
             
-            // === INI PERBAIKANNYA ===
-            // 5. Cek flag global SEBELUM set environment proxy
-            // Hanya set proxy jika useProxy = true DAN diaktifkan global
             if (useProxy && TokenManager.IsProxyGloballyEnabled() && !string.IsNullOrEmpty(token.Proxy)) {
-            // === AKHIR PERBAIKAN ===
                 startInfo.EnvironmentVariables["https_proxy"] = token.Proxy;
                 startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
                 startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy;
                 startInfo.EnvironmentVariables["HTTP_PROXY"] = token.Proxy;
             }
         }
-
         internal static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
              if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                 startInfo.FileName = "cmd.exe";
@@ -243,6 +199,59 @@ namespace Orchestrator.Util
                 startInfo.Arguments = $"-c \"{command} {escapedArgs}\""; 
             }
         }
+        #endregion
+
+        // === FUNGSI BARU: STREAMING OUTPUT ===
+        internal static async Task<(string stdout, string stderr, int exitCode)> RunProcessAndStreamOutputAsync(
+            ProcessStartInfo startInfo, 
+            CancellationToken cancellationToken,
+            Func<string, bool> onStdOutLine)
+        {
+            using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            var stdoutBuilder = new StringBuilder(); 
+            var stderrBuilder = new StringBuilder();
+            var tcs = new TaskCompletionSource<(string, string, int)>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            process.OutputDataReceived += (s, e) => { 
+                if (e.Data != null) {
+                    bool stop = onStdOutLine(e.Data);
+                    stdoutBuilder.AppendLine(e.Data); 
+                    if (stop)
+                    {
+                        try { if (!process.HasExited) process.Kill(true); } catch {}
+                    }
+                } 
+            };
+            process.ErrorDataReceived += (s, e) => { 
+                if (e.Data != null) {
+                    // Selalu stream error
+                    AnsiConsole.MarkupLine($"[red]   [REMOTE_ERR] {e.Data.EscapeMarkup()}[/]");
+                    stderrBuilder.AppendLine(e.Data);
+                } 
+            };
+            process.Exited += (s, e) => tcs.TrySetResult((stdoutBuilder.ToString().TrimEnd(), stderrBuilder.ToString().TrimEnd(), process.ExitCode));
+            
+            using var cancellationRegistration = cancellationToken.Register(() => { 
+                if (tcs.TrySetCanceled(cancellationToken)) { 
+                    try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ } 
+                } 
+            });
+
+            try {
+                if (!process.Start()) throw new InvalidOperationException($"Failed to start process: {startInfo.FileName}");
+                process.BeginOutputReadLine(); 
+                process.BeginErrorReadLine();
+                return await tcs.Task; 
+            }
+            catch (TaskCanceledException ex) { throw new OperationCanceledException("Process run was canceled.", ex, cancellationToken); }
+            catch (OperationCanceledException) { throw; } 
+            catch (Exception ex) {
+                AnsiConsole.MarkupLine($"[red]Error in RunProcessAndStreamOutputAsync: {ex.Message.EscapeMarkup()}[/]");
+                try { if (process != null && !process.HasExited) process.Kill(true); } catch { /* Ignored */ }
+                return (stdoutBuilder.ToString().TrimEnd(), (stderrBuilder.ToString().TrimEnd() + "\n" + ex.Message).Trim(), process?.ExitCode ?? -1);
+            }
+        } 
+        // === AKHIR FUNGSI BARU ===
 
         internal static async Task<(string stdout, string stderr, int exitCode)> RunProcessAsync(ProcessStartInfo startInfo, CancellationToken cancellationToken)
         {
