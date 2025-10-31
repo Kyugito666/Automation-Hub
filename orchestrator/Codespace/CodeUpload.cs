@@ -98,10 +98,10 @@ namespace Orchestrator.Codespace
                             task.Description = $"[grey]Creating dir:[/] {bot.Name}";
                             bool mkdirSuccess = false;
                             try {
-                                // mkdir MASIH PAKE PROXY (karena ini SSH)
+                                // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
                                 string mkdirCmd = $"mkdir -p {escapedRemoteBotDir}";
                                 string sshMkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
-                                await GhService.RunGhCommand(token, sshMkdirArgs, 90000); 
+                                await GhService.RunGhCommandNoProxyAsync(token, sshMkdirArgs, 90000); 
                                 mkdirSuccess = true;
                             } catch (OperationCanceledException) { throw; }
                             catch (Exception mkdirEx) { AnsiConsole.MarkupLine($"[red]✗ Failed mkdir for {bot.Name}: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); }
@@ -111,9 +111,9 @@ namespace Orchestrator.Codespace
                                 task.Description = $"[grey]Verifying dir:[/] {bot.Name}";
                                 try {
                                     await Task.Delay(500, cancellationToken); string testCmd = $"test -d {escapedRemoteBotDir}";
-                                    // test -d MASIH PAKE PROXY (karena ini SSH)
+                                    // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
                                     string sshTestArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{testCmd}\"";
-                                    await GhService.RunGhCommand(token, sshTestArgs, 30000); 
+                                    await GhService.RunGhCommandNoProxyAsync(token, sshTestArgs, 30000); 
                                     dirExists = true;
                                     AnsiConsole.MarkupLine($"[green]✓ Dir verified: {bot.Name}[/]");
                                 } catch (OperationCanceledException) { throw; }
@@ -127,13 +127,11 @@ namespace Orchestrator.Codespace
                                     task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
                                     string localAbsPath = Path.GetFullPath(localFilePath); string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteFilePath}\"";
                                     
-                                    // === PERUBAHAN DI SINI ===
                                     try { 
-                                        // Panggil fungsi NO PROXY (timeout 5 menit)
+                                        // CP Call -> No Proxy (Sudah benar dari request sebelumnya)
                                         await GhService.RunGhCommandNoProxyAsync(token, cpArgs, 300000); 
                                         filesUploaded++; 
                                     }
-                                    // === AKHIR PERUBAHAN ===
                                     catch (OperationCanceledException) { throw; }
                                     catch { AnsiConsole.MarkupLine($"[red]✗ Fail upload: {bot.Name}/{credFileName}[/]"); filesSkipped++; }
                                     try { await Task.Delay(200, cancellationToken); } catch (OperationCanceledException) { throw; }
@@ -148,13 +146,15 @@ namespace Orchestrator.Codespace
                         string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config"; string escapedRemoteProxySyncDir = $"'{remoteProxySyncConfigDir.Replace("'", "'\\''")}'";
                         bool proxySyncConfigUploadSuccess = true; bool proxySyncDirExists = false;
                         try {
-                            // mkdir MASIH PAKE PROXY (karena ini SSH)
+                            // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
                             string mkdirCmd = $"mkdir -p {escapedRemoteProxySyncDir}"; string sshMkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
-                            await GhService.RunGhCommand(token, sshMkdirArgs, 60000);
+                            await GhService.RunGhCommandNoProxyAsync(token, sshMkdirArgs, 60000);
+                            
                             await Task.Delay(500, cancellationToken); string testCmd = $"test -d {escapedRemoteProxySyncDir}";
-                            // test -d MASIH PAKE PROXY (karena ini SSH)
+                            // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
                             string sshTestArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{testCmd}\"";
-                            await GhService.RunGhCommand(token, sshTestArgs, 30000);
+                            await GhService.RunGhCommandNoProxyAsync(token, sshTestArgs, 30000);
+                            
                             proxySyncDirExists = true; AnsiConsole.MarkupLine($"[green]✓ ProxySync dir verified.[/]");
                         } catch (OperationCanceledException) { throw; }
                         catch (Exception dirEx) { AnsiConsole.MarkupLine($"[red]✗ Error ProxySync dir: {dirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); filesSkipped += proxySyncConfigFiles.Count; proxySyncConfigUploadSuccess = false; }
@@ -167,13 +167,11 @@ namespace Orchestrator.Codespace
                                  task.Description = $"[cyan]Uploading:[/] proxysync/{configFileName}";
                                  string localAbsPath = Path.GetFullPath(localConfigPath); string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteConfigPath}\"";
                                  
-                                 // === PERUBAHAN DI SINI ===
                                  try { 
-                                     // Panggil fungsi NO PROXY (timeout 2 menit)
+                                     // CP Call -> No Proxy (Sudah benar dari request sebelumnya)
                                      await GhService.RunGhCommandNoProxyAsync(token, cpArgs, 120000); 
                                      filesUploaded++; 
                                  }
-                                 // === AKHIR PERUBAHAN ===
                                  catch (OperationCanceledException) { throw; }
                                  catch { filesSkipped++; proxySyncConfigUploadSuccess = false; AnsiConsole.MarkupLine($"[red]✗ Fail upload: proxysync/{configFileName}[/]"); }
                                  try { await Task.Delay(100, cancellationToken); } catch (OperationCanceledException) { throw; }
