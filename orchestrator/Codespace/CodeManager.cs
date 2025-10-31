@@ -27,8 +27,9 @@ namespace Orchestrator.Codespace
         public static Task TriggerStartupScript(TokenEntry token, string codespaceName)
             => CodeActions.TriggerStartupScript(token, codespaceName);
 
-        public static Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
-            => CodeHealth.CheckHealthWithRetry(token, codespaceName, cancellationToken);
+        // === PERBAIKAN: Hapus referensi ke fungsi polling ===
+        // (CheckHealthWithRetry dihapus)
+        // === AKHIR PERBAIKAN ===
             
         public static Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName)
             => CodeActions.GetTmuxSessions(token, codespaceName);
@@ -83,27 +84,27 @@ namespace Orchestrator.Codespace
                                 break; 
                             }
                             await CodeUpload.UploadCredentialsToCodespace(token, codespace.Name, cancellationToken);
-                            AnsiConsole.MarkupLine("[cyan]Triggering startup & checking health...[/]");
-                            try { await CodeActions.TriggerStartupScript(token, codespace.Name); } catch { }
                             
-                            // === INI ALUR YANG BENER (UNTUK REUSE) ===
-                            if (await CodeHealth.CheckHealthWithRetry(token, codespace.Name, cancellationToken)) { 
-                                AnsiConsole.MarkupLine("[green]✓ Health OK. Ready.[/]"); 
+                            // === PERBAIKAN: Ganti Polling jadi Streaming ===
+                            AnsiConsole.MarkupLine("[cyan]Triggering startup & streaming logs...[/]");
+                            // Kita panggil fungsi streaming yang baru
+                            if (await CodeActions.RunStartupScriptAndStreamLogs(token, codespace.Name, cancellationToken)) { 
+                                AnsiConsole.MarkupLine("[green]✓ Health OK (script success). Ready.[/]"); 
                                 stopwatch.Stop(); 
                                 return codespace.Name; 
                             }
                             else { 
                                 var lastState = await CodeActions.GetCodespaceState(token, codespace.Name); 
-                                AnsiConsole.MarkupLine($"[red]Health failed & state '{lastState?.EscapeMarkup() ?? "Unknown"}'. Deleting...[/]"); 
+                                AnsiConsole.MarkupLine($"[red]Health failed (script error) & state '{lastState?.EscapeMarkup() ?? "Unknown"}'. Deleting...[/]"); 
                                 await CodeActions.DeleteCodespace(token, codespace.Name); 
                                 codespace = null; 
                                 break; 
                             }
-                            // === AKHIR ALUR REUSE ===
+                            // === AKHIR PERBAIKAN ===
 
                         case "Stopped": case "Shutdown":
                             AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Starting...[/]"); 
-                            await CodeActions.StartCodespace(token, codespace.Name); // Ini pakai 'revive'
+                            await CodeActions.StartCodespace(token, codespace.Name); 
                             if (!await CodeHealth.WaitForState(token, codespace.Name, "Available", TimeSpan.FromMinutes(4), cancellationToken, useFastPolling: false)) { 
                                 AnsiConsole.MarkupLine("[red]Failed start. Deleting...[/]"); 
                                 await CodeActions.DeleteCodespace(token, codespace.Name); 
@@ -188,14 +189,10 @@ namespace Orchestrator.Codespace
                 AnsiConsole.MarkupLine("[cyan]Uploading credentials...[/]"); 
                 await CodeUpload.UploadCredentialsToCodespace(token, newName, cancellationToken);
                 
-                AnsiConsole.MarkupLine("[cyan]Triggering auto-start...[/]"); 
-                await CodeActions.TriggerStartupScript(token, newName);
-                
-                // === PERBAIKAN: PANGGIL HEALTH CHECK (STREAMING LOG) DI SINI ===
+                // === PERBAIKAN: Ganti Polling jadi Streaming ===
                 AnsiConsole.MarkupLine("[cyan]Waiting for remote script to finish (streaming logs)...[/]");
-                if (!await CodeHealth.CheckHealthWithRetry(token, newName, cancellationToken))
+                if (!await CodeActions.RunStartupScriptAndStreamLogs(token, newName, cancellationToken))
                 {
-                    // Jika gagal, lempar error biar TuiLoop bisa ganti token
                     throw new Exception("Remote script health check failed after create. Check remote logs.");
                 }
                 AnsiConsole.MarkupLine("[green]✓ Remote script health check passed.[/]");
