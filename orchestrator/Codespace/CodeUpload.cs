@@ -195,4 +195,5 @@ namespace Orchestrator.Codespace
             AnsiConsole.MarkupLine($"\n[green]✓ Upload finished.[/]"); 
             AnsiConsole.MarkupLine($"[dim]   Bots OK: {botsProcessed}, Skip: {botsSkipped} | Files OK: {filesUploaded}, Fail: {filesSkipped}[/]");
         }
+    }
 }
