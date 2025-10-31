@@ -17,12 +17,10 @@ namespace Orchestrator.Codespace
         
         private const int SSH_PROBE_TIMEOUT_MS = 30000; 
         
-        // Flag file di /tmp
         private const string HEALTH_CHECK_FILE = "/tmp/auto_start_done";
         private const string HEALTH_CHECK_FAIL_PROXY = "/tmp/auto_start_failed_proxysync";
         private const string HEALTH_CHECK_FAIL_DEPLOY = "/tmp/auto_start_failed_deploy";
 
-        // Magic string untuk nandain script selesai
         private const string MAGIC_STRING_HEALTHY = "[ORCHESTRATOR_HEALTH_CHECK:HEALTHY]";
         private const string MAGIC_STRING_FAILED_PROXY = "[ORCHESTRATOR_HEALTH_CHECK:FAILED_PROXY]";
         private const string MAGIC_STRING_FAILED_DEPLOY = "[ORCHESTRATOR_HEALTH_CHECK:FAILED_DEPLOY]";
@@ -113,20 +111,18 @@ namespace Orchestrator.Codespace
             return result; 
         }
 
-        // === PERBAIKAN: STREAMING LOG DARI PATH YANG BENAR ===
         internal static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
             AnsiConsole.MarkupLine("[cyan]Attaching to remote log stream...[/]");
             AnsiConsole.MarkupLine("[dim]   (Waiting for auto-start.sh to finish... this might take 10-15 mins)[/]");
 
-            // === INI FIX-NYA ===
-            // Ambil nama repo dari token, sesuai dengan 'auto-start.sh'
             string remoteLogFile = $"/workspaces/{token.Repo.ToLowerInvariant()}/startup.log";
-            // === AKHIR FIX ===
             
             string remoteCommand = $@"
 touch {remoteLogFile}
-tail -f {remoteLogFile} &
+# === INI FIX-NYA: 'stdbuf -o0' (unbuffered output) ===
+stdbuf -o0 tail -f {remoteLogFile} &
+# === AKHIR FIX ===
 tail_pid=$!
 echo ""[ORCHESTRATOR_MONITOR:STREAM_STARTED]""
 while true; do
@@ -183,7 +179,6 @@ done
 
             try
             {
-                // Panggil GhService versi STREAMING (ini pakai proxy)
                 await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken, onStdOut);
                 
                 if (!healthResult && !cancellationToken.IsCancellationRequested)
