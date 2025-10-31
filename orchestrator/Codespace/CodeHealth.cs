@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System; 
 using Orchestrator.Services; 
-using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core; 
 
 namespace Orchestrator.Codespace
 {
@@ -22,7 +22,7 @@ namespace Orchestrator.Codespace
         private const string HEALTH_CHECK_FAIL_PROXY = "/tmp/auto_start_failed_proxysync";
         private const string HEALTH_CHECK_FAIL_DEPLOY = "/tmp/auto_start_failed_deploy";
 
-
+        // API Call -> Pake Proxy
         internal static async Task<bool> WaitForState(TokenEntry token, string codespaceName, string targetState, TimeSpan timeout, CancellationToken cancellationToken, bool useFastPolling = false)
         {
             Stopwatch sw = Stopwatch.StartNew(); 
@@ -54,6 +54,7 @@ namespace Orchestrator.Codespace
             return false; 
         }
 
+        // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
         internal static async Task<bool> WaitForSshReadyWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken, bool useFastPolling = false)
         {
             Stopwatch sw = Stopwatch.StartNew(); 
@@ -64,7 +65,10 @@ namespace Orchestrator.Codespace
                 cancellationToken.ThrowIfCancellationRequested(); 
                 try {
                     string args = $"codespace ssh -c \"{codespaceName}\" -- echo ready"; 
-                    string res = await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
+                    
+                    // Panggil NoProxy
+                    string res = await GhService.RunGhCommandNoProxyAsync(token, args, SSH_PROBE_TIMEOUT_MS); 
+                    
                     cancellationToken.ThrowIfCancellationRequested();
                     
                     if (res != null && res.Contains("ready")) { 
@@ -89,6 +93,7 @@ namespace Orchestrator.Codespace
             return false; 
         }
 
+        // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
         internal static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
             Stopwatch sw = Stopwatch.StartNew(); 
@@ -101,7 +106,10 @@ namespace Orchestrator.Codespace
                 string result = "";
                 try {
                     string args = $"codespace ssh -c \"{codespaceName}\" -- \"if [ -f {HEALTH_CHECK_FAIL_PROXY} ] || [ -f {HEALTH_CHECK_FAIL_DEPLOY} ]; then echo FAILED; elif [ -f {HEALTH_CHECK_FILE} ]; then echo HEALTHY; else echo NOT_READY; fi\"";
-                    result = await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
+                    
+                    // Panggil NoProxy
+                    result = await GhService.RunGhCommandNoProxyAsync(token, args, SSH_PROBE_TIMEOUT_MS); 
+                    
                     cancellationToken.ThrowIfCancellationRequested();
                     
                     if (result.Contains("FAILED")) { 
