@@ -30,7 +30,31 @@ namespace Orchestrator.Core
         private static TokenState _state = new();
         private static Dictionary<string, string> _tokenCache = new();
 
+        // === INI PERBAIKANNYA ===
+        // 1. Tambah flag global, defaultnya 'true' (pakai proxy)
+        private static bool _proxiesGloballyEnabled = true;
+        // === AKHIR PERBAIKAN ===
+
         private const int DEFAULT_HTTP_TIMEOUT_SEC = 60;
+
+        // === INI PERBAIKANNYA ===
+        // 2. Tambah setter untuk flag global
+        public static void SetProxyUsage(bool enabled)
+        {
+            _proxiesGloballyEnabled = enabled;
+            if (enabled)
+            {
+                AnsiConsole.MarkupLine("[green]✓ Proxy global [bold]DIAKTIFKAN[/] untuk sesi loop ini.[/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[yellow]⚠ Proxy global [bold]DINONAKTIFKAN[/] untuk sesi loop ini.[/]");
+            }
+        }
+        
+        // 3. Tambah getter untuk flag global
+        public static bool IsProxyGloballyEnabled() => _proxiesGloballyEnabled;
+        // === AKHIR PERBAIKAN ===
 
         private static string GetProjectRoot()
         {
@@ -211,7 +235,11 @@ namespace Orchestrator.Core
 
         public static HttpClient CreateHttpClient(TokenEntry token) {
             var handler = new HttpClientHandler();
-            if (!string.IsNullOrEmpty(token.Proxy)) {
+            
+            // === INI PERBAIKANNYA ===
+            // 4. Cek flag global SEBELUM set proxy
+            if (_proxiesGloballyEnabled && !string.IsNullOrEmpty(token.Proxy)) {
+            // === AKHIR PERBAIKAN ===
                 try {
                     var proxyUri = new Uri(token.Proxy, UriKind.Absolute);
                     var webProxy = new WebProxy(proxyUri);
