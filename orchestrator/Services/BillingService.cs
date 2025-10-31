@@ -2,11 +2,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
 using System.Net;
-using Orchestrator.Core; // Menggunakan Core.TokenManager
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.Services // Namespace baru
+namespace Orchestrator.Services 
 {
-    // Ganti nama kelas
     public static class BillingService
     {
         private const double INCLUDED_CORE_HOURS = 120.0;
@@ -23,7 +22,6 @@ namespace Orchestrator.Services // Namespace baru
                 return new BillingInfo { IsQuotaOk = false, Error = "Username unknown" };
             }
             for (int attempt = 1; attempt <= MAX_BILLING_RETRIES; attempt++) {
-                // Menggunakan TokenManager dari Core
                 using var client = TokenManager.CreateHttpClient(token);
                 var url = $"/users/{token.Username}/settings/billing/usage";
                 client.DefaultRequestHeaders.UserAgent.ParseAdd($"Orchestrator-BillingCheck/{token.Username}");
@@ -70,7 +68,6 @@ namespace Orchestrator.Services // Namespace baru
          }
     }
     
-    // Structs BillingInfo, BillingReport, UsageItem (tetap sama)
     public class BillingInfo { public double TotalCoreHoursUsed{get;set;} public double IncludedCoreHours{get;set;}=120.0; public double HoursRemaining{get;set;} public bool IsQuotaOk{get;set;} public string? Error{get;set;} }
     public class BillingReport { [JsonPropertyName("usageItems")] public List<UsageItem>? UsageItems{get;set;} }
     public class UsageItem { [JsonPropertyName("product")] public string Product{get;set;} = ""; [JsonPropertyName("sku")] public string Sku{get;set;} = ""; [JsonPropertyName("quantity")] public double Quantity{get;set;} }
