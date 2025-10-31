@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core; 
 using Orchestrator.Services; 
+using System.Diagnostics; // <-- Tambahkan ini
 
 namespace Orchestrator.Codespace
 {
@@ -26,6 +27,48 @@ namespace Orchestrator.Codespace
             }
             return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory!, "..", "..", "..", ".."));
         }
+
+        // === INI FUNGSI BARU UNTUK "SMART WAIT" (PING) ===
+        private static async Task<bool> VerifyDirectoryExistsWithRetryAsync(TokenEntry token, string codespaceName, string directoryPath, CancellationToken cancellationToken)
+        {
+            AnsiConsole.MarkupLine($"[dim]   Verifying remote directory (ping): {Path.GetFileName(directoryPath)}[/]");
+            string command = $"if [ -d \"{directoryPath.Replace("\"", "\\\"")}\" ]; then echo \"exists\"; else echo \"not_found\"; fi";
+            string args = $"codespace ssh -c \"{codespaceName}\" -- \"{command}\"";
+            
+            Stopwatch sw = Stopwatch.StartNew();
+            int maxWaitSeconds = 45; // Kasih waktu max 45 detik
+
+            while (sw.Elapsed.TotalSeconds < maxWaitSeconds)
+            {
+                if (cancellationToken.IsCancellationRequested) return false;
+                try
+                {
+                    // Use NoProxy untuk konsistensi dengan logic mkdir/cp
+                    string result = await GhService.RunGhCommandNoProxyAsync(token, args, 30000); 
+                    if (result.Contains("exists"))
+                    {
+                        AnsiConsole.MarkupLine($"[green]   ✓ Remote directory verified.[/] [dim]({sw.Elapsed.TotalSeconds:F1}s)[/]");
+                        return true;
+                    }
+                    // Jika "not_found" atau hasil aneh, retry
+                }
+                catch (Exception ex)
+                {
+                    // Log error tapi lanjut retry (mungkin SSH belum siap)
+                    AnsiConsole.MarkupLine($"[yellow]   ...check failed:[/][dim] {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                }
+                
+                try
+                {
+                    await Task.Delay(2000, cancellationToken); // Wait 2 detik sebelum ping lagi
+                }
+                catch (OperationCanceledException) { return false; }
+            }
+            
+            AnsiConsole.MarkupLine($"[red]   ✗ Gagal verifikasi directory setelah {maxWaitSeconds} detik.[/]");
+            return false;
+        }
+        // === AKHIR FUNGSI BARU ===
 
         private static List<string> LoadUploadFileList()
         {
@@ -114,14 +157,25 @@ namespace Orchestrator.Codespace
                                 AnsiConsole.MarkupLine($"[green]✓ All {allBotPaths.Count} directories created[/]");
                                 
                                 // === INI PERBAIKANNYA ===
-                                // Kasih 10 detik buat filesystem codespace 'settle'
-                                AnsiConsole.MarkupLine("[dim]   Waiting 10s for remote filesystem sync...[/]");
-                                await Task.Delay(10000, cancellationToken);
+                                // Ganti 'dumb wait' (Task.Delay) dengan 'smart wait' (ping check)
+                                string pathToCheck = allBotPaths.LastOrDefault(); // Cek path terakhir
+                                if (!string.IsNullOrEmpty(pathToCheck))
+                                {
+                                    if (!await VerifyDirectoryExistsWithRetryAsync(token, codespaceName, pathToCheck, cancellationToken))
+                                    {
+                                        // Kalo gagal verifikasi, lempar error biar gak lanjut
+                                        throw new Exception("Gagal verifikasi remote directory setelah mkdir.");
+                                    }
+                                }
+                                else
+                                {
+                                    AnsiConsole.MarkupLine("[dim]   No paths to verify, skipping check.[/]");
+                                }
                                 // === AKHIR PERBAIKAN ===
                                 
                             } catch (Exception mkdirEx) {
-                                AnsiConsole.MarkupLine($"[red]✗ Failed create directories: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
-                                throw new Exception("Critical: Directory creation failed");
+                                AnsiConsole.MarkupLine($"[red]✗ Failed create/verify directories: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                                throw new Exception("Critical: Directory creation/verification failed");
                             }
                         }
 
