@@ -17,8 +17,7 @@ namespace Orchestrator.Codespace
         
         private const int SSH_PROBE_TIMEOUT_MS = 30000; 
         
-        // Timeout ini gak dipake lagi, kita nunggu sampe script-nya beneran selesai
-        // private const int HEALTH_CHECK_MAX_DURATION_MIN = 4; 
+        // Flag file di /tmp
         private const string HEALTH_CHECK_FILE = "/tmp/auto_start_done";
         private const string HEALTH_CHECK_FAIL_PROXY = "/tmp/auto_start_failed_proxysync";
         private const string HEALTH_CHECK_FAIL_DEPLOY = "/tmp/auto_start_failed_deploy";
@@ -114,26 +113,20 @@ namespace Orchestrator.Codespace
             return result; 
         }
 
-        // === PERBAIKAN: STREAMING LOG HEALTH CHECK ===
+        // === PERBAIKAN: STREAMING LOG DARI PATH YANG BENAR ===
         internal static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
             AnsiConsole.MarkupLine("[cyan]Attaching to remote log stream...[/]");
             AnsiConsole.MarkupLine("[dim]   (Waiting for auto-start.sh to finish... this might take 10-15 mins)[/]");
-            
-            // Script ini akan:
-            // 1. (touch) Pastikan file log ada biar 'tail' gak error
-            // 2. (tail -f) Mulai streaming log
-            // 3. (&) Jalanin tail di background
-            // 4. (while true) Mulai polling flag file
-            // 5. (if) Jika flag FAILED_PROXY, cetak magic string FAILED_PROXY
-            // 6. (if) Jika flag FAILED_DEPLOY, cetak magic string FAILED_DEPLOY
-            // 7. (if) Jika flag DONE, cetak magic string HEALTHY
-            // 8. (kill $tail_pid) Matikan 'tail'
-            // 9. (break) Keluar dari loop polling
+
+            // === INI FIX-NYA ===
+            // Ambil nama repo dari token, sesuai dengan 'auto-start.sh'
+            string remoteLogFile = $"/workspaces/{token.Repo.ToLowerInvariant()}/startup.log";
+            // === AKHIR FIX ===
             
             string remoteCommand = $@"
-touch /tmp/startup.log
-tail -f /tmp/startup.log &
+touch {remoteLogFile}
+tail -f {remoteLogFile} &
 tail_pid=$!
 echo ""[ORCHESTRATOR_MONITOR:STREAM_STARTED]""
 while true; do
@@ -158,7 +151,6 @@ done
             bool healthResult = false;
             bool streamStarted = false;
 
-            // Callback yang bakal dipanggil untuk setiap baris log
             Func<string, bool> onStdOut = (line) => {
                 string trimmedLine = line.Trim();
                 
@@ -183,7 +175,6 @@ done
                     return false; // Lanjut streaming
                 }
 
-                // Tampilkan log-nya
                 if (streamStarted) {
                     AnsiConsole.MarkupLine($"[grey]   [REMOTE] {line.EscapeMarkup()}[/]");
                 }
@@ -192,10 +183,9 @@ done
 
             try
             {
-                // Panggil GhService versi STREAMING
+                // Panggil GhService versi STREAMING (ini pakai proxy)
                 await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken, onStdOut);
                 
-                // Jika loop selesai TANPA nemu magic string (misal script-nya error aneh)
                 if (!healthResult && !cancellationToken.IsCancellationRequested)
                 {
                     AnsiConsole.MarkupLine("[yellow]Stream finished but health status unknown (no magic string detected). Assuming failure.[/]");
@@ -204,17 +194,16 @@ done
             }
             catch (OperationCanceledException) {
                 AnsiConsole.MarkupLine("\n[yellow]Log streaming cancelled by user.[/]");
-                throw; // Lemparkan lagi biar TuiLoop tau
+                throw; 
             }
             catch (Exception ex)
             {
                 AnsiConsole.MarkupLine($"\n[red]FATAL: Log streaming failed: {ex.Message.EscapeMarkup()}[/]");
-                healthResult = false; // Anggap gagal
+                healthResult = false; 
             }
 
             AnsiConsole.MarkupLine($"[cyan]Log stream finished. Health Status: {(healthResult ? "OK" : "Failed")}[/]");
             return healthResult;
         }
-        // === AKHIR PERBAIKAN ===
     }
 }
