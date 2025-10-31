@@ -21,6 +21,65 @@ namespace Orchestrator.Services
             return await RunGhCommand(token, args, timeoutMilliseconds, useProxy: false);
         }
         
+        // === FUNGSI STREAMING BARU ===
+        public static async Task<string> RunGhCommandAndStreamOutputAsync(
+            TokenEntry token, 
+            string args, 
+            CancellationToken cancellationToken,
+            Func<string, bool> onStdOutLine)
+        {
+            // Streaming selalu pakai proxy (default)
+            var startInfo = ShellUtil.CreateStartInfo("gh", args, token, useProxy: true);
+            Exception? lastException = null;
+            var globalCancelToken = Program.GetMainCancellationToken(); 
+
+            // Kita gabungkan token
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, globalCancelToken);
+
+            // Kita *tidak* pakai logic retry di sini. Streaming itu satu kali jalan.
+            // Logic retry (jika gagal konek) harus ada di CodeHealth.cs SEBELUM manggil ini.
+            // Fungsi ini cuma eksekusi dan stream.
+
+            string stdout = "", stderr = ""; 
+            int exitCode = -1;
+
+            try {
+                (stdout, stderr, exitCode) = await ShellUtil.RunProcessAndStreamOutputAsync(startInfo, linkedCts.Token, onStdOutLine);
+
+                if (exitCode == 0 || (exitCode == 130 && linkedCts.Token.IsCancellationRequested)) // 130 = Ctrl+C
+                {
+                    return stdout; // Sukses
+                } 
+
+                AnsiConsole.MarkupLine($"[yellow]WARN: gh stream failed (Exit {exitCode}). Analyzing error...[/]");
+                AnsiConsole.MarkupLine($"[grey]   CMD: gh {args.EscapeMarkup()}[/]");
+                AnsiConsole.MarkupLine($"[grey]   ERR: {stderr.Split('\n').LastOrDefault()?.Trim().EscapeMarkup() ?? "No stderr"}[/]");
+                
+                // Cek error spesifik
+                string lowerStderr = stderr.ToLowerInvariant();
+                if (lowerStderr.Contains("401") || lowerStderr.Contains("403") || lowerStderr.Contains("404") || lowerStderr.Contains("407"))
+                {
+                     lastException = new Exception($"GH Command Failed (Auth/Proxy): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
+                }
+                else
+                {
+                    lastException = new Exception($"Unhandled GH Stream Failed (Exit {exitCode}): {stderr.Split('\n').LastOrDefault()?.Trim().EscapeMarkup()}");
+                }
+            }
+            catch (OperationCanceledException) when (linkedCts.Token.IsCancellationRequested) {
+                AnsiConsole.MarkupLine("[yellow]Stream cancelled by user/system.[/]");
+                throw; 
+            }
+            catch (Exception ex) {
+                AnsiConsole.MarkupLine($"[red]ShellHelper Exception during RunProcessAndStreamOutputAsync: {ex.Message.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}[/]");
+                lastException = ex;
+            }
+
+            throw lastException ?? new Exception("GH stream command failed unexpectedly.");
+        }
+        // === AKHIR FUNGSI STREAMING BARU ===
+
+
         public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS, bool useProxy = true)
         {
             var startInfo = ShellUtil.CreateStartInfo("gh", args, token, useProxy);
@@ -82,9 +141,7 @@ namespace Orchestrator.Services
                 bool isAuthError = lowerStderr.Contains("bad credentials") || lowerStderr.Contains("401 unauthorized");
                 bool isProxyAuthError = lowerStderr.Contains("407 proxy authentication required");
                 
-                // === PERBAIKAN: Deteksi error tmux ===
                 bool isTmuxError = lowerStderr.Contains("/tmp/tmux-") && lowerStderr.Contains("no such file or directory");
-                // === AKHIR PERBAIKAN ===
                 
                 bool isNetworkError = (lowerStderr.Contains("dial tcp") || lowerStderr.Contains("connection refused") ||
                                       lowerStderr.Contains("i/o timeout") || lowerStderr.Contains("error connecting") ||
@@ -93,7 +150,7 @@ namespace Orchestrator.Services
                                       lowerStderr.Contains("unreachable network") || lowerStderr.Contains("unexpected eof") ||
                                       lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed") ||
                                       isCodespaceStartTimeout) 
-                                      && !isTmuxError; // <-- Tambahkan pengecualian di sini
+                                      && !isTmuxError; 
                 
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
@@ -147,17 +204,14 @@ namespace Orchestrator.Services
                     lastException = new Exception($"GH Command Failed ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
                     break; 
                 }
-
-                // === PERBAIKAN: Tangani error tmux sebagai error permanen (bukan network error) ===
+                
                 if (isTmuxError)
                 {
                     AnsiConsole.MarkupLine($"[red]FATAL App Error: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}[/]");
                     lastException = new Exception($"tmux session not found: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
                     break; 
                 }
-                // === AKHIR PERBAIKAN ===
-
-
+                
                 AnsiConsole.MarkupLine($"[red]FATAL Unhandled gh command error (Exit {exitCode}). Command failed permanently.[/]");
                 lastException = new Exception($"Unhandled GH Command Failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
                 break; 
