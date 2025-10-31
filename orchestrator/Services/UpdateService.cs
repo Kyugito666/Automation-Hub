@@ -1,13 +1,12 @@
 using System.Text.Json;
 using Spectre.Console;
-using System.IO; // Diperlukan
-using System.Threading.Tasks; // Diperlukan
-using Orchestrator.Core; // Menggunakan Core.BotConfig
-using Orchestrator.Util; // Menggunakan ShellUtil
+using System.IO; 
+using System.Threading.Tasks; 
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Util; // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.Services // Namespace baru
+namespace Orchestrator.Services 
 {
-    // Ganti nama kelas
     public static class UpdateService
     {
         private static readonly string ProjectRoot = GetProjectRoot();
@@ -62,12 +61,10 @@ namespace Orchestrator.Services // Namespace baru
             AnsiConsole.Write(table);
         }
 
-        // === PERBAIKAN (dari file asli): Ganti logika D:\SC ===
         private static string GetLocalBotPathForUpdate(string configPath)
         {
             return BotConfig.GetLocalBotPath(configPath);
         }
-        // === AKHIR PERBAIKAN ===
         
         public static async Task UpdateAllBotsLocally()
         {
@@ -106,7 +103,6 @@ namespace Orchestrator.Services // Namespace baru
                         bool hasChanges = false;
                         try
                         {
-                            // Menggunakan ShellUtil (dulu ShellHelper)
                             await ShellUtil.RunCommandAsync("git", "diff --quiet", targetPath);
                         }
                         catch
