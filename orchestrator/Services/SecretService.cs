@@ -5,7 +5,7 @@ using System.Net.Http;
 using System.Threading.Tasks; 
 using System.Collections.Generic; 
 using System.Linq; 
-using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core; 
 
 namespace Orchestrator.Services 
 {
@@ -94,7 +94,9 @@ namespace Orchestrator.Services
             AnsiConsole.MarkupLine("\n[cyan]═══ [[3/3]] Repository Codespace Secrets ═══[/]");
             totalDeleted += await DeleteSecretsFromEndpoint(client, 
                 $"https://api.github.com/repos/{owner}/{repo}/codespaces/secrets", 
-                $"repos/{token.Owner}/{token.Repo}/codespaces/secrets");
+                // === INI PERBAIKANNYA ===
+                $"repos/{owner}/{repo}/codespaces/secrets");
+                // === SEBELUMNYA: $"repos/{token.Owner}/{token.Repo}/codespaces/secrets" ===
 
             AnsiConsole.MarkupLine("\n[cyan]═══════════════════════════════════════════════════════════════[/]");
             if (totalDeleted > 0)
