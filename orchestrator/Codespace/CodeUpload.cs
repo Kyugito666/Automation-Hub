@@ -17,7 +17,6 @@ namespace Orchestrator.Codespace
         private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
         private static readonly string UploadFilesListPath = Path.Combine(ConfigRoot, "upload_files.txt");
         
-        // === PERBAIKAN: Delay tetap ada, tapi loop-nya infinite ===
         private const int UPLOAD_RETRY_DELAY_MS = 5000;
 
         private static string GetProjectRoot()
@@ -72,9 +71,7 @@ namespace Orchestrator.Codespace
             var botCredentialFiles = LoadUploadFileList();
             int botsProcessed = 0; int filesUploaded = 0; int filesSkipped = 0; int botsSkipped = 0;
             
-            // === PERBAIKAN: Hapus .ToLowerInvariant() ===
             string remoteWorkspacePath = $"/workspaces/{token.Repo}";
-            // === AKHIR PERBAIKAN ===
 
             AnsiConsole.MarkupLine($"[dim]Remote workspace: {remoteWorkspacePath}[/]");
             AnsiConsole.MarkupLine($"[dim]Scanning {botCredentialFiles.Count} possible credential files per bot...[/]");
@@ -106,7 +103,6 @@ namespace Orchestrator.Codespace
                                 string remoteFilePath = $"{remoteWorkspacePath}/{bot.Path}/{credFileName}".Replace('\\', '/');
                                 string remoteBotDir = Path.GetDirectoryName(remoteFilePath)!.Replace('\\', '/');
 
-                                // --- PERBAIKAN: Ganti 'for' jadi 'while(true)' ---
                                 bool uploadSuccess = false;
                                 int retryCount = 0; 
 
@@ -114,7 +110,6 @@ namespace Orchestrator.Codespace
                                 {
                                     if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
 
-                                    // --- PERBAIKAN: Log bersih (update status) ---
                                     string taskMessage;
                                     if (retryCount == 0) {
                                         taskMessage = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
@@ -122,14 +117,12 @@ namespace Orchestrator.Codespace
                                         taskMessage = $"[yellow](Retry {retryCount})[/] {bot.Name}/{credFileName}";
                                     }
                                     task.Description = taskMessage;
-                                    // --- AKHIR LOG BERSIH ---
 
                                     try
                                     {
                                         string cmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}' && cat > '{remoteFilePath.Replace("'", "'\\''")}'";
                                         string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
                                         
-                                        // --- PERBAIKAN: Paksa 'useProxy: false' ---
                                         var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); 
                                         
                                         await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localFilePath, cancellationToken);
@@ -141,30 +134,26 @@ namespace Orchestrator.Codespace
                                     catch (OperationCanceledException) { throw; } 
                                     catch (Exception cpEx)
                                     {
-                                        // --- PERBAIKAN: Cek error spesifik ---
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
                                                                        errorMsg.Contains("unavailable desc") ||
-                                                                       errorMsg.Contains("the pipe has been ended"); // <-- Tambahkan ini
+                                                                       errorMsg.Contains("the pipe has been ended"); 
 
                                         if (isRetryableNetworkError)
                                         {
-                                            // Error network, coba lagi
                                             retryCount++;
                                             try { await Task.Delay(UPLOAD_RETRY_DELAY_MS, cancellationToken); } catch (OperationCanceledException) { throw; }
-                                            continue; // Lanjut ke iterasi while(true) berikutnya
+                                            continue; 
                                         }
                                         else
                                         {
-                                            // Error fatal (bukan network), jangan retry
                                             AnsiConsole.MarkupLine($"\n[red]✗ Upload FAILED (Fatal Error):[/] {bot.Name}/{credFileName}");
                                             AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
                                             uploadSuccess = false;
-                                            break; // KELUAR dari while(true)
+                                            break; 
                                         }
-                                        // --- AKHIR CEK ERROR SPESIFIK ---
                                     }
                                 } // --- AKHIR BLOK while(true) ---
 
@@ -182,7 +171,10 @@ namespace Orchestrator.Codespace
                         // STEP 2: ProxySync Configs
                         task.Description = "[cyan]Uploading ProxySync Configs...";
                         var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
-                        string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config".Replace('\\', '/');
+                        
+                        // === PERBAIKAN: Ganti path tujuan upload ===
+                        string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/config".Replace('\\', '/');
+                        // === DULU: $"{remoteWorkspacePath}/proxysync/config" ===
                         
                         foreach (var configFileName in proxySyncConfigFiles)
                         {
@@ -191,9 +183,11 @@ namespace Orchestrator.Codespace
                              string localConfigPath = Path.Combine(ConfigRoot, configFileName); 
                              string remoteConfigPath = $"{remoteProxySyncConfigDir}/{configFileName}".Replace('\\', '/');
 
-                             if (!File.Exists(localConfigPath)) { continue; }
+                             if (!File.Exists(localConfigPath)) {
+                                 AnsiConsole.MarkupLine($"[yellow]Warn: Config file '{configFileName}' not found locally. Skipping upload.[/]");
+                                 continue;
+                             }
                              
-                             // --- PERBAIKAN: Ganti 'for' jadi 'while(true)' ---
                              bool uploadSuccess = false;
                              int retryCount = 0; 
 
@@ -201,22 +195,19 @@ namespace Orchestrator.Codespace
                              {
                                 if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
 
-                                // --- PERBAIKAN: Log bersih (update status) ---
                                 string taskMessage;
                                 if (retryCount == 0) {
-                                    taskMessage = $"[cyan]Uploading:[/] proxysync/{configFileName}";
+                                    taskMessage = $"[cyan]Uploading:[/] config/{configFileName}"; // Path log dibenerin
                                 } else {
-                                    taskMessage = $"[yellow](Retry {retryCount})[/] proxysync/{configFileName}";
+                                    taskMessage = $"[yellow](Retry {retryCount})[/] config/{configFileName}"; // Path log dibenerin
                                 }
                                 task.Description = taskMessage;
-                                // --- AKHIR LOG BERSIH ---
 
                                  try
                                  { 
                                     string cmd = $"mkdir -p '{remoteProxySyncConfigDir.Replace("'", "'\\''")}' && cat > '{remoteConfigPath.Replace("'", "'\\''")}'";
                                     string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
 
-                                    // --- PERBAIKAN: Paksa 'useProxy: false' ---
                                     var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); 
 
                                     await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localConfigPath, cancellationToken);
@@ -228,13 +219,12 @@ namespace Orchestrator.Codespace
                                  catch (OperationCanceledException) { throw; }
                                  catch (Exception cpEx)
                                  {
-                                     // --- PERBAIKAN: Cek error spesifik ---
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
                                                                        errorMsg.Contains("unavailable desc") ||
-                                                                       errorMsg.Contains("the pipe has been ended"); // <-- Tambahkan ini
+                                                                       errorMsg.Contains("the pipe has been ended");
 
                                         if (isRetryableNetworkError)
                                         {
@@ -244,12 +234,11 @@ namespace Orchestrator.Codespace
                                         }
                                         else
                                         {
-                                            AnsiConsole.MarkupLine($"\n[red]✗ Upload FAILED (Fatal Error):[/] proxysync/{configFileName}");
+                                            AnsiConsole.MarkupLine($"\n[red]✗ Upload FAILED (Fatal Error):[/] config/{configFileName}"); // Path log dibenerin
                                             AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
                                             uploadSuccess = false;
                                             break; 
                                         }
-                                     // --- AKHIR CEK ERROR SPESIFIK ---
                                  }
                              } // --- AKHIR BLOK while(true) ---
                              
