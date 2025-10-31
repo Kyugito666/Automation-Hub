@@ -5,6 +5,8 @@ using Spectre.Console;
 using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core; 
+using System.IO; // <-- TAMBAHKAN
+using System; // <-- TAMBAHKAN
 
 namespace Orchestrator.Util 
 {
@@ -33,6 +35,69 @@ namespace Orchestrator.Util
                 throw new TimeoutException($"Command '{command} {args.EscapeMarkup()}' timed out after {DEFAULT_TIMEOUT_MS / 1000} seconds.");
             }
         }
+
+        // === FUNGSI BARU UNTUK STREAMING STDIN DARI FILE ===
+        public static async Task RunProcessWithFileStdinAsync(ProcessStartInfo startInfo, string localFilePath, CancellationToken cancellationToken)
+        {
+            startInfo.RedirectStandardInput = true; // WAJIB
+            startInfo.RedirectStandardOutput = true; // Opsional tapi bagus untuk logging
+            startInfo.RedirectStandardError = true;  // Opsional tapi bagus untuk logging
+
+            using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            var stdoutBuilder = new StringBuilder();
+            var stderrBuilder = new StringBuilder();
+            var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
+            process.ErrorDataReceived += (s, e) => { if (e.Data != null) stderrBuilder.AppendLine(e.Data); };
+            process.Exited += (s, e) => tcs.TrySetResult(process.ExitCode);
+
+            using var cancellationRegistration = cancellationToken.Register(() => {
+                if (tcs.TrySetCanceled(cancellationToken)) {
+                    try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
+                }
+            });
+
+            try
+            {
+                if (!process.Start())
+                {
+                    throw new InvalidOperationException($"Failed to start process: {startInfo.FileName}");
+                }
+
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                // Mulai streaming file ke stdin proses
+                using (var fileStream = new FileStream(localFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
+                {
+                    // Copy file stream ke StandardInput (stdin) proses
+                    await fileStream.CopyToAsync(process.StandardInput.BaseStream, cancellationToken);
+                }
+                
+                // Tutup stdin untuk sinyal 'EOF' (End of File) ke 'cat'
+                process.StandardInput.Close();
+
+                // Tunggu proses selesai
+                int exitCode = await tcs.Task; 
+
+                if (exitCode != 0)
+                {
+                    string stderr = stderrBuilder.ToString().TrimEnd();
+                    throw new Exception($"Command '{startInfo.FileName} {startInfo.Arguments.EscapeMarkup()}' failed (Exit Code: {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
+                }
+            }
+            catch (TaskCanceledException ex) { throw new OperationCanceledException("Process run (stdin) was canceled.", ex, cancellationToken); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Error in RunProcessWithFileStdinAsync: {ex.Message.EscapeMarkup()}[/]");
+                try { if (process != null && !process.HasExited) process.Kill(true); } catch { /* Ignored */ }
+                throw;
+            }
+        }
+        // === AKHIR FUNGSI BARU ===
+
 
         public static async Task RunInteractive(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
         {
