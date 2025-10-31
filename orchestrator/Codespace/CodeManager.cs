@@ -183,7 +183,12 @@ namespace Orchestrator.Codespace
                     AnsiConsole.MarkupLine($"[green]✓ Fallback found: {newName.EscapeMarkup()}[/]"); 
                 }
                 
-                // === ALUR BARU: Stop langsung setelah create ===
+                // === INI PERBAIKANNYA (Error 3) ===
+                // Tunggu 15 detik agar backend GitHub 'catch up' sebelum stop
+                AnsiConsole.MarkupLine("[yellow]Waiting 15s for codespace to stabilize before stop...[/]");
+                try { await Task.Delay(15000, cancellationToken); } catch (OperationCanceledException) { throw; }
+                // === AKHIR PERBAIKAN ===
+                
                 AnsiConsole.MarkupLine("[yellow]Stopping codespace immediately (avoid heavy startup)...[/]"); 
                 await CodeActions.StopCodespace(token, newName);
                 await Task.Delay(3000, cancellationToken); // Tunggu sebentar
