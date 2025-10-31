@@ -3,7 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Util;      
 using Orchestrator.Core;      
-using System; // <-- Ditambahkan
+using System; 
 
 namespace Orchestrator.Services 
 {
@@ -80,38 +80,37 @@ namespace Orchestrator.Services
                 // === INI PERBAIKANNYA ===
                 // 1. Deteksi error 'gh' internal timeout
                 bool isCodespaceStartTimeout = lowerStderr.Contains("timed out while waiting for the codespace to start");
+                // === AKHIR PERBAIKAN ===
 
                 bool isRateLimit = lowerStderr.Contains("api rate limit exceeded") || lowerStderr.Contains("403 forbidden");
                 bool isAuthError = lowerStderr.Contains("bad credentials") || lowerStderr.Contains("401 unauthorized");
                 bool isProxyAuthError = lowerStderr.Contains("407 proxy authentication required");
                 
-                // 2. Modifikasi 'isNetworkError' biar GAK salah klasifikasi
+                // === INI PERBAIKANNYA ===
+                // 2. Masukkan 'isCodespaceStartTimeout' sebagai 'isNetworkError' (bisa di-retry)
                 bool isNetworkError = (lowerStderr.Contains("dial tcp") || lowerStderr.Contains("connection refused") ||
-                                      lowerStderr.Contains("i/o timeout") || lowerStderr.Contains("error connecting") || // 'error connecting' bisa jadi 'gh timeout'
+                                      lowerStderr.Contains("i/o timeout") || lowerStderr.Contains("error connecting") ||
                                       lowerStderr.Contains("wsarecv") || lowerStderr.Contains("forcibly closed") ||
                                       lowerStderr.Contains("resolve host") || lowerStderr.Contains("tls handshake timeout") ||
                                       lowerStderr.Contains("unreachable network") || lowerStderr.Contains("unexpected eof") ||
                                       lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed"))
-                                      && !isCodespaceStartTimeout; // <-- 3. Pengecualian
+                                      || isCodespaceStartTimeout; // <-- 3. Ditambahkan di sini
                 // === AKHIR PERBAIKAN ===
-
+                
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
-                if (isProxyAuthError) { // Ini HANYA ke-trigger kalo proxy ON dan error 407
+                if (isProxyAuthError) {
                     AnsiConsole.MarkupLine($"[yellow]Proxy Auth Error (407). Trying different account...[/]");
                     string? oldAccount = ExtractProxyAccount(token.Proxy);
                     
                     if (TokenManager.RotateProxyForToken(token)) {
                         string? newAccount = ExtractProxyAccount(token.Proxy);
-                        
                         startInfo = ShellUtil.CreateStartInfo("gh", args, token, useProxy); 
-                        
                         if (newAccount != null && newAccount != oldAccount) {
                             AnsiConsole.MarkupLine($"[green]Rotated to different account. Retrying...[/]");
                         } else {
                             AnsiConsole.MarkupLine($"[yellow]Rotated IP only (same account). Retrying...[/]");
                         }
-                        
                         try { await Task.Delay(1000, globalCancelToken); } catch (OperationCanceledException) { throw; }
                         continue; 
                     }
@@ -133,15 +132,15 @@ namespace Orchestrator.Services
                     } else { AnsiConsole.MarkupLine("[yellow]IP Auth in progress. Treating as network error.[/]"); }
                 }
 
-                if (isNetworkError && !isNotFoundError) { 
-                    // === INI PERBAIKANNYA ===
-                    // 4. Cek apakah proxy global ON atau OFF pas nampilin error
+                // === INI PERBAIKANNYA ===
+                // 4. Pastikan 'isNetworkError' (termasuk timeout 'gh') masuk ke sini
+                if ((isNetworkError || isProxyAuthError) && !isNotFoundError) { 
+                // === AKHIR PERBAIKAN ===
                     string errorMsg = TokenManager.IsProxyGloballyEnabled() 
                         ? "[magenta]Network/Proxy error. Retrying in" 
                         : "[magenta]Network error (No Proxy). Retrying in";
                     
                     AnsiConsole.MarkupLine($"{errorMsg} {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
-                    // === AKHIR PERBAIKAN ===
                     AnsiConsole.MarkupLine($"[grey]   (Detail: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()})[/]");
                     try { await Task.Delay(NETWORK_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; }
                     continue; 
@@ -154,10 +153,6 @@ namespace Orchestrator.Services
                     break; 
                 }
 
-                // Jika errornya 'isCodespaceStartTimeout', dia akan lolos dari 'isNetworkError'
-                // dan jatuh ke sini. Ini yang kita mau.
-                // Loop 'WaitForSshReadyWithRetry' di 'CodeHealth.cs' akan nangkep exception ini
-                // dan nge-retry loop-nya (ping terus menerus).
                 AnsiConsole.MarkupLine($"[red]FATAL Unhandled gh command error (Exit {exitCode}). Command failed permanently.[/]");
                 lastException = new Exception($"Unhandled GH Command Failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
                 break; 
