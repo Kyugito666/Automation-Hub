@@ -46,6 +46,12 @@ namespace Orchestrator.TUI
                 try {
                     switch (choice) {
                         case "1":
+                            // === INI PERBAIKANNYA ===
+                            AnsiConsole.MarkupLine(); // Kasih spasi
+                            bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
+                            TokenManager.SetProxyUsage(useProxy);
+                            // === AKHIR PERBAIKAN ===
+
                             await TuiLoop.RunOrchestratorLoopAsync(cancellationToken);
                             if (cancellationToken.IsCancellationRequested) return; 
                             break; 
@@ -157,6 +163,7 @@ namespace Orchestrator.TUI
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
                 
                 // Panggil ShellUtil dengan useProxy: true (default)
+                // Ini akan menghormati global switch proxy
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: true);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
@@ -183,6 +190,7 @@ namespace Orchestrator.TUI
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
                 
                 // Panggil ShellUtil dengan useProxy: true (default)
+                // Ini akan menghormati global switch proxy
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: true);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
