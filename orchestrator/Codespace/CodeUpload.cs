@@ -174,8 +174,8 @@ namespace Orchestrator.Codespace
                         // STEP 2: ProxySync Configs
                         task.Description = "[cyan]Uploading ProxySync Configs...";
                         
-                        // === PERBAIKAN: HAPUS github_tokens.txt ===
-                        var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
+                        // === PERBAIKAN: Tambahkan paths.txt ===
+                        var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt", "paths.txt" };
                         // === AKHIR PERBAIKAN ===
                         
                         string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/config".Replace('\\', '/');
