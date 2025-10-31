@@ -4,11 +4,10 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
-using Orchestrator.Core; // Menggunakan Core.TokenManager
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.Services // Namespace baru
+namespace Orchestrator.Services 
 {
-    // Ganti nama kelas
     public static class CollabService
     {
         private const int MAX_RETRY = 3;
@@ -335,7 +334,6 @@ namespace Orchestrator.Services // Namespace baru
             Console.WriteLine($"Selesai. Accepted: {accepted}, Sudah: {alreadyMember}, Tidak ada: {noInvitation}, Gagal: {failed}");
         }
 
-        // Kelas DTO (tetap sama)
         private class GitHubUser {
             [JsonPropertyName("login")]
             public string? Login { get; set; }
