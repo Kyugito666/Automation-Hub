@@ -93,7 +93,13 @@ namespace Orchestrator.Codespace
         internal static async Task TriggerStartupScript(TokenEntry token, string codespaceName)
         {
             AnsiConsole.MarkupLine("[cyan]Triggering remote auto-start.sh script...[/]");
-            string repo = token.Repo.ToLower(); string scriptPath = $"/workspaces/{repo}/auto-start.sh";
+            
+            // === PERBAIKAN: Hapus .ToLower() ===
+            // Biarkan nama repo apa adanya (case-sensitive)
+            string repo = token.Repo; 
+            // === AKHIR PERBAIKAN ===
+
+            string scriptPath = $"/workspaces/{repo}/auto-start.sh";
             AnsiConsole.Markup("[dim]Executing command in background (nohup)... [/]");
             string command = $"nohup bash \"{scriptPath.Replace("\"", "\\\"")}\" > /tmp/startup.log 2>&1 &";
             string args = $"codespace ssh -c \"{codespaceName}\" -- {command}";
