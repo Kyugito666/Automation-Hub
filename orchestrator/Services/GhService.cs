@@ -91,11 +91,20 @@ namespace Orchestrator.Services
                         _isAttemptingIpAuth = true;
                         bool ipAuthSuccess = await ProxyService.RunIpAuthorizationOnlyAsync(globalCancelToken);
                         _isAttemptingIpAuth = false;
-                        if (ipAuthSuccess) { AnsiConsole.MarkupLine("[magenta]IP Auth successful. Retrying command...[/]"); continue; }
+                        if (ipAuthSuccess) { 
+                            AnsiConsole.MarkupLine("[magenta]IP Auth successful. Testing & reloading...[/]"); 
+                            await ProxyService.RunProxyTestAndSaveAsync(globalCancelToken);
+                            
+                            // PERBAIKAN: Reload config LENGKAP
+                            AnsiConsole.MarkupLine("[cyan]Reloading all configs...[/]");
+                            TokenManager.ReloadAllConfigs();
+                            
+                            AnsiConsole.MarkupLine("[green]Retrying command...[/]"); 
+                            continue; 
+                        }
                         else { AnsiConsole.MarkupLine("[red]IP Auth failed. Treating as network error.[/]"); }
                     } else { AnsiConsole.MarkupLine("[yellow]IP Auth in progress. Treating as network error.[/]"); }
                 }
-
                 if ((isNetworkError || isProxyAuthError) && !isNotFoundError) { 
                     AnsiConsole.MarkupLine($"[magenta]Network/Proxy error. Retrying in {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
                     AnsiConsole.MarkupLine($"[grey]   (Detail: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()})[/]");
