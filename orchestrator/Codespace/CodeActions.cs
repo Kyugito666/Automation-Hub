@@ -66,17 +66,11 @@ namespace Orchestrator.Codespace
         {
             AnsiConsole.Markup($"[dim]Attempting start/revive codespace '{codespaceName.EscapeMarkup()}'... [/]");
             try { 
-                // === INI PERBAIKANNYA ===
-                // Perintah 'start' diganti menjadi 'revive'
-                // 'revive' juga tidak menggunakan flag -c, hanya nama.
                 string args = $"codespace revive \"{codespaceName}\""; 
-                // === AKHIR PERBAIKAN ===
-                
                 await GhService.RunGhCommand(token, args, START_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
             catch (Exception ex) { 
-                // 'revive' juga bisa melempar 'already available'
                 if (ex.Message.Contains("available", StringComparison.OrdinalIgnoreCase) || 
                     ex.Message.Contains("already running", StringComparison.OrdinalIgnoreCase)) 
                 {
@@ -95,10 +89,10 @@ namespace Orchestrator.Codespace
             AnsiConsole.MarkupLine("[cyan]Triggering remote auto-start.sh script...[/]");
             
             // === PERBAIKAN: Hapus .ToLower() ===
-            // Biarkan nama repo apa adanya (case-sensitive)
-            string repo = token.Repo; 
+            // Biarkan nama repo apa adanya (case-sensitive) sesuai config
+            string repo = token.Repo;
             // === AKHIR PERBAIKAN ===
-
+            
             string scriptPath = $"/workspaces/{repo}/auto-start.sh";
             AnsiConsole.Markup("[dim]Executing command in background (nohup)... [/]");
             string command = $"nohup bash \"{scriptPath.Replace("\"", "\\\"")}\" > /tmp/startup.log 2>&1 &";
