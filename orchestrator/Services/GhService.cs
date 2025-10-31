@@ -66,6 +66,16 @@ namespace Orchestrator.Services
                 }
 
                 string lowerStderr = stderr.ToLowerInvariant();
+
+                // === INI PERBAIKANNYA (Error 2) ===
+                // Tangani "is not running" (dari 'gh stop') sebagai non-error
+                bool isBenignStopError = (lowerStderr.Contains("is not running") || lowerStderr.Contains("already stopped")) && args.Contains("codespace stop");
+                if (isBenignStopError) {
+                    AnsiConsole.MarkupLine("[dim]   (Interpreted benign 'stop' error as success)[/]");
+                    return stdout; // Kembalikan stdout (kosong), seolah-olah exit code 0
+                }
+                // === AKHIR PERBAIKAN ===
+                
                 bool isRateLimit = lowerStderr.Contains("api rate limit exceeded") || lowerStderr.Contains("403 forbidden");
                 bool isAuthError = lowerStderr.Contains("bad credentials") || lowerStderr.Contains("401 unauthorized");
                 bool isProxyAuthError = lowerStderr.Contains("407 proxy authentication required");
