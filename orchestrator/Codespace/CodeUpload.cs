@@ -129,17 +129,19 @@ namespace Orchestrator.Codespace
                                         
                                         filesUploaded++; 
                                         uploadSuccess = true;
-                                        break; // SUKSES -> Keluar dari while(true)
+                                        break; 
                                     }
                                     catch (OperationCanceledException) { throw; } 
                                     catch (Exception cpEx)
                                     {
+                                        // === PERBAIKAN: Menambahkan 'error connecting' ===
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
                                                                        errorMsg.Contains("unavailable desc") ||
-                                                                       errorMsg.Contains("the pipe has been ended"); 
+                                                                       errorMsg.Contains("the pipe has been ended") ||
+                                                                       errorMsg.Contains("error connecting"); // <-- DITAMBAHKAN
 
                                         if (isRetryableNetworkError)
                                         {
@@ -154,8 +156,9 @@ namespace Orchestrator.Codespace
                                             uploadSuccess = false;
                                             break; 
                                         }
+                                        // === AKHIR PERBAIKAN ===
                                     }
-                                } // --- AKHIR BLOK while(true) ---
+                                } 
 
                                 if (!uploadSuccess)
                                 {
@@ -170,11 +173,12 @@ namespace Orchestrator.Codespace
 
                         // STEP 2: ProxySync Configs
                         task.Description = "[cyan]Uploading ProxySync Configs...";
-                        var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
                         
-                        // === PERBAIKAN: Ganti path tujuan upload ===
+                        // === PERBAIKAN: HAPUS github_tokens.txt ===
+                        var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
+                        // === AKHIR PERBAIKAN ===
+                        
                         string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/config".Replace('\\', '/');
-                        // === DULU: $"{remoteWorkspacePath}/proxysync/config" ===
                         
                         foreach (var configFileName in proxySyncConfigFiles)
                         {
@@ -197,9 +201,9 @@ namespace Orchestrator.Codespace
 
                                 string taskMessage;
                                 if (retryCount == 0) {
-                                    taskMessage = $"[cyan]Uploading:[/] config/{configFileName}"; // Path log dibenerin
+                                    taskMessage = $"[cyan]Uploading:[/] config/{configFileName}"; 
                                 } else {
-                                    taskMessage = $"[yellow](Retry {retryCount})[/] config/{configFileName}"; // Path log dibenerin
+                                    taskMessage = $"[yellow](Retry {retryCount})[/] config/{configFileName}";
                                 }
                                 task.Description = taskMessage;
 
@@ -214,17 +218,19 @@ namespace Orchestrator.Codespace
                                     
                                     filesUploaded++; 
                                     uploadSuccess = true;
-                                    break; // SUKSES -> Keluar dari while(true)
+                                    break; 
                                  }
                                  catch (OperationCanceledException) { throw; }
                                  catch (Exception cpEx)
                                  {
+                                     // === PERBAIKAN: Menambahkan 'error connecting' ===
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
                                                                        errorMsg.Contains("unavailable desc") ||
-                                                                       errorMsg.Contains("the pipe has been ended");
+                                                                       errorMsg.Contains("the pipe has been ended") ||
+                                                                       errorMsg.Contains("error connecting"); // <-- DITAMBAHKAN
 
                                         if (isRetryableNetworkError)
                                         {
@@ -234,13 +240,14 @@ namespace Orchestrator.Codespace
                                         }
                                         else
                                         {
-                                            AnsiConsole.MarkupLine($"\n[red]✗ Upload FAILED (Fatal Error):[/] config/{configFileName}"); // Path log dibenerin
+                                            AnsiConsole.MarkupLine($"\n[red]✗ Upload FAILED (Fatal Error):[/] config/{configFileName}"); 
                                             AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
                                             uploadSuccess = false;
                                             break; 
                                         }
+                                     // === AKHIR PERBAIKAN ===
                                  }
-                             } // --- AKHIR BLOK while(true) ---
+                             } 
                              
                              if (!uploadSuccess)
                              {
