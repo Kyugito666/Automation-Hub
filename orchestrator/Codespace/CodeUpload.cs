@@ -78,111 +78,121 @@ namespace Orchestrator.Codespace
                     .StartAsync(async ctx => {
                         var task = ctx.AddTask("[green]Processing bots & configs...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count + 1 });
 
+                        // === STEP 1: MKDIR SEMUA FOLDER DULU ===
+                        AnsiConsole.MarkupLine("\n[bold cyan]STEP 1: Creating all directories inside codespace...[/]");
+                        var allBotPaths = new List<string>();
+                        
+                        foreach (var bot in config.BotsAndTools)
+                        {
+                            if (bot.Name == "ProxySync-Tool") continue;
+                            if (!bot.Enabled) continue;
+                            
+                            string localBotDir = BotConfig.GetLocalBotPath(bot.Path);
+                            if (!Directory.Exists(localBotDir)) continue;
+                            
+                            var filesToUpload = GetFilesToUploadForBot(localBotDir, botCredentialFiles);
+                            if (!filesToUpload.Any()) continue;
+                            
+                            string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/');
+                            allBotPaths.Add(remoteBotDir);
+                        }
+                        
+                        // ProxySync config folder
+                        string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config";
+                        allBotPaths.Add(remoteProxySyncConfigDir);
+                        
+                        // Buat semua folder sekaligus dengan satu command SSH
+                        if (allBotPaths.Any())
+                        {
+                            AnsiConsole.MarkupLine($"[cyan]Creating {allBotPaths.Count} directories via SSH...[/]");
+                            string allPathsEscaped = string.Join(" ", allBotPaths.Select(p => $"'{p.Replace("'", "'\\''")}'"));
+                            string mkdirCmd = $"mkdir -p {allPathsEscaped}";
+                            string sshMkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
+                            
+                            try {
+                                await GhService.RunGhCommandNoProxyAsync(token, sshMkdirArgs, 120000);
+                                AnsiConsole.MarkupLine($"[green]✓ All {allBotPaths.Count} directories created[/]");
+                                await Task.Delay(2000, cancellationToken); // Tunggu sebentar
+                            } catch (Exception mkdirEx) {
+                                AnsiConsole.MarkupLine($"[red]✗ Failed create directories: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                                throw new Exception("Critical: Directory creation failed");
+                            }
+                        }
+
+                        // === STEP 2: UPLOAD FILES ===
+                        AnsiConsole.MarkupLine("\n[bold cyan]STEP 2: Uploading files from local...[/]");
+                        
                         foreach (var bot in config.BotsAndTools)
                         {
                             if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
                             task.Description = $"[green]Checking:[/] {bot.Name}";
 
-                            if (bot.Name == "ProxySync-Tool") { AnsiConsole.MarkupLine($"[dim]SKIP Creds: {bot.Name} (handled separately)[/]"); task.Increment(1); continue; }
-                            if (!bot.Enabled) { AnsiConsole.MarkupLine($"[dim]SKIP Disabled: {bot.Name}[/]"); task.Increment(1); continue; }
+                            if (bot.Name == "ProxySync-Tool") { task.Increment(1); continue; }
+                            if (!bot.Enabled) { botsSkipped++; task.Increment(1); continue; }
 
                             string localBotDir = BotConfig.GetLocalBotPath(bot.Path);
-                            if (!Directory.Exists(localBotDir)) { AnsiConsole.MarkupLine($"[yellow]SKIP No Local Dir: {bot.Name} ({localBotDir.EscapeMarkup()})[/]"); botsSkipped++; task.Increment(1); continue; }
+                            if (!Directory.Exists(localBotDir)) { botsSkipped++; task.Increment(1); continue; }
 
                             var filesToUpload = GetFilesToUploadForBot(localBotDir, botCredentialFiles);
-                            if (!filesToUpload.Any()) { AnsiConsole.MarkupLine($"[dim]SKIP No Creds Found: {bot.Name}[/]"); botsSkipped++; task.Increment(1); continue; }
+                            if (!filesToUpload.Any()) { botsSkipped++; task.Increment(1); continue; }
 
                             string remoteBotDir = Path.Combine(remoteWorkspacePath, bot.Path).Replace('\\', '/');
-                            string escapedRemoteBotDir = $"'{remoteBotDir.Replace("'", "'\\''")}'";
 
-                            task.Description = $"[grey]Creating dir:[/] {bot.Name}";
-                            bool mkdirSuccess = false;
-                            try {
-                                // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
-                                string mkdirCmd = $"mkdir -p {escapedRemoteBotDir}";
-                                string sshMkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
-                                await GhService.RunGhCommandNoProxyAsync(token, sshMkdirArgs, 90000); 
-                                mkdirSuccess = true;
-                            } catch (OperationCanceledException) { throw; }
-                            catch (Exception mkdirEx) { AnsiConsole.MarkupLine($"[red]✗ Failed mkdir for {bot.Name}: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); }
-
-                            bool dirExists = false;
-                            if (mkdirSuccess) {
-                                task.Description = $"[grey]Verifying dir:[/] {bot.Name}";
-                                try {
-                                    await Task.Delay(500, cancellationToken); string testCmd = $"test -d {escapedRemoteBotDir}";
-                                    // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
-                                    string sshTestArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{testCmd}\"";
-                                    await GhService.RunGhCommandNoProxyAsync(token, sshTestArgs, 30000); 
-                                    dirExists = true;
-                                    AnsiConsole.MarkupLine($"[green]✓ Dir verified: {bot.Name}[/]");
-                                } catch (OperationCanceledException) { throw; }
-                                catch (Exception testEx) { AnsiConsole.MarkupLine($"[red]✗ Dir verify FAILED: {bot.Name}. Err: {testEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); }
-                            } else { AnsiConsole.MarkupLine($"[red]✗ Skipping verify for {bot.Name} (mkdir failed).[/]"); }
-
-                            if (dirExists) {
-                                foreach (var credFileName in filesToUpload) {
-                                    if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
-                                    string localFilePath = Path.Combine(localBotDir, credFileName); string remoteFilePath = $"{remoteBotDir}/{credFileName}";
-                                    task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
-                                    string localAbsPath = Path.GetFullPath(localFilePath); string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteFilePath}\"";
-                                    
-                                    try { 
-                                        // CP Call -> No Proxy (Sudah benar dari request sebelumnya)
-                                        await GhService.RunGhCommandNoProxyAsync(token, cpArgs, 300000); 
-                                        filesUploaded++; 
-                                    }
-                                    catch (OperationCanceledException) { throw; }
-                                    catch { AnsiConsole.MarkupLine($"[red]✗ Fail upload: {bot.Name}/{credFileName}[/]"); filesSkipped++; }
-                                    try { await Task.Delay(200, cancellationToken); } catch (OperationCanceledException) { throw; }
+                            foreach (var credFileName in filesToUpload) {
+                                if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
+                                string localFilePath = Path.Combine(localBotDir, credFileName); 
+                                string remoteFilePath = $"{remoteBotDir}/{credFileName}";
+                                task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
+                                string localAbsPath = Path.GetFullPath(localFilePath); 
+                                string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteFilePath}\"";
+                                
+                                try { 
+                                    await GhService.RunGhCommandNoProxyAsync(token, cpArgs, 300000); 
+                                    filesUploaded++; 
                                 }
-                                botsProcessed++;
-                            } else { AnsiConsole.MarkupLine($"[red]✗ Skipping uploads for {bot.Name} (dir failed).[/]"); filesSkipped += filesToUpload.Count; botsSkipped++; }
+                                catch (OperationCanceledException) { throw; }
+                                catch { filesSkipped++; }
+                                try { await Task.Delay(200, cancellationToken); } catch (OperationCanceledException) { throw; }
+                            }
+                            botsProcessed++;
                             task.Increment(1);
                         } 
 
+                        // Upload ProxySync configs
                         task.Description = "[cyan]Uploading ProxySync Configs...";
                         var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
-                        string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config"; string escapedRemoteProxySyncDir = $"'{remoteProxySyncConfigDir.Replace("'", "'\\''")}'";
-                        bool proxySyncConfigUploadSuccess = true; bool proxySyncDirExists = false;
-                        try {
-                            // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
-                            string mkdirCmd = $"mkdir -p {escapedRemoteProxySyncDir}"; string sshMkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
-                            await GhService.RunGhCommandNoProxyAsync(token, sshMkdirArgs, 60000);
-                            
-                            await Task.Delay(500, cancellationToken); string testCmd = $"test -d {escapedRemoteProxySyncDir}";
-                            // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
-                            string sshTestArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{testCmd}\"";
-                            await GhService.RunGhCommandNoProxyAsync(token, sshTestArgs, 30000);
-                            
-                            proxySyncDirExists = true; AnsiConsole.MarkupLine($"[green]✓ ProxySync dir verified.[/]");
-                        } catch (OperationCanceledException) { throw; }
-                        catch (Exception dirEx) { AnsiConsole.MarkupLine($"[red]✗ Error ProxySync dir: {dirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); filesSkipped += proxySyncConfigFiles.Count; proxySyncConfigUploadSuccess = false; }
-
-                        if (proxySyncDirExists) {
-                            foreach (var configFileName in proxySyncConfigFiles) {
-                                 if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
-                                 string localConfigPath = Path.Combine(ConfigRoot, configFileName); string remoteConfigPath = $"{remoteProxySyncConfigDir}/{configFileName}";
-                                 if (!File.Exists(localConfigPath)) { AnsiConsole.MarkupLine($"[yellow]WARN: Skip non-existent: {configFileName}[/]"); continue; }
-                                 task.Description = $"[cyan]Uploading:[/] proxysync/{configFileName}";
-                                 string localAbsPath = Path.GetFullPath(localConfigPath); string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteConfigPath}\"";
-                                 
-                                 try { 
-                                     // CP Call -> No Proxy (Sudah benar dari request sebelumnya)
-                                     await GhService.RunGhCommandNoProxyAsync(token, cpArgs, 120000); 
-                                     filesUploaded++; 
-                                 }
-                                 catch (OperationCanceledException) { throw; }
-                                 catch { filesSkipped++; proxySyncConfigUploadSuccess = false; AnsiConsole.MarkupLine($"[red]✗ Fail upload: proxysync/{configFileName}[/]"); }
-                                 try { await Task.Delay(100, cancellationToken); } catch (OperationCanceledException) { throw; }
-                            }
-                        } else { AnsiConsole.MarkupLine($"[red]✗ Skipping ProxySync uploads (dir failed).[/]"); }
-                        if (proxySyncConfigUploadSuccess && proxySyncDirExists) AnsiConsole.MarkupLine("[green]✓ ProxySync configs uploaded.[/]"); else AnsiConsole.MarkupLine("[yellow]! Some ProxySync uploads failed.[/]");
+                        string remoteProxySyncConfigDir2 = $"{remoteWorkspacePath}/proxysync/config";
+                        
+                        foreach (var configFileName in proxySyncConfigFiles) {
+                             if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
+                             string localConfigPath = Path.Combine(ConfigRoot, configFileName); 
+                             string remoteConfigPath = $"{remoteProxySyncConfigDir2}/{configFileName}";
+                             if (!File.Exists(localConfigPath)) { continue; }
+                             task.Description = $"[cyan]Uploading:[/] proxysync/{configFileName}";
+                             string localAbsPath = Path.GetFullPath(localConfigPath); 
+                             string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteConfigPath}\"";
+                             
+                             try { 
+                                 await GhService.RunGhCommandNoProxyAsync(token, cpArgs, 120000); 
+                                 filesUploaded++; 
+                             }
+                             catch (OperationCanceledException) { throw; }
+                             catch { filesSkipped++; }
+                             try { await Task.Delay(100, cancellationToken); } catch (OperationCanceledException) { throw; }
+                        }
                         task.Increment(1);
                     }); 
-            } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Upload cancelled.[/]"); AnsiConsole.MarkupLine($"[dim]   Partial: Bots OK: {botsProcessed}, Skip: {botsSkipped} | Files OK: {filesUploaded}, Fail: {filesSkipped}[/]"); throw; }
-            catch (Exception uploadEx) { AnsiConsole.MarkupLine("\n[red]UNEXPECTED UPLOAD ERROR[/]"); AnsiConsole.WriteException(uploadEx); throw; }
-            AnsiConsole.MarkupLine($"\n[green]✓ Upload finished.[/]"); AnsiConsole.MarkupLine($"[dim]   Bots OK: {botsProcessed}, Skip: {botsSkipped} | Files OK: {filesUploaded}, Fail: {filesSkipped}[/]");
+            } catch (OperationCanceledException) { 
+                AnsiConsole.MarkupLine("\n[yellow]Upload cancelled.[/]"); 
+                AnsiConsole.MarkupLine($"[dim]   Partial: Bots OK: {botsProcessed}, Skip: {botsSkipped} | Files OK: {filesUploaded}, Fail: {filesSkipped}[/]"); 
+                throw; 
+            }
+            catch (Exception uploadEx) { 
+                AnsiConsole.MarkupLine("\n[red]UNEXPECTED UPLOAD ERROR[/]"); 
+                AnsiConsole.WriteException(uploadEx); 
+                throw; 
+            }
+            AnsiConsole.MarkupLine($"\n[green]✓ Upload finished.[/]"); 
+            AnsiConsole.MarkupLine($"[dim]   Bots OK: {botsProcessed}, Skip: {botsSkipped} | Files OK: {filesUploaded}, Fail: {filesSkipped}[/]");
         }
-    }
 }
