@@ -13,6 +13,7 @@ namespace Orchestrator.TUI
 {
     internal static class TuiMenus
     {
+        // ... (RunInteractiveMenuAsync tidak berubah) ...
         internal static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken) 
         {
             while (!cancellationToken.IsCancellationRequested) {
@@ -86,7 +87,8 @@ namespace Orchestrator.TUI
             AnsiConsole.MarkupLine("[yellow]Exiting Menu loop due to main cancellation.[/]");
         } 
 
-        private static async Task ShowSetupMenuAsync(CancellationToken linkedCancellationToken) {
+        // ... (ShowSetupMenuAsync dan ShowLocalMenuAsync tidak berubah) ...
+         private static async Task ShowSetupMenuAsync(CancellationToken linkedCancellationToken) {
             while (!linkedCancellationToken.IsCancellationRequested) {
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup").Color(Color.Yellow));
                  var selection = AnsiConsole.Prompt( new SelectionPrompt<string>()
@@ -123,6 +125,7 @@ namespace Orchestrator.TUI
             }
         }
 
+        // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) ---
         private static async Task ShowAttachMenuAsync(CancellationToken linkedCancellationToken) {
             if (linkedCancellationToken.IsCancellationRequested) return; 
 
@@ -153,16 +156,17 @@ namespace Orchestrator.TUI
                 string tmuxSessionName = "automation_hub_bots"; string escapedBotName = selectedBot.Replace("\"", "\\\"");
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
                 
-                // === PERBAIKAN DI SINI ===
-                // Ganti linkedCtsMenu.Token -> linkedCancellationToken
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
+                // Panggil ShellUtil dengan useProxy: true (default)
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: true);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
             }
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Attach session cancelled (likely Ctrl+C).[/]"); }
             catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
         }
+        // --- AKHIR PERBAIKAN ---
 
+        // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) ---
         private static async Task ShowRemoteShellAsync(CancellationToken linkedCancellationToken)
         {
             if (linkedCancellationToken.IsCancellationRequested) return;
@@ -178,14 +182,14 @@ namespace Orchestrator.TUI
             try {
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
                 
-                // === PERBAIKAN DI SINI ===
-                // Ganti linkedCtsMenu.Token -> linkedCancellationToken
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
+                // Panggil ShellUtil dengan useProxy: true (default)
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: true);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
             }
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Remote shell session cancelled (likely Ctrl+C).[/]"); }
             catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Remote shell error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
         }
+        // --- AKHIR PERBAIKAN ---
     }
 }
