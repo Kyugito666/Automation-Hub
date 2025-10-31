@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core; 
 using Orchestrator.Services; 
-using System.Diagnostics; // <-- Tambahkan ini
 
 namespace Orchestrator.Codespace
 {
@@ -27,48 +26,6 @@ namespace Orchestrator.Codespace
             }
             return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory!, "..", "..", "..", ".."));
         }
-
-        // === INI FUNGSI BARU UNTUK "SMART WAIT" (PING) ===
-        private static async Task<bool> VerifyDirectoryExistsWithRetryAsync(TokenEntry token, string codespaceName, string directoryPath, CancellationToken cancellationToken)
-        {
-            AnsiConsole.MarkupLine($"[dim]   Verifying remote directory (ping): {Path.GetFileName(directoryPath)}[/]");
-            string command = $"if [ -d \"{directoryPath.Replace("\"", "\\\"")}\" ]; then echo \"exists\"; else echo \"not_found\"; fi";
-            string args = $"codespace ssh -c \"{codespaceName}\" -- \"{command}\"";
-            
-            Stopwatch sw = Stopwatch.StartNew();
-            int maxWaitSeconds = 45; // Kasih waktu max 45 detik
-
-            while (sw.Elapsed.TotalSeconds < maxWaitSeconds)
-            {
-                if (cancellationToken.IsCancellationRequested) return false;
-                try
-                {
-                    // Use NoProxy untuk konsistensi dengan logic mkdir/cp
-                    string result = await GhService.RunGhCommandNoProxyAsync(token, args, 30000); 
-                    if (result.Contains("exists"))
-                    {
-                        AnsiConsole.MarkupLine($"[green]   ✓ Remote directory verified.[/] [dim]({sw.Elapsed.TotalSeconds:F1}s)[/]");
-                        return true;
-                    }
-                    // Jika "not_found" atau hasil aneh, retry
-                }
-                catch (Exception ex)
-                {
-                    // Log error tapi lanjut retry (mungkin SSH belum siap)
-                    AnsiConsole.MarkupLine($"[yellow]   ...check failed:[/][dim] {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
-                }
-                
-                try
-                {
-                    await Task.Delay(2000, cancellationToken); // Wait 2 detik sebelum ping lagi
-                }
-                catch (OperationCanceledException) { return false; }
-            }
-            
-            AnsiConsole.MarkupLine($"[red]   ✗ Gagal verifikasi directory setelah {maxWaitSeconds} detik.[/]");
-            return false;
-        }
-        // === AKHIR FUNGSI BARU ===
 
         private static List<string> LoadUploadFileList()
         {
@@ -121,7 +78,7 @@ namespace Orchestrator.Codespace
                     .StartAsync(async ctx => {
                         var task = ctx.AddTask("[green]Processing bots & configs...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count + 1 });
 
-                        // === STEP 1: MKDIR SEMUA FOLDER DULU ===
+                        // STEP 1: MKDIR SEMUA FOLDER DULU
                         AnsiConsole.MarkupLine("\n[bold cyan]STEP 1: Creating all directories inside codespace...[/]");
                         var allBotPaths = new List<string>();
                         
@@ -140,11 +97,9 @@ namespace Orchestrator.Codespace
                             allBotPaths.Add(remoteBotDir);
                         }
                         
-                        // ProxySync config folder
                         string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config";
                         allBotPaths.Add(remoteProxySyncConfigDir);
                         
-                        // Buat semua folder sekaligus dengan satu command SSH
                         if (allBotPaths.Any())
                         {
                             AnsiConsole.MarkupLine($"[cyan]Creating {allBotPaths.Count} directories via SSH...[/]");
@@ -154,32 +109,20 @@ namespace Orchestrator.Codespace
                             
                             try {
                                 await GhService.RunGhCommandNoProxyAsync(token, sshMkdirArgs, 120000);
-                                AnsiConsole.MarkupLine($"[green]✓ All {allBotPaths.Count} directories created[/]");
                                 
-                                // === INI PERBAIKANNYA ===
-                                // Ganti 'dumb wait' (Task.Delay) dengan 'smart wait' (ping check)
-                                string pathToCheck = allBotPaths.LastOrDefault(); // Cek path terakhir
-                                if (!string.IsNullOrEmpty(pathToCheck))
-                                {
-                                    if (!await VerifyDirectoryExistsWithRetryAsync(token, codespaceName, pathToCheck, cancellationToken))
-                                    {
-                                        // Kalo gagal verifikasi, lempar error biar gak lanjut
-                                        throw new Exception("Gagal verifikasi remote directory setelah mkdir.");
-                                    }
-                                }
-                                else
-                                {
-                                    AnsiConsole.MarkupLine("[dim]   No paths to verify, skipping check.[/]");
-                                }
-                                // === AKHIR PERBAIKAN ===
+                                // FIX: Ganti verification ping dengan simple delay
+                                AnsiConsole.MarkupLine($"[green]✓ All {allBotPaths.Count} directories created[/]");
+                                AnsiConsole.MarkupLine("[dim]   Waiting 6 seconds for filesystem sync...[/]");
+                                await Task.Delay(6000, cancellationToken);
+                                AnsiConsole.MarkupLine("[green]   ✓ Sync delay complete[/]");
                                 
                             } catch (Exception mkdirEx) {
-                                AnsiConsole.MarkupLine($"[red]✗ Failed create/verify directories: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
-                                throw new Exception("Critical: Directory creation/verification failed");
+                                AnsiConsole.MarkupLine($"[red]✗ Failed create directories: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                                throw new Exception("Critical: Directory creation failed");
                             }
                         }
 
-                        // === STEP 2: UPLOAD FILES ===
+                        // STEP 2: UPLOAD FILES
                         AnsiConsole.MarkupLine("\n[bold cyan]STEP 2: Uploading files from local...[/]");
                         
                         foreach (var bot in config.BotsAndTools)
