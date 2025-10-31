@@ -4,7 +4,7 @@ using System.Text;
 using Spectre.Console;
 using System.Threading;
 using System.Threading.Tasks;
-using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core; 
 
 namespace Orchestrator.Util 
 {
@@ -14,7 +14,8 @@ namespace Orchestrator.Util
 
         public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
         {
-            var startInfo = CreateStartInfo(command, args, token);
+            // Fungsi ini tidak diubah, defaultnya useProxy = true
+            var startInfo = CreateStartInfo(command, args, token, useProxy: true);
             if (workingDir != null) startInfo.WorkingDirectory = workingDir;
             
             using var cts = new CancellationTokenSource(DEFAULT_TIMEOUT_MS);
@@ -35,9 +36,10 @@ namespace Orchestrator.Util
 
         public static async Task RunInteractive(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
         {
+            // Fungsi ini tidak diubah, defaultnya useProxy = true
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
             if (workingDir != null) startInfo.WorkingDirectory = workingDir;
-            if (token != null) SetEnvironmentVariables(startInfo, token, command);
+            if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy: true);
             SetFileNameAndArgs(startInfo, command, args); 
             using var process = new Process { StartInfo = startInfo };
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Program.GetMainCancellationToken());
@@ -59,11 +61,13 @@ namespace Orchestrator.Util
             }
         }
 
-        public static async Task RunInteractiveWithFullInput(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
+        // --- PERUBAHAN: Tambah parameter useProxy ---
+        public static async Task RunInteractiveWithFullInput(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default, bool useProxy = true)
         {
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
             if (workingDir != null) startInfo.WorkingDirectory = workingDir;
-            if (token != null) SetEnvironmentVariables(startInfo, token, command);
+            // Teruskan flag useProxy
+            if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy);
             SetFileNameAndArgs(startInfo, command, args); 
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Program.GetMainCancellationToken());
@@ -75,6 +79,7 @@ namespace Orchestrator.Util
                 AnsiConsole.MarkupLine($"[bold green]▶ Starting Full Interactive Session[/]");
                 AnsiConsole.MarkupLine($"[dim]Cmd: {command} {args.EscapeMarkup()}[/]");
                 AnsiConsole.MarkupLine($"[dim]Dir: {workingDir?.EscapeMarkup() ?? "current"}[/]");
+                if (!useProxy) AnsiConsole.MarkupLine($"[dim]Proxy: [bold yellow]OFF[/]");
                 AnsiConsole.MarkupLine("[yellow]"+ new string('═', 60) +"[/]");
 
                 if (!process.Start()) throw new InvalidOperationException("Failed to start full interactive process.");
@@ -118,18 +123,21 @@ namespace Orchestrator.Util
             }
         }
 
-        internal static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token) {
+        // --- PERUBAHAN: Tambah parameter useProxy ---
+        internal static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token, bool useProxy = true) {
             var startInfo = new ProcessStartInfo {
                  RedirectStandardOutput = true, RedirectStandardError = true,
                 UseShellExecute = false, CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
             startInfo.Arguments = args; 
-            if (token != null) SetEnvironmentVariables(startInfo, token, command);
+            // Teruskan flag useProxy
+            if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy);
             SetFileNameAndArgs(startInfo, command, args); 
             return startInfo;
         }
 
-        internal static void SetEnvironmentVariables(ProcessStartInfo startInfo, TokenEntry token, string command) {
+        // --- PERUBAHAN: Tambah parameter useProxy ---
+        internal static void SetEnvironmentVariables(ProcessStartInfo startInfo, TokenEntry token, string command, bool useProxy = true) {
             bool isGhCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? command.ToLower().EndsWith("gh.exe") || command.ToLower() == "gh"
                 : command == "gh";
@@ -139,7 +147,9 @@ namespace Orchestrator.Util
              startInfo.EnvironmentVariables.Remove("https_proxy"); startInfo.EnvironmentVariables.Remove("http_proxy");
              startInfo.EnvironmentVariables.Remove("HTTPS_PROXY"); startInfo.EnvironmentVariables.Remove("HTTP_PROXY");
              startInfo.EnvironmentVariables.Remove("NO_PROXY"); startInfo.EnvironmentVariables.Remove("no_proxy");
-            if (!string.IsNullOrEmpty(token.Proxy)) {
+            
+            // Hanya set proxy jika useProxy = true
+            if (useProxy && !string.IsNullOrEmpty(token.Proxy)) {
                 startInfo.EnvironmentVariables["https_proxy"] = token.Proxy;
                 startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
                 startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy;
