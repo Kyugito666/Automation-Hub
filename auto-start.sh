@@ -4,7 +4,13 @@
 # Secrets sudah di-upload via SSH, langsung available
 #
 
-WORKDIR="/workspaces/automation-hub"
+# === PERBAIKAN: Tentukan WORKDIR secara dinamis ===
+# Ini akan mengambil path absolut dari folder tempat skrip ini berada
+# misal: /workspaces/Automation-Hub
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+WORKDIR="$SCRIPT_DIR"
+# === AKHIR PERBAIKAN ===
+
 LOG_FILE="$WORKDIR/startup.log"
 HEALTH_CHECK_DONE="/tmp/auto_start_done"
 HEALTH_CHECK_FAIL_PROXY="/tmp/auto_start_failed_proxysync"
@@ -16,6 +22,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "========================================="
 echo "  AUTO START SCRIPT (Smart v6)"
 echo "  $(date)"
+echo "  WORKDIR: $WORKDIR" # <-- Tambahan log biar jelas
 echo "========================================="
 
 cd "$WORKDIR" || { echo "FATAL: Cannot cd to $WORKDIR"; exit 1; }
@@ -45,6 +52,7 @@ fi
 if [ "$IS_FIRST_RUN" = false ] && [ -f "$WORKDIR/proxysync/success_proxy.txt" ] && [ -s "$WORKDIR/proxysync/success_proxy.txt" ]; then
     echo "   ⏭️  SKIP: ProxySync already ran (success_proxy.txt exists)."
 else
+    # === PERBAIKAN: Gunakan $WORKDIR variabel ===
     python3 "$WORKDIR/proxysync/main.py" --full-auto
     if [ $? -ne 0 ]; then
         echo "   ❌ ERROR: ProxySync failed! Check $LOG_FILE for details."
@@ -69,6 +77,7 @@ if tmux has-session -t automation_hub_bots 2>/dev/null; then
     fi
 fi
 
+# === PERBAIKAN: Gunakan $WORKDIR variabel ===
 python3 "$WORKDIR/deploy_bots.py"
 if [ $? -ne 0 ]; then
     echo "   ❌ ERROR: Bot deployment failed! Check $LOG_FILE for details."
