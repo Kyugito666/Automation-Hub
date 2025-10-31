@@ -1,15 +1,15 @@
 using Spectre.Console;
-using System.Diagnostics; // Diperlukan untuk Stopwatch
+using System.Diagnostics; 
 using System.Threading;
 using System.Threading.Tasks;
-using System; // Diperlukan untuk TimeSpan
-using Orchestrator.Services; // Menggunakan GhService
+using System; 
+using Orchestrator.Services; 
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
 namespace Orchestrator.Codespace
 {
     internal static class CodeHealth
     {
-        // Konstanta Polling
         private const int STATE_POLL_INTERVAL_FAST_MS = 500;
         private const int STATE_POLL_INTERVAL_SLOW_SEC = 3;
         private const int SSH_READY_POLL_INTERVAL_FAST_MS = 500;
@@ -31,7 +31,6 @@ namespace Orchestrator.Codespace
             
             while (sw.Elapsed < timeout) {
                 cancellationToken.ThrowIfCancellationRequested(); 
-                // Menggunakan CodeActions
                 string? state = await CodeActions.GetCodespaceState(token, codespaceName); 
                 cancellationToken.ThrowIfCancellationRequested();
                 
@@ -65,7 +64,6 @@ namespace Orchestrator.Codespace
                 cancellationToken.ThrowIfCancellationRequested(); 
                 try {
                     string args = $"codespace ssh -c \"{codespaceName}\" -- echo ready"; 
-                    // Menggunakan GhService
                     string res = await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
                     cancellationToken.ThrowIfCancellationRequested();
                     
@@ -103,7 +101,6 @@ namespace Orchestrator.Codespace
                 string result = "";
                 try {
                     string args = $"codespace ssh -c \"{codespaceName}\" -- \"if [ -f {HEALTH_CHECK_FAIL_PROXY} ] || [ -f {HEALTH_CHECK_FAIL_DEPLOY} ]; then echo FAILED; elif [ -f {HEALTH_CHECK_FILE} ]; then echo HEALTHY; else echo NOT_READY; fi\"";
-                    // Menggunakan GhService
                     result = await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
                     cancellationToken.ThrowIfCancellationRequested();
                     
