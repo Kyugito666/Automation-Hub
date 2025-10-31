@@ -44,8 +44,15 @@ namespace Orchestrator.TUI
                                 if (ipAuthSuccess) {
                                     AnsiConsole.MarkupLine("[green]IP Auth OK. Testing & Reloading...[/]");
                                     await ProxyService.RunProxyTestAndSaveAsync(cancellationToken); cancellationToken.ThrowIfCancellationRequested(); 
-                                    TokenManager.ReloadProxyListAndReassign(); currentToken = TokenManager.GetCurrentToken();
-                                    AnsiConsole.MarkupLine("[yellow]Retrying billing check...[/]"); await Task.Delay(5000, cancellationToken); continue;
+                                    
+                                    // PERBAIKAN: Reload config LENGKAP (termasuk proxy list)
+                                    AnsiConsole.MarkupLine("[cyan]Reloading all configs (tokens + proxies)...[/]");
+                                    TokenManager.ReloadAllConfigs();
+                                    currentToken = TokenManager.GetCurrentToken();
+                                    
+                                    AnsiConsole.MarkupLine("[yellow]Retrying billing check with new proxy...[/]"); 
+                                    await Task.Delay(5000, cancellationToken); 
+                                    continue;
                                 } else AnsiConsole.MarkupLine("[red]IP Auth failed.[/]");
                             } else if (_isAttemptingIpAuth) AnsiConsole.MarkupLine("[yellow]IP Auth in progress, skipping redundant attempt.[/]");
 
