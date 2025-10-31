@@ -128,7 +128,85 @@ namespace Orchestrator.Core
         public static TokenEntry GetCurrentToken() { if (!_tokens.Any()) throw new InvalidOperationException("No tokens configured."); if (_state.CurrentIndex >= _tokens.Count || _state.CurrentIndex < 0) { AnsiConsole.MarkupLine($"[yellow]Warn: Invalid index. Reset (0).[/]"); _state.CurrentIndex = 0; SaveState(_state); } return _tokens[_state.CurrentIndex]; }
         public static List<TokenEntry> GetAllTokenEntries() => _tokens;
         public static Dictionary<string, string> GetUsernameCache() => _tokenCache;
-        public static bool RotateProxyForToken(TokenEntry currentTokenEntry) { if (!_availableProxies.Any()) { AnsiConsole.MarkupLine("[red]No proxies.[/]"); return false; } string? oldProxy = currentTokenEntry.Proxy; var proxiesInUse = _tokens.Where(t => t.Token != currentTokenEntry.Token && !string.IsNullOrEmpty(t.Proxy)).Select(t => t.Proxy!).ToHashSet(); string? newProxy = _availableProxies.FirstOrDefault(p => !proxiesInUse.Contains(p) && p != oldProxy); if (newProxy == null) { AnsiConsole.MarkupLine("[yellow]Fallback proxy rotation.[/]"); newProxy = _availableProxies.Where(p => p != oldProxy).OrderBy(x => Guid.NewGuid()).FirstOrDefault() ?? _availableProxies.FirstOrDefault(); } if (newProxy == null) { AnsiConsole.MarkupLine("[red]FATAL: No proxies found.[/]"); return false; } AnsiConsole.MarkupLine($"[yellow]Proxy rotated: {MaskProxy(oldProxy)} -> {MaskProxy(newProxy)}[/]"); currentTokenEntry.Proxy = newProxy; return true; }
+        public static bool RotateProxyForToken(TokenEntry currentTokenEntry) { 
+            if (!_availableProxies.Any()) { 
+                AnsiConsole.MarkupLine("[red]No proxies available for rotation.[/]"); 
+                return false; 
+            } 
+            
+            string? oldProxy = currentTokenEntry.Proxy;
+            string? oldAccount = ExtractProxyAccount(oldProxy);
+            
+            // Ambil semua proxy yang sedang dipakai token lain
+            var proxiesInUse = _tokens.Where(t => t.Token != currentTokenEntry.Token && !string.IsNullOrEmpty(t.Proxy))
+                                      .Select(t => t.Proxy!)
+                                      .ToHashSet();
+            
+            // STRATEGI 1: Cari proxy dengan AKUN BERBEDA yang tidak sedang dipakai
+            var proxiesWithDifferentAccount = _availableProxies
+                .Where(p => {
+                    string? account = ExtractProxyAccount(p);
+                    return account != null && account != oldAccount && !proxiesInUse.Contains(p);
+                })
+                .ToList();
+            
+            string? newProxy = null;
+            
+            if (proxiesWithDifferentAccount.Any()) {
+                newProxy = proxiesWithDifferentAccount.OrderBy(x => Guid.NewGuid()).FirstOrDefault();
+                AnsiConsole.MarkupLine($"[green]Rotating to different proxy account:[/] {MaskProxy(oldProxy)} -> {MaskProxy(newProxy)}");
+            }
+            // STRATEGI 2: Cari proxy dengan akun sama tapi IP berbeda (fallback)
+            else {
+                var proxiesWithSameAccount = _availableProxies
+                    .Where(p => p != oldProxy && !proxiesInUse.Contains(p))
+                    .ToList();
+                
+                if (proxiesWithSameAccount.Any()) {
+                    newProxy = proxiesWithSameAccount.OrderBy(x => Guid.NewGuid()).FirstOrDefault();
+                    AnsiConsole.MarkupLine($"[yellow]No different accounts available. Rotating IP only:[/] {MaskProxy(oldProxy)} -> {MaskProxy(newProxy)}");
+                } else {
+                    // STRATEGI 3: Pakai proxy yang sedang dipakai token lain (last resort)
+                    newProxy = _availableProxies
+                        .Where(p => p != oldProxy)
+                        .OrderBy(x => Guid.NewGuid())
+                        .FirstOrDefault() ?? _availableProxies.FirstOrDefault();
+                    
+                    if (newProxy != null) {
+                        AnsiConsole.MarkupLine($"[yellow]All proxies in use. Sharing proxy:[/] {MaskProxy(oldProxy)} -> {MaskProxy(newProxy)}");
+                    }
+                }
+            }
+            
+            if (newProxy == null) { 
+                AnsiConsole.MarkupLine("[red]FATAL: No alternative proxies found.[/]"); 
+                return false; 
+            }
+            
+            currentTokenEntry.Proxy = newProxy; 
+            return true; 
+        }
+        
+        private static string? ExtractProxyAccount(string? proxyUrl) {
+            if (string.IsNullOrEmpty(proxyUrl)) return null;
+            
+            try {
+                // Format: protocol://username:password@host:port
+                if (Uri.TryCreate(proxyUrl, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.UserInfo)) {
+                    return uri.UserInfo; // Returns "username:password"
+                }
+                
+                // Format: username:password@host:port (tanpa protocol)
+                var parts = proxyUrl.Split('@');
+                if (parts.Length == 2) {
+                    return parts[0]; // Returns "username:password"
+                }
+            } catch {
+                // Ignore parse errors
+            }
+            
+            return null;
+        }
         public static TokenEntry SwitchToNextToken() { if (!_tokens.Any() || _tokens.Count == 1) { AnsiConsole.MarkupLine("[yellow]Only 1 token.[/]"); return GetCurrentToken(); } _state.CurrentIndex = (_state.CurrentIndex + 1) % _tokens.Count; _state.ActiveCodespaceName = null; SaveState(_state); var current = _tokens[_state.CurrentIndex]; var username = current.Username ?? "unknown"; AnsiConsole.MarkupLine($"[yellow]Token Rotated: -> #{_state.CurrentIndex + 1} (@{username.EscapeMarkup()})[/]"); if (!string.IsNullOrEmpty(current.Proxy)) AnsiConsole.MarkupLine($"[dim]Proxy: {MaskProxy(current.Proxy)}[/]"); return current; }
 
         public static HttpClient CreateHttpClient(TokenEntry token) {
