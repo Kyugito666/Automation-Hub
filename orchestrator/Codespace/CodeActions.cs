@@ -64,24 +64,32 @@ namespace Orchestrator.Codespace
         // API Call -> Pake Proxy
         internal static async Task StartCodespace(TokenEntry token, string codespaceName)
         {
-            AnsiConsole.Markup($"[dim]Attempting start codespace '{codespaceName.EscapeMarkup()}'... [/]");
+            AnsiConsole.Markup($"[dim]Attempting start/revive codespace '{codespaceName.EscapeMarkup()}'... [/]");
             try { 
-                // === INI PERBAIKANNYA (Error 1) ===
-                // 'start' tidak pakai flag, hanya nama
-                string args = $"codespace start \"{codespaceName}\""; 
+                // === INI PERBAIKANNYA ===
+                // Perintah 'start' diganti menjadi 'revive'
+                // 'revive' juga tidak menggunakan flag -c, hanya nama.
+                string args = $"codespace revive \"{codespaceName}\""; 
                 // === AKHIR PERBAIKAN ===
+                
                 await GhService.RunGhCommand(token, args, START_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
             catch (Exception ex) { 
-                if (ex.Message.Contains("available", StringComparison.OrdinalIgnoreCase)) 
-                    AnsiConsole.MarkupLine($"[dim]Already available.[/]"); 
+                // 'revive' juga bisa melempar 'already available'
+                if (ex.Message.Contains("available", StringComparison.OrdinalIgnoreCase) || 
+                    ex.Message.Contains("already running", StringComparison.OrdinalIgnoreCase)) 
+                {
+                    AnsiConsole.MarkupLine($"[dim]Already available/running.[/]"); 
+                }
                 else 
-                    AnsiConsole.MarkupLine($"[yellow]Warn: Start failed: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); 
+                {
+                    AnsiConsole.MarkupLine($"[yellow]Warn: Start/Revive failed: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); 
+                }
             }
         }
 
-        // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) ---
+        // SSH Call -> Pake Proxy
         internal static async Task TriggerStartupScript(TokenEntry token, string codespaceName)
         {
             AnsiConsole.MarkupLine("[cyan]Triggering remote auto-start.sh script...[/]");
@@ -90,7 +98,6 @@ namespace Orchestrator.Codespace
             string command = $"nohup bash \"{scriptPath.Replace("\"", "\\\"")}\" > /tmp/startup.log 2>&1 &";
             string args = $"codespace ssh -c \"{codespaceName}\" -- {command}";
             try { 
-                // Panggil RunGhCommand (standar, DENGAN proxy)
                 await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
@@ -98,7 +105,6 @@ namespace Orchestrator.Codespace
                 AnsiConsole.MarkupLine($"[yellow]Warn: Failed trigger auto-start: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); 
             }
         }
-        // --- AKHIR PERBAIKAN ---
 
         // API Call -> Pake Proxy
         internal static async Task<List<CodespaceInfo>> ListAllCodespaces(TokenEntry token)
@@ -172,13 +178,12 @@ namespace Orchestrator.Codespace
             } 
         }
 
-        // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) ---
+        // SSH Call -> Pake Proxy
         internal static async Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName)
         {
             AnsiConsole.MarkupLine($"[dim]Fetching tmux sessions...[/]");
             string args = $"codespace ssh -c \"{codespaceName}\" -- tmux list-windows -t automation_hub_bots -F \"#{{window_name}}\"";
             try {
-                // Panggil RunGhCommand (standar, DENGAN proxy)
                 string result = await GhService.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS);
                 return result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(s => s != "dashboard" && s != "bash").OrderBy(s => s).ToList(); 
             } catch (Exception ex) {
@@ -186,7 +191,6 @@ namespace Orchestrator.Codespace
                 return new List<string>(); 
             }
         }
-        // --- AKHIR PERBAIKAN ---
     }
 
     internal class CodespaceInfo 
