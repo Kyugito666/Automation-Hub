@@ -70,7 +70,10 @@ namespace Orchestrator.Codespace
 
             var botCredentialFiles = LoadUploadFileList();
             int botsProcessed = 0; int filesUploaded = 0; int filesSkipped = 0; int botsSkipped = 0;
-            string remoteWorkspacePath = $"/workspaces/{token.Repo.ToLowerInvariant()}";
+            
+            // === PERBAIKAN: Hapus .ToLowerInvariant() ===
+            string remoteWorkspacePath = $"/workspaces/{token.Repo}";
+            // === AKHIR PERBAIKAN ===
 
             AnsiConsole.MarkupLine($"[dim]Remote workspace: {remoteWorkspacePath}[/]");
             AnsiConsole.MarkupLine($"[dim]Scanning {botCredentialFiles.Count} possible credential files per bot...[/]");
@@ -133,14 +136,12 @@ namespace Orchestrator.Codespace
                                     catch (OperationCanceledException) { throw; } 
                                     catch (Exception cpEx)
                                     {
-                                        // === PERBAIKAN (Request 2) ===
-                                        // Menambahkan error "pipe" ke logic retry
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
                                                                        errorMsg.Contains("unavailable desc") ||
-                                                                       errorMsg.Contains("the pipe has been ended"); // <-- DITAMBAHKAN
+                                                                       errorMsg.Contains("the pipe has been ended"); 
 
                                         if (isRetryableNetworkError)
                                         {
@@ -157,7 +158,6 @@ namespace Orchestrator.Codespace
                                             uploadSuccess = false;
                                             break; // KELUAR dari while(true)
                                         }
-                                        // === AKHIR PERBAIKAN ===
                                     }
                                 } // --- AKHIR BLOK while(true) ---
 
@@ -217,14 +217,12 @@ namespace Orchestrator.Codespace
                                  catch (OperationCanceledException) { throw; }
                                  catch (Exception cpEx)
                                  {
-                                     // === PERBAIKAN (Request 2) ===
-                                     // Menerapkan logic yang sama di sini
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
                                                                        errorMsg.Contains("unavailable desc") ||
-                                                                       errorMsg.Contains("the pipe has been ended"); // <-- DITAMBAHKAN
+                                                                       errorMsg.Contains("the pipe has been ended");
 
                                         if (isRetryableNetworkError)
                                         {
@@ -239,7 +237,6 @@ namespace Orchestrator.Codespace
                                             uploadSuccess = false;
                                             break; 
                                         }
-                                     // === AKHIR PERBAIKAN ===
                                  }
                              } // --- AKHIR BLOK while(true) ---
                              
