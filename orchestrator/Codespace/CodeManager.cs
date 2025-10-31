@@ -5,24 +5,19 @@ using System.Linq;
 using System.Threading;
 using System; 
 using System.Threading.Tasks; 
-using Orchestrator.Services; // Menggunakan GhService dan SecretService
-using Orchestrator.Core; // Menggunakan TokenEntry
+using Orchestrator.Services; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
 namespace Orchestrator.Codespace
 {
-    // Ganti nama kelas (dulu CodespaceManager)
     public static class CodeManager
     {
-        // Konstanta
         private const string CODESPACE_DISPLAY_NAME = "automation-hub-runner";
         private const string MACHINE_TYPE = "standardLinux32gb";
         private const int CREATE_TIMEOUT_MS = 600000;
         private const int STATE_POLL_MAX_DURATION_MIN = 8;
         private const int STATE_POLL_INTERVAL_SLOW_SEC = 3;
         
-        // --- API Publik (dulu di CodespaceManager) ---
-
-        // Fungsi helper yang dipanggil dari luar (misal: TuiLoop, TuiMenus)
         public static Task DeleteCodespace(TokenEntry token, string codespaceName) 
             => CodeActions.DeleteCodespace(token, codespaceName);
 
@@ -38,8 +33,6 @@ namespace Orchestrator.Codespace
         public static Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName)
             => CodeActions.GetTmuxSessions(token, codespaceName);
 
-        // --- Logika Orkestrasi Utama ---
-        
         public static async Task<string> EnsureHealthyCodespace(TokenEntry token, string repoFullName, CancellationToken cancellationToken)
         {
             AnsiConsole.MarkupLine("\n[cyan]Ensuring Codespace...[/]");
@@ -61,7 +54,6 @@ namespace Orchestrator.Codespace
 
                     if (codespace == null) { 
                         AnsiConsole.MarkupLine("[yellow]Not found.[/]"); 
-                        // Memanggil CreateNewCodespace (logika internal)
                         return await CreateNewCodespace(token, repoFullName, cancellationToken); 
                     }
                     AnsiConsole.MarkupLine($"[green]Found:[/] [blue]{codespace.Name.EscapeMarkup()}[/] [dim]({codespace.State.EscapeMarkup()})[/]");
@@ -84,25 +76,21 @@ namespace Orchestrator.Codespace
                     switch (codespace.State) {
                         case "Available":
                             AnsiConsole.MarkupLine("[cyan]State: Available. Verifying SSH & Uploading...[/]");
-                            // Menggunakan CodeHealth
                             if (!await CodeHealth.WaitForSshReadyWithRetry(token, codespace.Name, cancellationToken, useFastPolling: false)) { 
                                 AnsiConsole.MarkupLine($"[red]SSH failed for {codespace.Name.EscapeMarkup()}. Deleting...[/]"); 
                                 await CodeActions.DeleteCodespace(token, codespace.Name); 
                                 codespace = null; 
                                 break; 
                             }
-                            // Menggunakan CodeUpload
                             await CodeUpload.UploadCredentialsToCodespace(token, codespace.Name, cancellationToken);
                             AnsiConsole.MarkupLine("[cyan]Triggering startup & checking health...[/]");
                             try { await CodeActions.TriggerStartupScript(token, codespace.Name); } catch { }
-                            // Menggunakan CodeHealth
                             if (await CodeHealth.CheckHealthWithRetry(token, codespace.Name, cancellationToken)) { 
                                 AnsiConsole.MarkupLine("[green]✓ Health OK. Ready.[/]"); 
                                 stopwatch.Stop(); 
                                 return codespace.Name; 
                             }
                             else { 
-                                // Menggunakan CodeActions
                                 var lastState = await CodeActions.GetCodespaceState(token, codespace.Name); 
                                 if (lastState == "Available") { 
                                     AnsiConsole.MarkupLine($"[yellow]WARN: Health timeout, state 'Available'. Using anyway.[/]"); 
@@ -118,7 +106,6 @@ namespace Orchestrator.Codespace
                         case "Stopped": case "Shutdown":
                             AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Starting...[/]"); 
                             await CodeActions.StartCodespace(token, codespace.Name);
-                            // Menggunakan CodeHealth
                             if (!await CodeHealth.WaitForState(token, codespace.Name, "Available", TimeSpan.FromMinutes(4), cancellationToken, useFastPolling: false)) { 
                                 AnsiConsole.MarkupLine("[red]Failed start. Deleting...[/]"); 
                                 await CodeActions.DeleteCodespace(token, codespace.Name); 
@@ -142,7 +129,7 @@ namespace Orchestrator.Codespace
                         AnsiConsole.MarkupLine("[dim]Waiting 5s...[/]"); 
                         await Task.Delay(5000, cancellationToken); 
                     }
-                } // End while
+                } 
             } catch (OperationCanceledException) { 
                 AnsiConsole.MarkupLine("\n[yellow]EnsureHealthy cancelled.[/]"); 
                 stopwatch.Stop(); 
@@ -164,24 +151,18 @@ namespace Orchestrator.Codespace
             throw new Exception("Reached end of EnsureHealthyCodespace loop unexpectedly."); 
         }
 
-        // --- Logika Orkestrasi Pembuatan (Internal) ---
-        
         private static async Task<string> CreateNewCodespace(TokenEntry token, string repoFullName, CancellationToken cancellationToken)
         {
             AnsiConsole.MarkupLine($"\n[cyan]Attempting create new codespace...[/]");
             
-            // --- PRE-FLIGHT CLEANUP ---
-            // Memanggil SecretService
             await SecretService.AutoCleanupBeforeCreate(token);
             cancellationToken.ThrowIfCancellationRequested();
-            // --- END PRE-FLIGHT ---
 
-            string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m"; // NO --web
+            string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m"; 
             Stopwatch createStopwatch = Stopwatch.StartNew(); 
             string newName = "";
             try {
                 AnsiConsole.MarkupLine("[dim]Running 'gh codespace create'...[/]"); 
-                // Menggunakan GhService
                 newName = await GhService.RunGhCommand(token, createArgs, CREATE_TIMEOUT_MS); 
                 cancellationToken.ThrowIfCancellationRequested();
                 
@@ -206,17 +187,14 @@ namespace Orchestrator.Codespace
                 }
                 
                 AnsiConsole.MarkupLine("[cyan]Waiting for Available state...[/]"); 
-                // Menggunakan CodeHealth
                 if (!await CodeHealth.WaitForState(token, newName, "Available", TimeSpan.FromMinutes(6), cancellationToken, useFastPolling: true)) 
                     throw new Exception($"CS '{newName}' failed reach Available"); 
                 
                 AnsiConsole.MarkupLine("[cyan]State Available. Verifying SSH...[/]"); 
-                // Menggunakan CodeHealth
                 if (!await CodeHealth.WaitForSshReadyWithRetry(token, newName, cancellationToken, useFastPolling: true)) 
                     throw new Exception($"SSH to '{newName}' failed"); 
                 
                 AnsiConsole.MarkupLine("[cyan]SSH OK. Uploading credentials...[/]"); 
-                // Menggunakan CodeUpload
                 await CodeUpload.UploadCredentialsToCodespace(token, newName, cancellationToken);
                 
                 AnsiConsole.MarkupLine("[dim]Finalizing...[/]"); 
