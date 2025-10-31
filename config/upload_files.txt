@@ -1,12 +1,33 @@
+apikeys.txt
+apilist.txt
+.env
+account.txt
+accounts.txt
 pk.txt
 privatekey.txt
+privatekeys.txt
 token.txt
 tokens.txt
-.env
-config.json
 data.txt
 query.txt
+cookie.txt
+cookies.txt
 wallet.txt
-settings.yaml
+wallets.txt
+mnemonics.txt
+account.json
+accounts.json
+pk.json
+privatekey.json
+privatekeys.json
+token.json
+tokens.json
+data.json
+query.json
+cookie.json
+cookies.json
+wallet.json
+wallets.json
+mnemonics.json
 # Baris yang diawali # bakal diabaikan
 # Kasih nama file apa aja yang lu butuhin
