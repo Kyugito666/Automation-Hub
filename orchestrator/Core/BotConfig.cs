@@ -1,11 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
-using System.IO; // Diperlukan untuk Path dan DirectoryInfo
-using System.Collections.Generic; // Diperlukan untuk List
-using System.Linq; // Diperlukan untuk .Any()
+using System.IO; 
+using System.Collections.Generic; 
+using System.Linq; 
 
-namespace Orchestrator.Core // Namespace baru
+namespace Orchestrator.Core 
 {
     public class BotConfig
     {
@@ -62,20 +62,10 @@ namespace Orchestrator.Core // Namespace baru
             }
         }
         
-        // --- Logika Path Portabel (dari file asli) ---
         public static string GetLocalBotPath(string configPath)
         {
-            // configPath contoh: "bots/privatekey/nama-bot"
-            // ProjectRoot contoh: "D:\Projects\automation-hub"
-            // Hasil: "D:\Projects\automation-hub\bots\privatekey\nama-bot"
-            
-            // Normalisasi path separator untuk Windows/Linux
             var relativePath = configPath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
-            
-            // Gabungkan ProjectRoot dengan path relatif dari config
             var fullPath = Path.Combine(ProjectRoot, relativePath);
-            
-            // Pastikan path yang dihasilkan adalah path yang bersih (tanpa ../ atau ./)
             return Path.GetFullPath(fullPath);
         }
     }
