@@ -19,15 +19,6 @@ namespace Orchestrator.Codespace
         
         private const int SSH_PROBE_TIMEOUT_MS = 30000; 
         
-        // Flag file di /tmp
-        private const string HEALTH_CHECK_FILE = "/tmp/auto_start_done";
-        private const string HEALTH_CHECK_FAIL_PROXY = "/tmp/auto_start_failed_proxysync";
-        private const string HEALTH_CHECK_FAIL_DEPLOY = "/tmp/auto_start_failed_deploy";
-        
-        // Interval polling log
-        private const int LOG_POLL_INTERVAL_SEC = 5;
-
-
         // (Fungsi WaitForState dan WaitForSshReadyWithRetry tidak berubah)
         #region "Fungsi Lama (Tidak Berubah)"
         internal static async Task<bool> WaitForState(TokenEntry token, string codespaceName, string targetState, TimeSpan timeout, CancellationToken cancellationToken, bool useFastPolling = false)
@@ -116,117 +107,8 @@ namespace Orchestrator.Codespace
         }
         #endregion
 
-        // === PERBAIKAN: GANTI STREAMING JADI LOG POLLING ===
-        internal static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
-        {
-            AnsiConsole.MarkupLine("[cyan]Attaching to remote log stream...[/]");
-            AnsiConsole.MarkupLine($"[dim]   (Polling log every {LOG_POLL_INTERVAL_SEC} seconds... this might take 10-15 mins)[/]");
-
-            // === PERBAIKAN: Hapus .ToLowerInvariant() ===
-            string remoteLogFile = $"/workspaces/{token.Repo}/startup.log";
-            // === AKHIR PERBAIKAN ===
-            
-            // Command ini nge-dump semua status dalam satu kali jalan
-            string remoteCommand = $@"
-cat {remoteLogFile} 2>/dev/null;
-echo ""[ORCHESTRATOR_STATUS_CHECK]""
-if [ -f {HEALTH_CHECK_FAIL_PROXY} ]; then
-    echo ""FAILED_PROXY""
-elif [ -f {HEALTH_CHECK_FAIL_DEPLOY} ]; then
-    echo ""FAILED_DEPLOY""
-elif [ -f {HEALTH_CHECK_FILE} ]; then
-    echo ""HEALTHY""
-else
-    echo ""NOT_READY""
-fi
-";
-            
-            string args = $"codespace ssh -c \"{codespaceName}\" -- \"{remoteCommand}\"";
-            bool healthResult = false;
-            
-            // Simpan berapa baris log yang udah kita print
-            int linesPrinted = 0;
-            bool scriptFinished = false;
-
-            try
-            {
-                while (!scriptFinished && !cancellationToken.IsCancellationRequested)
-                {
-                    string fullOutput = "";
-                    try
-                    {
-                        // Panggil GhService versi biasa (bukan streaming)
-                        fullOutput = await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS);
-                    }
-                    catch (OperationCanceledException) { throw; } // Biar ditangkep di luar
-                    catch (Exception ex)
-                    {
-                        AnsiConsole.MarkupLine($"[yellow]Log poll failed (SSH Error): {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
-                        AnsiConsole.MarkupLine($"[dim]   (Retrying in {LOG_POLL_INTERVAL_SEC}s...)[/]");
-                    }
-
-                    if (!string.IsNullOrEmpty(fullOutput))
-                    {
-                        var parts = fullOutput.Split(new[] { "[ORCHESTRATOR_STATUS_CHECK]" }, StringSplitOptions.None);
-                        string logContent = parts[0];
-                        string status = parts.Length > 1 ? parts[1].Trim() : "NOT_READY";
-
-                        // Logika nge-print log baru
-                        var allLines = logContent.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                        if (allLines.Length > linesPrinted)
-                        {
-                            var newLines = allLines.Skip(linesPrinted);
-                            foreach (var line in newLines)
-                            {
-                                AnsiConsole.MarkupLine($"[grey]   [REMOTE] {line.EscapeMarkup()}[/]");
-                            }
-                            linesPrinted = allLines.Length; // Update counter
-                        }
-
-                        // Logika cek status
-                        if (status == "HEALTHY")
-                        {
-                            AnsiConsole.MarkupLine($"[bold green]✓ Remote script finished successfully.[/]");
-                            healthResult = true;
-                            scriptFinished = true;
-                        }
-                        else if (status == "FAILED_PROXY")
-                        {
-                            AnsiConsole.MarkupLine($"[bold red]✗ Remote script FAILED (ProxySync).[/]");
-                            healthResult = false;
-                            scriptFinished = true;
-                        }
-                        else if (status == "FAILED_DEPLOY")
-                        {
-                            AnsiConsole.MarkupLine($"[bold red]✗ Remote script FAILED (Bot Deploy).[/]");
-                            healthResult = false;
-                            scriptFinished = true;
-                        }
-                        else // NOT_READY
-                        {
-                            // Diem aja, lanjut polling
-                        }
-                    }
-                    
-                    if (!scriptFinished)
-                    {
-                        await Task.Delay(LOG_POLL_INTERVAL_SEC * 1000, cancellationToken);
-                    }
-                }
-            }
-            catch (OperationCanceledException) {
-                AnsiConsole.MarkupLine("\n[yellow]Log polling cancelled by user.[/]");
-                throw; 
-            }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"\n[red]FATAL: Log polling failed: {ex.Message.EscapeMarkup()}[/]");
-                healthResult = false; 
-            }
-
-            AnsiConsole.MarkupLine($"[cyan]Log polling finished. Health Status: {(healthResult ? "OK" : "Failed")}[/]");
-            return healthResult;
-        }
+        // === PERBAIKAN: Fungsi polling log DIHAPUS ===
+        // (Fungsi CheckHealthWithRetry dihapus total dari sini)
         // === AKHIR PERBAIKAN ===
     }
 }
