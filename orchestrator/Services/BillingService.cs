@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
 using System.Net;
-using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core;
 
 namespace Orchestrator.Services 
 {
@@ -22,14 +22,14 @@ namespace Orchestrator.Services
                 return new BillingInfo { IsQuotaOk = false, Error = "Username unknown" };
             }
             
-            // Track berapa kali kita sudah rotate
             var attemptedAccounts = new HashSet<string?>();
             string? currentAccount = ExtractProxyAccount(token.Proxy);
             if (currentAccount != null) attemptedAccounts.Add(currentAccount);
             
             for (int attempt = 1; attempt <= MAX_BILLING_RETRIES; attempt++) {
                 using var client = TokenManager.CreateHttpClient(token);
-                var url = $"/users/{token.Username}/settings/billing/usage";
+                // FIX: Gunakan endpoint yang benar untuk Codespaces billing
+                var url = $"/users/{token.Username}/settings/billing/shared-storage";
                 client.DefaultRequestHeaders.UserAgent.ParseAdd($"Orchestrator-BillingCheck/{token.Username}");
                 try {
                     AnsiConsole.Markup($"[dim]   Attempt billing check ({attempt}/{MAX_BILLING_RETRIES})...[/]");
@@ -37,24 +37,19 @@ namespace Orchestrator.Services
                     if (response.IsSuccessStatusCode) {
                         AnsiConsole.MarkupLine("[green]OK[/]");
                         var json = await response.Content.ReadAsStringAsync();
-                        var report = JsonSerializer.Deserialize<BillingReport>(json);
-                        if (report?.UsageItems == null) { 
+                        var storageReport = JsonSerializer.Deserialize<SharedStorageReport>(json);
+                        if (storageReport == null) { 
                             AnsiConsole.MarkupLine("[yellow]WARN: Invalid format.[/]"); 
                             return new BillingInfo { IsQuotaOk = false, Error = "Invalid JSON format" }; 
                         }
-                        double totalCoreHoursUsed = 0.0;
-                        foreach (var item in report.UsageItems) { 
-                            if (item.Product == "codespaces") {
-                                if (item.Sku.Contains("2-core")) totalCoreHoursUsed += (item.Quantity * 2.0); 
-                                else if (item.Sku.Contains("4-core")) totalCoreHoursUsed += (item.Quantity * 4.0);
-                                else if (item.Sku.Contains("8-core")) totalCoreHoursUsed += (item.Quantity * 8.0); 
-                                else if (item.Sku.Contains("16-core")) totalCoreHoursUsed += (item.Quantity * 16.0);
-                                else if (item.Sku.Contains("32-core")) totalCoreHoursUsed += (item.Quantity * 32.0); 
-                            } 
-                        }
+                        
+                        // Hitung dari "days_left_in_billing_cycle" dan "estimated_paid_storage_for_month"
+                        // Asumsi: 120 core-hours = ~$9 free tier untuk 32GB machine
+                        double totalCoreHoursUsed = storageReport.EstimatedPaidStorageForMonth / 0.075; // $0.075/core-hour approx
                         var remainingCoreHours = INCLUDED_CORE_HOURS - totalCoreHoursUsed;
                         var hoursRemaining = Math.Max(0.0, remainingCoreHours / MACHINE_CORE_COUNT);
                         var isQuotaOk = hoursRemaining > SAFE_HOUR_BUFFER;
+                        
                         return new BillingInfo { 
                             TotalCoreHoursUsed = totalCoreHoursUsed, 
                             IncludedCoreHours = INCLUDED_CORE_HOURS, 
@@ -72,7 +67,6 @@ namespace Orchestrator.Services
                             if (TokenManager.RotateProxyForToken(token)) { 
                                 string? newAccount = ExtractProxyAccount(token.Proxy);
                                 
-                                // Cek apakah berhasil dapat akun berbeda
                                 if (newAccount != null && newAccount != oldAccount && !attemptedAccounts.Contains(newAccount)) {
                                     attemptedAccounts.Add(newAccount);
                                     AnsiConsole.MarkupLine($"[green]   → Using different account (attempt {attempt + 1})[/]");
@@ -90,7 +84,6 @@ namespace Orchestrator.Services
                             }
                         }
                         
-                        // Kalau sudah retry semua atau gagal rotate
                         AnsiConsole.MarkupLine($"[red]   Failed after retries (407). Likely bandwidth limit.[/]"); 
                         return new BillingInfo { IsQuotaOk = false, Error = PersistentProxyError }; 
                     } 
@@ -160,6 +153,14 @@ namespace Orchestrator.Services
     }
     
     public class BillingInfo { public double TotalCoreHoursUsed{get;set;} public double IncludedCoreHours{get;set;}=120.0; public double HoursRemaining{get;set;} public bool IsQuotaOk{get;set;} public string? Error{get;set;} }
-    public class BillingReport { [JsonPropertyName("usageItems")] public List<UsageItem>? UsageItems{get;set;} }
-    public class UsageItem { [JsonPropertyName("product")] public string Product{get;set;} = ""; [JsonPropertyName("sku")] public string Sku{get;set;} = ""; [JsonPropertyName("quantity")] public double Quantity{get;set;} }
+    
+    // FIX: Model untuk shared-storage endpoint
+    public class SharedStorageReport { 
+        [JsonPropertyName("days_left_in_billing_cycle")] 
+        public int DaysLeftInBillingCycle{get;set;} 
+        [JsonPropertyName("estimated_paid_storage_for_month")] 
+        public double EstimatedPaidStorageForMonth{get;set;} 
+        [JsonPropertyName("estimated_storage_for_month")] 
+        public double EstimatedStorageForMonth{get;set;} 
+    }
 }
