@@ -5,8 +5,8 @@ using System.Threading.Tasks;
 using System; 
 using Orchestrator.Services; 
 using Orchestrator.Core; 
-using System.Collections.Generic; // <-- TAMBAHKAN
-using System.Linq; // <-- TAMBAHKAN
+using System.Collections.Generic;
+using System.Linq;
 
 namespace Orchestrator.Codespace
 {
@@ -122,7 +122,9 @@ namespace Orchestrator.Codespace
             AnsiConsole.MarkupLine("[cyan]Attaching to remote log stream...[/]");
             AnsiConsole.MarkupLine($"[dim]   (Polling log every {LOG_POLL_INTERVAL_SEC} seconds... this might take 10-15 mins)[/]");
 
-            string remoteLogFile = $"/workspaces/{token.Repo.ToLowerInvariant()}/startup.log";
+            // === PERBAIKAN: Hapus .ToLowerInvariant() ===
+            string remoteLogFile = $"/workspaces/{token.Repo}/startup.log";
+            // === AKHIR PERBAIKAN ===
             
             // Command ini nge-dump semua status dalam satu kali jalan
             string remoteCommand = $@"
