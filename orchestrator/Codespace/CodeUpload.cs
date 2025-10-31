@@ -17,7 +17,6 @@ namespace Orchestrator.Codespace
         private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
         private static readonly string UploadFilesListPath = Path.Combine(ConfigRoot, "upload_files.txt");
         
-        // --- PERBAIKAN: Delay tetap ada, tapi loop-nya infinite ---
         private const int UPLOAD_RETRY_DELAY_MS = 5000;
 
         private static string GetProjectRoot()
@@ -103,7 +102,6 @@ namespace Orchestrator.Codespace
                                 string remoteFilePath = $"{remoteWorkspacePath}/{bot.Path}/{credFileName}".Replace('\\', '/');
                                 string remoteBotDir = Path.GetDirectoryName(remoteFilePath)!.Replace('\\', '/');
 
-                                // --- PERBAIKAN: Ganti 'for' jadi 'while(true)' ---
                                 bool uploadSuccess = false;
                                 int retryCount = 0; 
 
@@ -111,7 +109,6 @@ namespace Orchestrator.Codespace
                                 {
                                     if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
 
-                                    // --- PERBAIKAN: Log bersih (update status) ---
                                     string taskMessage;
                                     if (retryCount == 0) {
                                         taskMessage = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
@@ -119,14 +116,12 @@ namespace Orchestrator.Codespace
                                         taskMessage = $"[yellow](Retry {retryCount})[/] {bot.Name}/{credFileName}";
                                     }
                                     task.Description = taskMessage;
-                                    // --- AKHIR LOG BERSIH ---
 
                                     try
                                     {
                                         string cmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}' && cat > '{remoteFilePath.Replace("'", "'\\''")}'";
                                         string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
                                         
-                                        // --- PERBAIKAN: Paksa 'useProxy: false' ---
                                         var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); 
                                         
                                         await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localFilePath, cancellationToken);
@@ -138,12 +133,14 @@ namespace Orchestrator.Codespace
                                     catch (OperationCanceledException) { throw; } 
                                     catch (Exception cpEx)
                                     {
-                                        // --- PERBAIKAN: Cek error spesifik ---
+                                        // === PERBAIKAN (Request 2) ===
+                                        // Menambahkan error "pipe" ke logic retry
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
-                                                                       errorMsg.Contains("unavailable desc");
+                                                                       errorMsg.Contains("unavailable desc") ||
+                                                                       errorMsg.Contains("the pipe has been ended"); // <-- DITAMBAHKAN
 
                                         if (isRetryableNetworkError)
                                         {
@@ -160,7 +157,7 @@ namespace Orchestrator.Codespace
                                             uploadSuccess = false;
                                             break; // KELUAR dari while(true)
                                         }
-                                        // --- AKHIR CEK ERROR SPESIFIK ---
+                                        // === AKHIR PERBAIKAN ===
                                     }
                                 } // --- AKHIR BLOK while(true) ---
 
@@ -189,7 +186,6 @@ namespace Orchestrator.Codespace
 
                              if (!File.Exists(localConfigPath)) { continue; }
                              
-                             // --- PERBAIKAN: Ganti 'for' jadi 'while(true)' ---
                              bool uploadSuccess = false;
                              int retryCount = 0; 
 
@@ -197,7 +193,6 @@ namespace Orchestrator.Codespace
                              {
                                 if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
 
-                                // --- PERBAIKAN: Log bersih (update status) ---
                                 string taskMessage;
                                 if (retryCount == 0) {
                                     taskMessage = $"[cyan]Uploading:[/] proxysync/{configFileName}";
@@ -205,14 +200,12 @@ namespace Orchestrator.Codespace
                                     taskMessage = $"[yellow](Retry {retryCount})[/] proxysync/{configFileName}";
                                 }
                                 task.Description = taskMessage;
-                                // --- AKHIR LOG BERSIH ---
 
                                  try
                                  { 
                                     string cmd = $"mkdir -p '{remoteProxySyncConfigDir.Replace("'", "'\\''")}' && cat > '{remoteConfigPath.Replace("'", "'\\''")}'";
                                     string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
 
-                                    // --- PERBAIKAN: Paksa 'useProxy: false' ---
                                     var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); 
 
                                     await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localConfigPath, cancellationToken);
@@ -224,12 +217,14 @@ namespace Orchestrator.Codespace
                                  catch (OperationCanceledException) { throw; }
                                  catch (Exception cpEx)
                                  {
-                                     // --- PERBAIKAN: Cek error spesifik ---
+                                     // === PERBAIKAN (Request 2) ===
+                                     // Menerapkan logic yang sama di sini
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
-                                                                       errorMsg.Contains("unavailable desc");
+                                                                       errorMsg.Contains("unavailable desc") ||
+                                                                       errorMsg.Contains("the pipe has been ended"); // <-- DITAMBAHKAN
 
                                         if (isRetryableNetworkError)
                                         {
@@ -244,7 +239,7 @@ namespace Orchestrator.Codespace
                                             uploadSuccess = false;
                                             break; 
                                         }
-                                     // --- AKHIR CEK ERROR SPESIFIK ---
+                                     // === AKHIR PERBAIKAN ===
                                  }
                              } // --- AKHIR BLOK while(true) ---
                              
