@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 using System; 
 using System.Threading.Tasks;
 using Orchestrator.Services; 
-using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core; 
 
 namespace Orchestrator.Codespace
 {
@@ -23,6 +23,7 @@ namespace Orchestrator.Codespace
             AnsiConsole.MarkupLine($"[yellow]Attempting delete codespace '{codespaceName.EscapeMarkup()}'...[/]");
             try { 
                 string args = $"codespace delete -c \"{codespaceName}\" --force"; 
+                // Biarkan delete pake proxy, karena ini destruktif & butuh koneksi stabil
                 await GhService.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine($"[green]✓ Delete command sent for '{codespaceName.EscapeMarkup()}'.[/]"); 
             }
@@ -35,12 +36,16 @@ namespace Orchestrator.Codespace
             await Task.Delay(3000);
         }
 
+        // --- PERUBAHAN DI SINI ---
         internal static async Task StopCodespace(TokenEntry token, string codespaceName)
         {
             AnsiConsole.Markup($"[dim]Attempting stop codespace '{codespaceName.EscapeMarkup()}'... [/]");
             try { 
                 string args = $"codespace stop --codespace \"{codespaceName}\""; 
-                await GhService.RunGhCommand(token, args, STOP_TIMEOUT_MS); 
+                
+                // Panggil fungsi NoProxy
+                await GhService.RunGhCommandNoProxyAsync(token, args, STOP_TIMEOUT_MS); 
+                
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
             catch (Exception ex) { 
@@ -51,12 +56,14 @@ namespace Orchestrator.Codespace
             }
             await Task.Delay(2000);
         }
+        // --- AKHIR PERUBAHAN ---
 
         internal static async Task StartCodespace(TokenEntry token, string codespaceName)
         {
             AnsiConsole.Markup($"[dim]Attempting start codespace '{codespaceName.EscapeMarkup()}'... [/]");
             try { 
                 string args = $"codespace start --codespace \"{codespaceName}\""; 
+                // Start tetap pakai proxy
                 await GhService.RunGhCommand(token, args, START_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
