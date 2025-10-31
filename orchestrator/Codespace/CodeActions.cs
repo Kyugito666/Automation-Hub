@@ -18,12 +18,12 @@ namespace Orchestrator.Codespace
         private const int START_TIMEOUT_MS = 300000;
         private const int SSH_PROBE_TIMEOUT_MS = 30000;
 
+        // API Call -> Pake Proxy
         internal static async Task DeleteCodespace(TokenEntry token, string codespaceName)
         {
             AnsiConsole.MarkupLine($"[yellow]Attempting delete codespace '{codespaceName.EscapeMarkup()}'...[/]");
             try { 
                 string args = $"codespace delete -c \"{codespaceName}\" --force"; 
-                // Biarkan delete pake proxy, karena ini destruktif & butuh koneksi stabil
                 await GhService.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine($"[green]✓ Delete command sent for '{codespaceName.EscapeMarkup()}'.[/]"); 
             }
@@ -36,16 +36,13 @@ namespace Orchestrator.Codespace
             await Task.Delay(3000);
         }
 
-        // --- PERUBAHAN DI SINI ---
+        // No Proxy (Sesuai request)
         internal static async Task StopCodespace(TokenEntry token, string codespaceName)
         {
             AnsiConsole.Markup($"[dim]Attempting stop codespace '{codespaceName.EscapeMarkup()}'... [/]");
             try { 
                 string args = $"codespace stop --codespace \"{codespaceName}\""; 
-                
-                // Panggil fungsi NoProxy
                 await GhService.RunGhCommandNoProxyAsync(token, args, STOP_TIMEOUT_MS); 
-                
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
             catch (Exception ex) { 
@@ -56,14 +53,13 @@ namespace Orchestrator.Codespace
             }
             await Task.Delay(2000);
         }
-        // --- AKHIR PERUBAHAN ---
 
+        // API Call -> Pake Proxy
         internal static async Task StartCodespace(TokenEntry token, string codespaceName)
         {
             AnsiConsole.Markup($"[dim]Attempting start codespace '{codespaceName.EscapeMarkup()}'... [/]");
             try { 
                 string args = $"codespace start --codespace \"{codespaceName}\""; 
-                // Start tetap pakai proxy
                 await GhService.RunGhCommand(token, args, START_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
@@ -75,6 +71,7 @@ namespace Orchestrator.Codespace
             }
         }
 
+        // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
         internal static async Task TriggerStartupScript(TokenEntry token, string codespaceName)
         {
             AnsiConsole.MarkupLine("[cyan]Triggering remote auto-start.sh script...[/]");
@@ -83,7 +80,8 @@ namespace Orchestrator.Codespace
             string command = $"nohup bash \"{scriptPath.Replace("\"", "\\\"")}\" > /tmp/startup.log 2>&1 &";
             string args = $"codespace ssh -c \"{codespaceName}\" -- {command}";
             try { 
-                await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
+                // Panggil NoProxy
+                await GhService.RunGhCommandNoProxyAsync(token, args, SSH_PROBE_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
             catch (Exception ex) { 
@@ -91,6 +89,7 @@ namespace Orchestrator.Codespace
             }
         }
 
+        // API Call -> Pake Proxy
         internal static async Task<List<CodespaceInfo>> ListAllCodespaces(TokenEntry token)
         {
             string args = "codespace list --json name,displayName,state,createdAt";
@@ -110,6 +109,7 @@ namespace Orchestrator.Codespace
             } 
         }
 
+        // API Call -> Pake Proxy
         internal static async Task<string?> GetCodespaceState(TokenEntry token, string codespaceName)
         {
             try {
@@ -124,6 +124,7 @@ namespace Orchestrator.Codespace
             catch (Exception) { return null; } 
         }
 
+        // API Call -> Pake Proxy
         internal static async Task<DateTime?> GetRepoLastCommitDate(TokenEntry token)
         {
             try {
@@ -160,12 +161,14 @@ namespace Orchestrator.Codespace
             } 
         }
 
+        // --- PERUBAHAN DI SINI (SSH Call -> No Proxy) ---
         internal static async Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName)
         {
             AnsiConsole.MarkupLine($"[dim]Fetching tmux sessions...[/]");
             string args = $"codespace ssh -c \"{codespaceName}\" -- tmux list-windows -t automation_hub_bots -F \"#{{window_name}}\"";
             try {
-                string result = await GhService.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS);
+                // Panggil NoProxy
+                string result = await GhService.RunGhCommandNoProxyAsync(token, args, SSH_COMMAND_TIMEOUT_MS);
                 return result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(s => s != "dashboard" && s != "bash").OrderBy(s => s).ToList(); 
             } catch (Exception ex) {
                 AnsiConsole.MarkupLine($"[red]Failed fetch tmux: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); AnsiConsole.MarkupLine($"[dim](Normal if new/stopped)[/]");
