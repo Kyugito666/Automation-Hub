@@ -13,7 +13,6 @@ namespace Orchestrator.TUI
 {
     internal static class TuiMenus
     {
-        // ... (RunInteractiveMenuAsync tidak berubah dari sebelumnya) ...
         internal static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken) 
         {
             while (!cancellationToken.IsCancellationRequested) {
@@ -51,12 +50,10 @@ namespace Orchestrator.TUI
                             break; 
                         case "2": await ShowSetupMenuAsync(linkedCtsMenu.Token); break; 
                         case "3": await ShowLocalMenuAsync(linkedCtsMenu.Token); break; 
-                        // --- PERUBAHAN DI SINI ---
                         case "4": await ShowAttachMenuAsync(linkedCtsMenu.Token); break; 
                         case "5": 
                             await MigrateService.RunMigration(linkedCtsMenu.Token); 
                             Program.Pause("Tekan Enter...", linkedCtsMenu.Token); break; 
-                        // --- PERUBAHAN DI SINI ---
                         case "6": await ShowRemoteShellAsync(linkedCtsMenu.Token); break; 
                         case "0":
                             AnsiConsole.MarkupLine("Exiting...");
@@ -89,7 +86,6 @@ namespace Orchestrator.TUI
             AnsiConsole.MarkupLine("[yellow]Exiting Menu loop due to main cancellation.[/]");
         } 
 
-        // ... (ShowSetupMenuAsync dan ShowLocalMenuAsync tidak berubah) ...
         private static async Task ShowSetupMenuAsync(CancellationToken linkedCancellationToken) {
             while (!linkedCancellationToken.IsCancellationRequested) {
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup").Color(Color.Yellow));
@@ -127,7 +123,6 @@ namespace Orchestrator.TUI
             }
         }
 
-        // --- PERUBAHAN DI SINI ---
         private static async Task ShowAttachMenuAsync(CancellationToken linkedCancellationToken) {
             if (linkedCancellationToken.IsCancellationRequested) return; 
 
@@ -158,8 +153,9 @@ namespace Orchestrator.TUI
                 string tmuxSessionName = "automation_hub_bots"; string escapedBotName = selectedBot.Replace("\"", "\\\"");
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
                 
-                // Panggil ShellUtil dengan useProxy: false
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCtsMenu.Token, useProxy: false);
+                // === PERBAIKAN DI SINI ===
+                // Ganti linkedCtsMenu.Token -> linkedCancellationToken
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
             }
@@ -167,7 +163,6 @@ namespace Orchestrator.TUI
             catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
         }
 
-        // --- PERUBAHAN DI SINI ---
         private static async Task ShowRemoteShellAsync(CancellationToken linkedCancellationToken)
         {
             if (linkedCancellationToken.IsCancellationRequested) return;
@@ -183,8 +178,9 @@ namespace Orchestrator.TUI
             try {
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
                 
-                // Panggil ShellUtil dengan useProxy: false
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCtsMenu.Token, useProxy: false);
+                // === PERBAIKAN DI SINI ===
+                // Ganti linkedCtsMenu.Token -> linkedCancellationToken
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
             }
