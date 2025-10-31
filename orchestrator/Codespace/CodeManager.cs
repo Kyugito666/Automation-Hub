@@ -5,8 +5,8 @@ using System.Linq;
 using System.Threading;
 using System; 
 using System.Threading.Tasks; 
-using Orchestrator.Services; // <-- PERBAIKAN: Ditambahkan
-using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Services; 
+using Orchestrator.Core; 
 
 namespace Orchestrator.Codespace
 {
@@ -155,8 +155,9 @@ namespace Orchestrator.Codespace
         {
             AnsiConsole.MarkupLine($"\n[cyan]Attempting create new codespace...[/]");
             
-            await SecretService.AutoCleanupBeforeCreate(token);
-            cancellationToken.ThrowIfCancellationRequested();
+            // --- PRE-FLIGHT CLEANUP (DIHAPUS) ---
+            // Panggilan ke SecretService.AutoCleanupBeforeCreate(token) telah dihapus.
+            // --- END PRE-FLIGHT ---
 
             string createArgs = $"codespace create -R {repoFullName} -m {MACHINE_TYPE} --display-name {CODESPACE_DISPLAY_NAME} --idle-timeout 240m"; 
             Stopwatch createStopwatch = Stopwatch.StartNew(); 
