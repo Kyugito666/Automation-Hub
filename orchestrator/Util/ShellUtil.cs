@@ -4,26 +4,24 @@ using System.Text;
 using Spectre.Console;
 using System.Threading;
 using System.Threading.Tasks;
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.Util // Namespace baru
+namespace Orchestrator.Util 
 {
-    // Nama kelas diubah dari ShellHelper menjadi ShellUtil
     public static class ShellUtil
     {
         private const int DEFAULT_TIMEOUT_MS = 120000;
 
-        // --- RunCommandAsync --- (Logika tidak berubah)
         public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
         {
             var startInfo = CreateStartInfo(command, args, token);
             if (workingDir != null) startInfo.WorkingDirectory = workingDir;
             
             using var cts = new CancellationTokenSource(DEFAULT_TIMEOUT_MS);
-            // Gabungkan dengan token utama dari Program.cs
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, Program.GetMainCancellationToken());
             try
             {
-                var (_, stderr, exitCode) = await RunProcessAsync(startInfo, linkedCts.Token); // Pakai linked token
+                var (_, stderr, exitCode) = await RunProcessAsync(startInfo, linkedCts.Token); 
                 if (exitCode != 0)
                 {
                     throw new Exception($"Command '{command} {args.EscapeMarkup()}' failed (Exit Code: {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
@@ -35,7 +33,6 @@ namespace Orchestrator.Util // Namespace baru
             }
         }
 
-        // --- RunInteractive --- (Logika tidak berubah)
         public static async Task RunInteractive(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
         {
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
@@ -62,7 +59,6 @@ namespace Orchestrator.Util // Namespace baru
             }
         }
 
-        // --- RunInteractiveWithFullInput --- (Logika tidak berubah)
         public static async Task RunInteractiveWithFullInput(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
         {
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
@@ -122,7 +118,6 @@ namespace Orchestrator.Util // Namespace baru
             }
         }
 
-        // --- CreateStartInfo --- (Diubah ke 'internal' agar bisa diakses GhService)
         internal static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token) {
             var startInfo = new ProcessStartInfo {
                  RedirectStandardOutput = true, RedirectStandardError = true,
@@ -134,7 +129,6 @@ namespace Orchestrator.Util // Namespace baru
             return startInfo;
         }
 
-        // --- SetEnvironmentVariables --- (Diubah ke 'internal')
         internal static void SetEnvironmentVariables(ProcessStartInfo startInfo, TokenEntry token, string command) {
             bool isGhCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? command.ToLower().EndsWith("gh.exe") || command.ToLower() == "gh"
@@ -153,7 +147,6 @@ namespace Orchestrator.Util // Namespace baru
             }
         }
 
-        // --- SetFileNameAndArgs --- (Diubah ke 'internal')
         internal static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
              if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                 startInfo.FileName = "cmd.exe";
@@ -165,7 +158,6 @@ namespace Orchestrator.Util // Namespace baru
             }
         }
 
-        // --- RunProcessAsync --- (Diubah ke 'internal')
         internal static async Task<(string stdout, string stderr, int exitCode)> RunProcessAsync(ProcessStartInfo startInfo, CancellationToken cancellationToken)
         {
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
