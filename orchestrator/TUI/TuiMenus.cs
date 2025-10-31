@@ -4,10 +4,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Orchestrator.Services; // <-- PERBAIKAN: Ditambahkan
-using Orchestrator.Codespace; // <-- PERBAIKAN: Ditambahkan
-using Orchestrator.Util; // <-- PERBAIKAN: Ditambahkan
-using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Services; 
+using Orchestrator.Codespace; 
+using Orchestrator.Util; 
+using Orchestrator.Core; 
 
 namespace Orchestrator.TUI 
 {
@@ -23,7 +23,7 @@ namespace Orchestrator.TUI
                 var selection = AnsiConsole.Prompt(
                     new SelectionPrompt<string>()
                         .Title("\n[bold white]MAIN MENU[/]")
-                        .PageSize(9) 
+                        .PageSize(8) // <-- Ukuran diubah jadi 8
                         .WrapAround(true)
                         .AddChoices(new[] {
                             "1. Start/Manage Codespace Runner (Continuous Loop)",
@@ -32,7 +32,7 @@ namespace Orchestrator.TUI
                             "4. Attach to Bot Session (Remote Tmux)",
                             "5. Migrasi Kredensial Lokal (Jalankan 1x)",
                             "6. Open Remote Shell (Codespace)",
-                            "7. Delete All GitHub Secrets (Fix 200KB Error)", 
+                            // "7. Delete All GitHub Secrets" <-- DIHAPUS
                             "0. Exit"
                         }));
 
@@ -56,10 +56,7 @@ namespace Orchestrator.TUI
                             await MigrateService.RunMigration(linkedCtsMenu.Token); 
                             Program.Pause("Tekan Enter...", linkedCtsMenu.Token); break; 
                         case "6": await ShowRemoteShellAsync(linkedCtsMenu.Token); break; 
-                        case "7":
-                            await SecretService.DeleteAllSecrets();
-                            Program.Pause("Tekan Enter...", linkedCtsMenu.Token); 
-                            break;
+                        // case "7": <-- DIHAPUS
                         case "0":
                             AnsiConsole.MarkupLine("Exiting...");
                             Program.TriggerFullShutdown(); 
@@ -91,6 +88,8 @@ namespace Orchestrator.TUI
             AnsiConsole.MarkupLine("[yellow]Exiting Menu loop due to main cancellation.[/]");
         } 
 
+        // ... (Sisa file TuiMenus.cs tidak berubah, semua Show...MenuAsync tetap sama) ...
+        
         private static async Task ShowSetupMenuAsync(CancellationToken linkedCancellationToken) {
             while (!linkedCancellationToken.IsCancellationRequested) {
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup").Color(Color.Yellow));
