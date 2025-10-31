@@ -4,8 +4,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Orchestrator.Core; // Menggunakan BotConfig
-using Orchestrator.Services; // Menggunakan GhService
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Services; // <-- PERBAIKAN: Ditambahkan
 
 namespace Orchestrator.Codespace
 {
@@ -17,7 +17,6 @@ namespace Orchestrator.Codespace
 
         private static string GetProjectRoot()
         {
-            // Logika GetProjectRoot (sama seperti di BotConfig)
             var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
             while (currentDir != null) {
                 var configDir = Path.Combine(currentDir.FullName, "config");
@@ -60,7 +59,6 @@ namespace Orchestrator.Codespace
             return existingFiles; 
         }
 
-        // --- Fungsi Utama (dari CodespaceManager) ---
         internal static async Task UploadCredentialsToCodespace(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
             AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials & Configs via gh cp ═══[/]");
@@ -102,7 +100,6 @@ namespace Orchestrator.Codespace
                             try {
                                 string mkdirCmd = $"mkdir -p {escapedRemoteBotDir}";
                                 string sshMkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
-                                // Menggunakan GhService
                                 await GhService.RunGhCommand(token, sshMkdirArgs, 90000); mkdirSuccess = true;
                             } catch (OperationCanceledException) { throw; }
                             catch (Exception mkdirEx) { AnsiConsole.MarkupLine($"[red]✗ Failed mkdir for {bot.Name}: {mkdirEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); }
@@ -113,7 +110,6 @@ namespace Orchestrator.Codespace
                                 try {
                                     await Task.Delay(500, cancellationToken); string testCmd = $"test -d {escapedRemoteBotDir}";
                                     string sshTestArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{testCmd}\"";
-                                    // Menggunakan GhService
                                     await GhService.RunGhCommand(token, sshTestArgs, 30000); dirExists = true;
                                     AnsiConsole.MarkupLine($"[green]✓ Dir verified: {bot.Name}[/]");
                                 } catch (OperationCanceledException) { throw; }
@@ -126,7 +122,6 @@ namespace Orchestrator.Codespace
                                     string localFilePath = Path.Combine(localBotDir, credFileName); string remoteFilePath = $"{remoteBotDir}/{credFileName}";
                                     task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
                                     string localAbsPath = Path.GetFullPath(localFilePath); string cpArgs = $"codespace cp -c \"{codespaceName}\" \"{localAbsPath}\" \"remote:{remoteFilePath}\"";
-                                    // Menggunakan GhService
                                     try { await GhService.RunGhCommand(token, cpArgs, 120000); filesUploaded++; }
                                     catch (OperationCanceledException) { throw; }
                                     catch { AnsiConsole.MarkupLine($"[red]✗ Fail upload: {bot.Name}/{credFileName}[/]"); filesSkipped++; }
@@ -135,11 +130,11 @@ namespace Orchestrator.Codespace
                                 botsProcessed++;
                             } else { AnsiConsole.MarkupLine($"[red]✗ Skipping uploads for {bot.Name} (dir failed).[/]"); filesSkipped += filesToUpload.Count; botsSkipped++; }
                             task.Increment(1);
-                        } // End foreach bot
+                        } 
 
                         task.Description = "[cyan]Uploading ProxySync Configs...";
                         var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
-                        string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config"; string escapedRemoteProxySyncDir = $"'{remoteProxySyncConfigConfigDir.Replace("'", "'\\''")}'";
+                        string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/proxysync/config"; string escapedRemoteProxySyncDir = $"'{remoteProxySyncConfigDir.Replace("'", "'\\''")}'";
                         bool proxySyncConfigUploadSuccess = true; bool proxySyncDirExists = false;
                         try {
                             string mkdirCmd = $"mkdir -p {escapedRemoteProxySyncDir}"; string sshMkdirArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{mkdirCmd}\"";
@@ -166,7 +161,7 @@ namespace Orchestrator.Codespace
                         } else { AnsiConsole.MarkupLine($"[red]✗ Skipping ProxySync uploads (dir failed).[/]"); }
                         if (proxySyncConfigUploadSuccess && proxySyncDirExists) AnsiConsole.MarkupLine("[green]✓ ProxySync configs uploaded.[/]"); else AnsiConsole.MarkupLine("[yellow]! Some ProxySync uploads failed.[/]");
                         task.Increment(1);
-                    }); // End Progress
+                    }); 
             } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Upload cancelled.[/]"); AnsiConsole.MarkupLine($"[dim]   Partial: Bots OK: {botsProcessed}, Skip: {botsSkipped} | Files OK: {filesUploaded}, Fail: {filesSkipped}[/]"); throw; }
             catch (Exception uploadEx) { AnsiConsole.MarkupLine("\n[red]UNEXPECTED UPLOAD ERROR[/]"); AnsiConsole.WriteException(uploadEx); throw; }
             AnsiConsole.MarkupLine($"\n[green]✓ Upload finished.[/]"); AnsiConsole.MarkupLine($"[dim]   Bots OK: {botsProcessed}, Skip: {botsSkipped} | Files OK: {filesUploaded}, Fail: {filesSkipped}[/]");
