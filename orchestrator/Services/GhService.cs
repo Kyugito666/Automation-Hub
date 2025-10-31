@@ -1,8 +1,8 @@
 using Spectre.Console;
 using System.Threading;
 using System.Threading.Tasks;
-using Orchestrator.Util;      // <-- PERBAIKAN: Ditambahkan
-using Orchestrator.Core;      // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Util;      
+using Orchestrator.Core;      
 
 namespace Orchestrator.Services 
 {
@@ -14,8 +14,33 @@ namespace Orchestrator.Services
 
         private static bool _isAttemptingIpAuth = false;
 
+        // --- FUNGSI BARU ---
+        // Fungsi ini adalah wrapper yang memanggil RunGhCommand
+        // tapi dengan token kloningan yang proxynya di-null-kan.
+        public static async Task<string> RunGhCommandNoProxyAsync(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
+        {
+            // 1. Buat kloningan token
+            var tokenNoProxy = new TokenEntry {
+                Token = token.Token,
+                Owner = token.Owner,
+                Repo = token.Repo,
+                Username = token.Username,
+                Proxy = null // <-- Proxy di-set null
+            };
+
+            AnsiConsole.MarkupLine($"[dim]   (Running 'gh {args.Split(' ')[0]}...' [bold yellow]NO PROXY[/])[/]");
+
+            // 2. Panggil fungsi RunGhCommand yang sudah ada, tapi pakai token kloningan
+            // Ini akan membuat ShellUtil.SetEnvironmentVariables tidak mengatur var proxy.
+            // Logika retry, auth, dan timeout lainnya tetap berjalan.
+            return await RunGhCommand(tokenNoProxy, args, timeoutMilliseconds);
+        }
+        // --- AKHIR FUNGSI BARU ---
+
+
         public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
         {
+            // Fungsi ini tidak berubah
             var startInfo = ShellUtil.CreateStartInfo("gh", args, token);
             Exception? lastException = null;
             var globalCancelToken = Program.GetMainCancellationToken(); 
@@ -65,6 +90,8 @@ namespace Orchestrator.Services
                                       lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed");
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
+                // Jika proxy di-null-kan, isProxyAuthError seharusnya tidak terjadi,
+                // tapi kita biarkan logic-nya untuk keamanan.
                 if (isProxyAuthError) {
                     AnsiConsole.MarkupLine($"[yellow]Proxy Auth Error (407). Rotating proxy...[/]");
                     if (TokenManager.RotateProxyForToken(token)) {
