@@ -78,15 +78,27 @@ namespace Orchestrator.Services
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
                 if (isProxyAuthError) {
-                    AnsiConsole.MarkupLine($"[yellow]Proxy Auth Error (407). Rotating proxy...[/]");
+                    AnsiConsole.MarkupLine($"[yellow]Proxy Auth Error (407). Trying different account...[/]");
+                    string? oldAccount = ExtractProxyAccount(token.Proxy);
+                    
                     if (TokenManager.RotateProxyForToken(token)) {
-                        // Pastikan startInfo di-update dengan proxy baru (dan flag useProxy)
+                        string? newAccount = ExtractProxyAccount(token.Proxy);
+                        
+                        // Pastikan startInfo di-update dengan proxy baru
                         startInfo = ShellUtil.CreateStartInfo("gh", args, token, useProxy); 
-                        AnsiConsole.MarkupLine($"[cyan]Proxy rotated. Retrying command...[/]");
+                        
+                        if (newAccount != null && newAccount != oldAccount) {
+                            AnsiConsole.MarkupLine($"[green]Rotated to different account. Retrying...[/]");
+                        } else {
+                            AnsiConsole.MarkupLine($"[yellow]Rotated IP only (same account). Retrying...[/]");
+                        }
+                        
                         try { await Task.Delay(1000, globalCancelToken); } catch (OperationCanceledException) { throw; }
                         continue; 
                     }
-                    AnsiConsole.MarkupLine("[yellow]Proxy rotation failed. Attempting IP Auth...[/]");
+                    
+                    // Kalau rotation gagal, baru coba IP Auth
+                    AnsiConsole.MarkupLine("[yellow]All proxy accounts exhausted. Attempting IP Auth...[/]");
                     if (!_isAttemptingIpAuth) {
                         _isAttemptingIpAuth = true;
                         bool ipAuthSuccess = await ProxyService.RunIpAuthorizationOnlyAsync(globalCancelToken);
@@ -95,7 +107,6 @@ namespace Orchestrator.Services
                             AnsiConsole.MarkupLine("[magenta]IP Auth successful. Testing & reloading...[/]"); 
                             await ProxyService.RunProxyTestAndSaveAsync(globalCancelToken);
                             
-                            // PERBAIKAN: Reload config LENGKAP
                             AnsiConsole.MarkupLine("[cyan]Reloading all configs...[/]");
                             TokenManager.ReloadAllConfigs();
                             
@@ -105,6 +116,7 @@ namespace Orchestrator.Services
                         else { AnsiConsole.MarkupLine("[red]IP Auth failed. Treating as network error.[/]"); }
                     } else { AnsiConsole.MarkupLine("[yellow]IP Auth in progress. Treating as network error.[/]"); }
                 }
+
                 if ((isNetworkError || isProxyAuthError) && !isNotFoundError) { 
                     AnsiConsole.MarkupLine($"[magenta]Network/Proxy error. Retrying in {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
                     AnsiConsole.MarkupLine($"[grey]   (Detail: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()})[/]");
@@ -126,6 +138,20 @@ namespace Orchestrator.Services
             } 
 
             throw lastException ?? new Exception("GH command failed unexpectedly after error handling.");
+        }
+        
+        private static string? ExtractProxyAccount(string? proxyUrl) {
+            if (string.IsNullOrEmpty(proxyUrl)) return null;
+            try {
+                if (Uri.TryCreate(proxyUrl, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.UserInfo)) {
+                    return uri.UserInfo;
+                }
+                var parts = proxyUrl.Split('@');
+                if (parts.Length == 2) {
+                    return parts[0];
+                }
+            } catch { }
+            return null;
         }
     }
 }
