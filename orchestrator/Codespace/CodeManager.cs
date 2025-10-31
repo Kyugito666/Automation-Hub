@@ -85,6 +85,8 @@ namespace Orchestrator.Codespace
                             await CodeUpload.UploadCredentialsToCodespace(token, codespace.Name, cancellationToken);
                             AnsiConsole.MarkupLine("[cyan]Triggering startup & checking health...[/]");
                             try { await CodeActions.TriggerStartupScript(token, codespace.Name); } catch { }
+                            
+                            // === INI ALUR YANG BENER (UNTUK REUSE) ===
                             if (await CodeHealth.CheckHealthWithRetry(token, codespace.Name, cancellationToken)) { 
                                 AnsiConsole.MarkupLine("[green]✓ Health OK. Ready.[/]"); 
                                 stopwatch.Stop(); 
@@ -92,17 +94,13 @@ namespace Orchestrator.Codespace
                             }
                             else { 
                                 var lastState = await CodeActions.GetCodespaceState(token, codespace.Name); 
-                                if (lastState == "Available") { 
-                                    AnsiConsole.MarkupLine($"[yellow]WARN: Health timeout, state 'Available'. Using anyway.[/]"); 
-                                    stopwatch.Stop(); 
-                                    return codespace.Name; 
-                                } else { 
-                                    AnsiConsole.MarkupLine($"[red]Health failed & state '{lastState?.EscapeMarkup() ?? "Unknown"}'. Deleting...[/]"); 
-                                    await CodeActions.DeleteCodespace(token, codespace.Name); 
-                                    codespace = null; 
-                                    break; 
-                                } 
+                                AnsiConsole.MarkupLine($"[red]Health failed & state '{lastState?.EscapeMarkup() ?? "Unknown"}'. Deleting...[/]"); 
+                                await CodeActions.DeleteCodespace(token, codespace.Name); 
+                                codespace = null; 
+                                break; 
                             }
+                            // === AKHIR ALUR REUSE ===
+
                         case "Stopped": case "Shutdown":
                             AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Starting...[/]"); 
                             await CodeActions.StartCodespace(token, codespace.Name); // Ini pakai 'revive'
@@ -183,25 +181,25 @@ namespace Orchestrator.Codespace
                     AnsiConsole.MarkupLine($"[green]✓ Fallback found: {newName.EscapeMarkup()}[/]"); 
                 }
                 
-                // === INI PERBAIKANNYA ===
-                // Hapus logic stop/start. Langsung tunggu SSH ready.
-                
-                // (Hapus Delay 15s)
-                // (Hapus StopCodespace)
-                // (Hapus StartCodespace)
-                
-                // Langsung tunggu SSH ready (seperti logic di Nexus)
                 AnsiConsole.MarkupLine("[cyan]Waiting SSH ready...[/]"); 
                 if (!await CodeHealth.WaitForSshReadyWithRetry(token, newName, cancellationToken, useFastPolling: true)) 
                     throw new Exception($"SSH to '{newName}' failed"); 
-                
-                // === AKHIR PERBAIKAN ===
                 
                 AnsiConsole.MarkupLine("[cyan]Uploading credentials...[/]"); 
                 await CodeUpload.UploadCredentialsToCodespace(token, newName, cancellationToken);
                 
                 AnsiConsole.MarkupLine("[cyan]Triggering auto-start...[/]"); 
                 await CodeActions.TriggerStartupScript(token, newName);
+                
+                // === PERBAIKAN: PANGGIL HEALTH CHECK (STREAMING LOG) DI SINI ===
+                AnsiConsole.MarkupLine("[cyan]Waiting for remote script to finish (streaming logs)...[/]");
+                if (!await CodeHealth.CheckHealthWithRetry(token, newName, cancellationToken))
+                {
+                    // Jika gagal, lempar error biar TuiLoop bisa ganti token
+                    throw new Exception("Remote script health check failed after create. Check remote logs.");
+                }
+                AnsiConsole.MarkupLine("[green]✓ Remote script health check passed.[/]");
+                // === AKHIR PERBAIKAN ===
                 
                 createStopwatch.Stop(); 
                 AnsiConsole.MarkupLine($"[bold green]✓ New CS '{newName.EscapeMarkup()}' created & initialized.[/] ({createStopwatch.Elapsed:mm\\:ss})"); 
