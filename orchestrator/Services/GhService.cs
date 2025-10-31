@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Util;      
 using Orchestrator.Core;      
+using System; // <-- Ditambahkan
 
 namespace Orchestrator.Services 
 {
@@ -35,7 +36,21 @@ namespace Orchestrator.Services
             while (true) 
             {
                 globalCancelToken.ThrowIfCancellationRequested(); 
-                using var commandTimeoutCts = new CancellationTokenSource(timeoutMilliseconds);
+
+                // === INI PERBAIKANNYA ===
+                // Jika ini command 'ssh', JANGAN pakai timeout pendek.
+                // 'gh codespace ssh' punya logic wait internal sendiri.
+                bool isSshCommand = args.Contains("codespace ssh");
+                int effectiveTimeout = isSshCommand ? System.Threading.Timeout.Infinite : timeoutMilliseconds;
+
+                // Set CancellationTokenSource. Gunakan 'infinite' jika ini command ssh.
+                using var commandTimeoutCts = new CancellationTokenSource();
+                if (effectiveTimeout != System.Threading.Timeout.Infinite)
+                {
+                    commandTimeoutCts.CancelAfter(effectiveTimeout);
+                }
+                // === AKHIR PERBAIKAN ===
+                
                 string stdout = "", stderr = ""; int exitCode = -1;
 
                 try {
@@ -49,6 +64,7 @@ namespace Orchestrator.Services
                     AnsiConsole.MarkupLine($"[grey]   ERR: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup() ?? "No stderr"}[/]");
                 }
                 catch (OperationCanceledException) when (commandTimeoutCts.IsCancellationRequested && !globalCancelToken.IsCancellationRequested) {
+                    // Ini HANYA akan ke-trigger jika BUKAN command ssh
                     AnsiConsole.MarkupLine($"[yellow]Command timed out ({timeoutMilliseconds / 1000}s). Retrying in {TIMEOUT_RETRY_DELAY_MS / 1000}s...[/]");
                     AnsiConsole.MarkupLine($"[grey]   CMD: gh {args.EscapeMarkup()}[/]");
                     try { await Task.Delay(TIMEOUT_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; } 
@@ -66,15 +82,13 @@ namespace Orchestrator.Services
                 }
 
                 string lowerStderr = stderr.ToLowerInvariant();
-
-                // === INI PERBAIKANNYA (Error 2) ===
+                
                 // Tangani "is not running" (dari 'gh stop') sebagai non-error
                 bool isBenignStopError = (lowerStderr.Contains("is not running") || lowerStderr.Contains("already stopped")) && args.Contains("codespace stop");
                 if (isBenignStopError) {
                     AnsiConsole.MarkupLine("[dim]   (Interpreted benign 'stop' error as success)[/]");
                     return stdout; // Kembalikan stdout (kosong), seolah-olah exit code 0
                 }
-                // === AKHIR PERBAIKAN ===
                 
                 bool isRateLimit = lowerStderr.Contains("api rate limit exceeded") || lowerStderr.Contains("403 forbidden");
                 bool isAuthError = lowerStderr.Contains("bad credentials") || lowerStderr.Contains("401 unauthorized");
@@ -94,7 +108,6 @@ namespace Orchestrator.Services
                     if (TokenManager.RotateProxyForToken(token)) {
                         string? newAccount = ExtractProxyAccount(token.Proxy);
                         
-                        // Pastikan startInfo di-update dengan proxy baru
                         startInfo = ShellUtil.CreateStartInfo("gh", args, token, useProxy); 
                         
                         if (newAccount != null && newAccount != oldAccount) {
@@ -107,7 +120,6 @@ namespace Orchestrator.Services
                         continue; 
                     }
                     
-                    // Kalau rotation gagal, baru coba IP Auth
                     AnsiConsole.MarkupLine("[yellow]All proxy accounts exhausted. Attempting IP Auth...[/]");
                     if (!_isAttemptingIpAuth) {
                         _isAttemptingIpAuth = true;
