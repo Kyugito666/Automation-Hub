@@ -17,11 +17,16 @@ namespace Orchestrator.Codespace
         
         private const int SSH_PROBE_TIMEOUT_MS = 30000; 
         
-        private const int HEALTH_CHECK_POLL_INTERVAL_SEC = 10;
-        private const int HEALTH_CHECK_MAX_DURATION_MIN = 4; // Biarin 4 menit, tapi kita hapus logic asumsi
+        // Timeout ini gak dipake lagi, kita nunggu sampe script-nya beneran selesai
+        // private const int HEALTH_CHECK_MAX_DURATION_MIN = 4; 
         private const string HEALTH_CHECK_FILE = "/tmp/auto_start_done";
         private const string HEALTH_CHECK_FAIL_PROXY = "/tmp/auto_start_failed_proxysync";
         private const string HEALTH_CHECK_FAIL_DEPLOY = "/tmp/auto_start_failed_deploy";
+
+        // Magic string untuk nandain script selesai
+        private const string MAGIC_STRING_HEALTHY = "[ORCHESTRATOR_HEALTH_CHECK:HEALTHY]";
+        private const string MAGIC_STRING_FAILED_PROXY = "[ORCHESTRATOR_HEALTH_CHECK:FAILED_PROXY]";
+        private const string MAGIC_STRING_FAILED_DEPLOY = "[ORCHESTRATOR_HEALTH_CHECK:FAILED_DEPLOY]";
 
 
         internal static async Task<bool> WaitForState(TokenEntry token, string codespaceName, string targetState, TimeSpan timeout, CancellationToken cancellationToken, bool useFastPolling = false)
@@ -109,65 +114,107 @@ namespace Orchestrator.Codespace
             return result; 
         }
 
+        // === PERBAIKAN: STREAMING LOG HEALTH CHECK ===
         internal static async Task<bool> CheckHealthWithRetry(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
-            Stopwatch sw = Stopwatch.StartNew(); 
-            // Hapus 'successfulSshChecks', kita gak pake lagi
+            AnsiConsole.MarkupLine("[cyan]Attaching to remote log stream...[/]");
+            AnsiConsole.MarkupLine("[dim]   (Waiting for auto-start.sh to finish... this might take 10-15 mins)[/]");
             
-            bool result = false;
-            await AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .StartAsync($"[cyan]Checking health...[/]", async ctx => 
-                {
-                    while (sw.Elapsed.TotalMinutes < HEALTH_CHECK_MAX_DURATION_MIN) {
-                        cancellationToken.ThrowIfCancellationRequested(); 
-                        string cmdResult = "";
-                        try {
-                            string args = $"codespace ssh -c \"{codespaceName}\" -- \"if [ -f {HEALTH_CHECK_FAIL_PROXY} ] || [ -f {HEALTH_CHECK_FAIL_DEPLOY} ]; then echo FAILED; elif [ -f {HEALTH_CHECK_FILE} ]; then echo HEALTHY; else echo NOT_READY; fi\"";
-                            
-                            cmdResult = await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
-                            cancellationToken.ThrowIfCancellationRequested();
-                            
-                            if (cmdResult.Contains("FAILED")) { 
-                                ctx.Status($"[red]✗ Script failed[/]"); 
-                                result = false;
-                                return;
-                            } 
-                            if (cmdResult.Contains("HEALTHY")) { 
-                                ctx.Status("[green]✓ Healthy[/]"); 
-                                result = true;
-                                return;
-                            } 
-                            if (cmdResult.Contains("NOT_READY")) { 
-                                ctx.Status($"[cyan]Checking health... (script not done) ({sw.Elapsed:mm\\:ss})[/]"); 
-                                // === PERBAIKAN: HAPUS BLOK "ASSUMING OK" ===
-                                // Logic 'successfulSshChecks' dihapus.
-                                // Kita HARUS nunggu HEALTHY atau FAILED.
-                                // === AKHIR PERBAIKAN ===
-                            } 
-                            else { 
-                                ctx.Status("[yellow]Checking health... (unstable)[/]");
-                            }
-                        } catch (OperationCanceledException) { 
-                            ctx.Status($"[yellow]Cancelled checking health[/]"); 
-                            throw; 
-                        }
-                        catch (Exception ex) { 
-                            ctx.Status($"[red]Checking health... (SSH fail)[/] [dim]({ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}) ({sw.Elapsed:mm\\:ss})[/]");
-                        }
-                        
-                        try { 
-                            await Task.Delay(HEALTH_CHECK_POLL_INTERVAL_SEC * 1000, cancellationToken); 
-                        } catch (OperationCanceledException) { 
-                            ctx.Status($"[yellow]Cancelled checking health[/]"); 
-                            throw; 
-                        }
-                    }
-                    ctx.Status($"[yellow]Timeout checking health (Loop > {HEALTH_CHECK_MAX_DURATION_MIN}min)[/]");
-                });
+            // Script ini akan:
+            // 1. (touch) Pastikan file log ada biar 'tail' gak error
+            // 2. (tail -f) Mulai streaming log
+            // 3. (&) Jalanin tail di background
+            // 4. (while true) Mulai polling flag file
+            // 5. (if) Jika flag FAILED_PROXY, cetak magic string FAILED_PROXY
+            // 6. (if) Jika flag FAILED_DEPLOY, cetak magic string FAILED_DEPLOY
+            // 7. (if) Jika flag DONE, cetak magic string HEALTHY
+            // 8. (kill $tail_pid) Matikan 'tail'
+            // 9. (break) Keluar dari loop polling
+            
+            string remoteCommand = $@"
+touch /tmp/startup.log
+tail -f /tmp/startup.log &
+tail_pid=$!
+echo ""[ORCHESTRATOR_MONITOR:STREAM_STARTED]""
+while true; do
+    if [ -f {HEALTH_CHECK_FAIL_PROXY} ]; then
+        echo ""{MAGIC_STRING_FAILED_PROXY}""
+        kill $tail_pid 2>/dev/null
+        break
+    elif [ -f {HEALTH_CHECK_FAIL_DEPLOY} ]; then
+        echo ""{MAGIC_STRING_FAILED_DEPLOY}""
+        kill $tail_pid 2>/dev/null
+        break
+    elif [ -f {HEALTH_CHECK_FILE} ]; then
+        echo ""{MAGIC_STRING_HEALTHY}""
+        kill $tail_pid 2>/dev/null
+        break
+    fi
+    sleep 5
+done
+";
+            
+            string args = $"codespace ssh -c \"{codespaceName}\" -- \"{remoteCommand}\"";
+            bool healthResult = false;
+            bool streamStarted = false;
 
-            await Task.Delay(500, CancellationToken.None);
-            return result; 
+            // Callback yang bakal dipanggil untuk setiap baris log
+            Func<string, bool> onStdOut = (line) => {
+                string trimmedLine = line.Trim();
+                
+                if (trimmedLine.Contains(MAGIC_STRING_HEALTHY)) {
+                    AnsiConsole.MarkupLine($"[bold green]✓ Remote script finished successfully.[/]");
+                    healthResult = true;
+                    return true; // Stop streaming
+                }
+                if (trimmedLine.Contains(MAGIC_STRING_FAILED_PROXY)) {
+                    AnsiConsole.MarkupLine($"[bold red]✗ Remote script FAILED (ProxySync).[/]");
+                    healthResult = false;
+                    return true; // Stop streaming
+                }
+                if (trimmedLine.Contains(MAGIC_STRING_FAILED_DEPLOY)) {
+                    AnsiConsole.MarkupLine($"[bold red]✗ Remote script FAILED (Bot Deploy).[/]");
+                    healthResult = false;
+                    return true; // Stop streaming
+                }
+                
+                if (trimmedLine.Contains("[ORCHESTRATOR_MONITOR:STREAM_STARTED]")) {
+                    streamStarted = true;
+                    return false; // Lanjut streaming
+                }
+
+                // Tampilkan log-nya
+                if (streamStarted) {
+                    AnsiConsole.MarkupLine($"[grey]   [REMOTE] {line.EscapeMarkup()}[/]");
+                }
+                return false; // Lanjut streaming
+            };
+
+            try
+            {
+                // Panggil GhService versi STREAMING
+                await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken, onStdOut);
+                
+                // Jika loop selesai TANPA nemu magic string (misal script-nya error aneh)
+                if (!healthResult && !cancellationToken.IsCancellationRequested)
+                {
+                    AnsiConsole.MarkupLine("[yellow]Stream finished but health status unknown (no magic string detected). Assuming failure.[/]");
+                    healthResult = false;
+                }
+            }
+            catch (OperationCanceledException) {
+                AnsiConsole.MarkupLine("\n[yellow]Log streaming cancelled by user.[/]");
+                throw; // Lemparkan lagi biar TuiLoop tau
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"\n[red]FATAL: Log streaming failed: {ex.Message.EscapeMarkup()}[/]");
+                healthResult = false; // Anggap gagal
+            }
+
+            AnsiConsole.MarkupLine($"[cyan]Log stream finished. Health Status: {(healthResult ? "OK" : "Failed")}[/]");
+            return healthResult;
         }
+        // === AKHIR PERBAIKAN ===
     }
 }
