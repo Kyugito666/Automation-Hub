@@ -6,8 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Core; 
 using Orchestrator.Services; 
-using Orchestrator.Util; // <-- WAJIB
-using System; // <-- WAJIB
+using Orchestrator.Util; 
+using System; 
 
 namespace Orchestrator.Codespace
 {
@@ -16,6 +16,9 @@ namespace Orchestrator.Codespace
         private static readonly string ProjectRoot = GetProjectRoot();
         private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
         private static readonly string UploadFilesListPath = Path.Combine(ConfigRoot, "upload_files.txt");
+        
+        // --- PERBAIKAN: Delay tetap ada, tapi loop-nya infinite ---
+        private const int UPLOAD_RETRY_DELAY_MS = 5000;
 
         private static string GetProjectRoot()
         {
@@ -60,7 +63,6 @@ namespace Orchestrator.Codespace
             return existingFiles; 
         }
 
-        // === PERBAIKAN: Menggunakan RunProcessWithFileStdinAsync ===
         internal static async Task UploadCredentialsToCodespace(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
             AnsiConsole.MarkupLine("\n[cyan]═══ Uploading Credentials & Configs via SSH (Stdin Stream Mode) ═══[/]");
@@ -101,29 +103,72 @@ namespace Orchestrator.Codespace
                                 string remoteFilePath = $"{remoteWorkspacePath}/{bot.Path}/{credFileName}".Replace('\\', '/');
                                 string remoteBotDir = Path.GetDirectoryName(remoteFilePath)!.Replace('\\', '/');
 
-                                task.Description = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
+                                // --- PERBAIKAN: Ganti 'for' jadi 'while(true)' ---
+                                bool uploadSuccess = false;
+                                int retryCount = 0; 
 
-                                try
+                                while (true) 
                                 {
-                                    // Buat command gabungan
-                                    string cmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}' && cat > '{remoteFilePath.Replace("'", "'\\''")}'";
-                                    string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
-                                    
-                                    // Siapkan ProcessStartInfo
-                                    var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); // No proxy untuk 'gh'
-                                    
-                                    // Panggil helper baru untuk streaming
-                                    await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localFilePath, cancellationToken);
-                                    
-                                    filesUploaded++; 
-                                }
-                                catch (OperationCanceledException) { throw; }
-                                catch (Exception cpEx)
+                                    if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
+
+                                    // --- PERBAIKAN: Log bersih (update status) ---
+                                    string taskMessage;
+                                    if (retryCount == 0) {
+                                        taskMessage = $"[cyan]Uploading:[/] {bot.Name}/{credFileName}";
+                                    } else {
+                                        taskMessage = $"[yellow](Retry {retryCount})[/] {bot.Name}/{credFileName}";
+                                    }
+                                    task.Description = taskMessage;
+                                    // --- AKHIR LOG BERSIH ---
+
+                                    try
+                                    {
+                                        string cmd = $"mkdir -p '{remoteBotDir.Replace("'", "'\\''")}' && cat > '{remoteFilePath.Replace("'", "'\\''")}'";
+                                        string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
+                                        
+                                        // --- PERBAIKAN: Paksa 'useProxy: false' ---
+                                        var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); 
+                                        
+                                        await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localFilePath, cancellationToken);
+                                        
+                                        filesUploaded++; 
+                                        uploadSuccess = true;
+                                        break; // SUKSES -> Keluar dari while(true)
+                                    }
+                                    catch (OperationCanceledException) { throw; } 
+                                    catch (Exception cpEx)
+                                    {
+                                        // --- PERBAIKAN: Cek error spesifik ---
+                                        string errorMsg = cpEx.Message.ToLowerInvariant();
+                                        bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
+                                                                       errorMsg.Contains("closed network connection") ||
+                                                                       errorMsg.Contains("rpc error") ||
+                                                                       errorMsg.Contains("unavailable desc");
+
+                                        if (isRetryableNetworkError)
+                                        {
+                                            // Error network, coba lagi
+                                            retryCount++;
+                                            try { await Task.Delay(UPLOAD_RETRY_DELAY_MS, cancellationToken); } catch (OperationCanceledException) { throw; }
+                                            continue; // Lanjut ke iterasi while(true) berikutnya
+                                        }
+                                        else
+                                        {
+                                            // Error fatal (bukan network), jangan retry
+                                            AnsiConsole.MarkupLine($"\n[red]✗ Upload FAILED (Fatal Error):[/] {bot.Name}/{credFileName}");
+                                            AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                                            uploadSuccess = false;
+                                            break; // KELUAR dari while(true)
+                                        }
+                                        // --- AKHIR CEK ERROR SPESIFIK ---
+                                    }
+                                } // --- AKHIR BLOK while(true) ---
+
+                                if (!uploadSuccess)
                                 {
-                                    AnsiConsole.MarkupLine($"[red]✗ Upload FAILED (Stream):[/] {bot.Name}/{credFileName}");
-                                    AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
                                     filesSkipped++; 
                                 }
+                                
                                 try { await Task.Delay(50, cancellationToken); } catch (OperationCanceledException) { throw; }
                             }
                             botsProcessed++;
@@ -144,33 +189,73 @@ namespace Orchestrator.Codespace
 
                              if (!File.Exists(localConfigPath)) { continue; }
                              
-                             task.Description = $"[cyan]Uploading:[/] proxysync/{configFileName}";
+                             // --- PERBAIKAN: Ganti 'for' jadi 'while(true)' ---
+                             bool uploadSuccess = false;
+                             int retryCount = 0; 
 
-                             try
-                             { 
-                                // Buat command gabungan
-                                string cmd = $"mkdir -p '{remoteProxySyncConfigDir.Replace("'", "'\\''")}' && cat > '{remoteConfigPath.Replace("'", "'\\''")}'";
-                                string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
-
-                                // Siapkan ProcessStartInfo
-                                var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); // No proxy untuk 'gh'
-
-                                // Panggil helper baru untuk streaming
-                                await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localConfigPath, cancellationToken);
-                                
-                                filesUploaded++; 
-                             }
-                             catch (OperationCanceledException) { throw; }
-                             catch (Exception cpEx)
+                             while (true)
                              {
-                                AnsiConsole.MarkupLine($"[red]✗ Upload FAILED (Stream):[/] proxysync/{configFileName}");
-                                AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
-                                filesSkipped++; 
+                                if (cancellationToken.IsCancellationRequested) throw new OperationCanceledException();
+
+                                // --- PERBAIKAN: Log bersih (update status) ---
+                                string taskMessage;
+                                if (retryCount == 0) {
+                                    taskMessage = $"[cyan]Uploading:[/] proxysync/{configFileName}";
+                                } else {
+                                    taskMessage = $"[yellow](Retry {retryCount})[/] proxysync/{configFileName}";
+                                }
+                                task.Description = taskMessage;
+                                // --- AKHIR LOG BERSIH ---
+
+                                 try
+                                 { 
+                                    string cmd = $"mkdir -p '{remoteProxySyncConfigDir.Replace("'", "'\\''")}' && cat > '{remoteConfigPath.Replace("'", "'\\''")}'";
+                                    string sshArgs = $"codespace ssh -c \"{codespaceName}\" -- \"{cmd}\"";
+
+                                    // --- PERBAIKAN: Paksa 'useProxy: false' ---
+                                    var startInfo = ShellUtil.CreateStartInfo("gh", sshArgs, token, useProxy: false); 
+
+                                    await ShellUtil.RunProcessWithFileStdinAsync(startInfo, localConfigPath, cancellationToken);
+                                    
+                                    filesUploaded++; 
+                                    uploadSuccess = true;
+                                    break; // SUKSES -> Keluar dari while(true)
+                                 }
+                                 catch (OperationCanceledException) { throw; }
+                                 catch (Exception cpEx)
+                                 {
+                                     // --- PERBAIKAN: Cek error spesifik ---
+                                        string errorMsg = cpEx.Message.ToLowerInvariant();
+                                        bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
+                                                                       errorMsg.Contains("closed network connection") ||
+                                                                       errorMsg.Contains("rpc error") ||
+                                                                       errorMsg.Contains("unavailable desc");
+
+                                        if (isRetryableNetworkError)
+                                        {
+                                            retryCount++;
+                                            try { await Task.Delay(UPLOAD_RETRY_DELAY_MS, cancellationToken); } catch (OperationCanceledException) { throw; }
+                                            continue; 
+                                        }
+                                        else
+                                        {
+                                            AnsiConsole.MarkupLine($"\n[red]✗ Upload FAILED (Fatal Error):[/] proxysync/{configFileName}");
+                                            AnsiConsole.MarkupLine($"[dim]   {cpEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                                            uploadSuccess = false;
+                                            break; 
+                                        }
+                                     // --- AKHIR CEK ERROR SPESIFIK ---
+                                 }
+                             } // --- AKHIR BLOK while(true) ---
+                             
+                             if (!uploadSuccess)
+                             {
+                                 filesSkipped++; 
                              }
+                             
                              try { await Task.Delay(50, cancellationToken); } catch (OperationCanceledException) { throw; }
                         }
                         task.Increment(1);
-                        // === SELESAI BLOK PERBAIKAN ===
                     }); 
             } catch (OperationCanceledException) { 
                 AnsiConsole.MarkupLine("\n[yellow]Upload cancelled.[/]"); 
