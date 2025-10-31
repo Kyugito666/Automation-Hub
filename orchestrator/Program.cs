@@ -4,15 +4,15 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Orchestrator.TUI; // Namespace baru untuk TuiMenus dan TuiLoop
-using Orchestrator.Codespace; // Akan digunakan nanti
-using Orchestrator.Services; // Akan digunakan nanti
+using Orchestrator.TUI; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Codespace; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Services; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
 namespace Orchestrator
 {
     internal static class Program
     {
-        // --- State Aplikasi Inti ---
         private static CancellationTokenSource _mainCts = new CancellationTokenSource();
         private static CancellationTokenSource? _interactiveCts;
         private static volatile bool _isShuttingDown = false;
@@ -22,7 +22,6 @@ namespace Orchestrator
 
         public static async Task Main(string[] args)
         {
-            // Handler Ctrl+C (Logika tidak berubah)
             Console.CancelKeyPress += (sender, e) => {
                 e.Cancel = true; 
                 lock (_shutdownLock)
@@ -61,16 +60,14 @@ namespace Orchestrator
                          TriggerFullShutdown(); 
                     }
                 }
-            }; // Akhir CancelKeyPress handler
+            }; 
 
             try {
-                TokenManager.Initialize(); // Inisialisasi token (file ini belum dipindah)
+                TokenManager.Initialize(); 
                 
                 if (args.Length > 0 && args[0].ToLower() == "--run") {
-                    // Panggil TuiLoop (dari file baru)
                     await TuiLoop.RunOrchestratorLoopAsync(_mainCts.Token); 
                 } else {
-                    // Panggil TuiMenus (dari file baru)
                     await TuiMenus.RunInteractiveMenuAsync(_mainCts.Token); 
                 }
             }
@@ -85,11 +82,8 @@ namespace Orchestrator
                 AnsiConsole.MarkupLine("\n[dim]Application shutdown sequence complete.[/]");
                 await Task.Delay(500); 
             }
-        } // Akhir Main
+        } 
 
-        // --- Fungsi Shutdown (Diperlukan oleh TuiMenus) ---
-        
-        // Diubah ke 'internal static'
         internal static void TriggerFullShutdown() {
              lock(_shutdownLock) {
                 if (_isShuttingDown) return; 
@@ -111,19 +105,16 @@ namespace Orchestrator
              }
         }
 
-        // Diubah ke 'internal static' agar TuiMenus bisa set
         internal static void SetInteractiveCts(CancellationTokenSource cts)
         {
             _interactiveCts = cts;
         }
 
-        // Diubah ke 'internal static' agar TuiMenus bisa clear
         internal static void ClearInteractiveCts()
         {
             _interactiveCts = null;
         }
 
-        // Helper shutdown (Logika tidak berubah)
         private static async Task PerformGracefulShutdownAsync()
         {
             AnsiConsole.MarkupLine("[dim]Executing graceful shutdown: Attempting to stop codespace...[/]");
@@ -134,9 +125,7 @@ namespace Orchestrator
 
                 if (!string.IsNullOrEmpty(activeCodespace)) {
                     AnsiConsole.MarkupLine($"[yellow]Sending STOP command to codespace '{activeCodespace.EscapeMarkup()}' via gh cli...[/]");
-                    // Memanggil CodeManager (dulu CodespaceManager)
-                    // TODO: Ganti ini saat CodespaceManager direfactor
-                    await CodespaceManager.StopCodespace(token, activeCodespace);
+                    await CodeManager.StopCodespace(token, activeCodespace);
                     AnsiConsole.MarkupLine($"[green]✓ Stop command attempt finished for '{activeCodespace.EscapeMarkup()}'.[/]");
                 } else {
                     AnsiConsole.MarkupLine("[yellow]No active codespace recorded to stop.[/]");
@@ -147,12 +136,8 @@ namespace Orchestrator
             AnsiConsole.MarkupLine("[dim]Graceful shutdown steps finished.[/]");
         }
 
-        // --- Fungsi Helper Global ---
-
-        // Diubah ke 'public static' agar semua kelas bisa akses
         public static CancellationToken GetMainCancellationToken() => _mainCts.Token;
 
-        // Pause (Diubah ke 'internal static' agar TuiMenus bisa pakai)
         internal static void Pause(string message, CancellationToken linkedCancellationToken) 
         {
            if (linkedCancellationToken.IsCancellationRequested || _mainCts.IsCancellationRequested) return;
