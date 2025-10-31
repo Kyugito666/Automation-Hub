@@ -8,6 +8,7 @@ using System;
 using System.Threading.Tasks;
 using Orchestrator.Services; 
 using Orchestrator.Core; 
+using System.Threading; 
 
 namespace Orchestrator.Codespace
 {
@@ -41,13 +42,11 @@ namespace Orchestrator.Codespace
         {
             AnsiConsole.Markup($"[dim]Attempting stop codespace '{codespaceName.EscapeMarkup()}'... [/]");
             try { 
-                // 'stop' menggunakan -c
                 string args = $"codespace stop -c \"{codespaceName}\""; 
                 await GhService.RunGhCommandNoProxyAsync(token, args, STOP_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
             catch (Exception ex) { 
-                // Cek "is not running" ditangani di GhService.cs, tapi kita cek "stopped" di sini
                 if (ex.Message.Contains("stopped", StringComparison.OrdinalIgnoreCase) || 
                     ex.Message.Contains("is not running", StringComparison.OrdinalIgnoreCase)) 
                 {
@@ -83,16 +82,11 @@ namespace Orchestrator.Codespace
             }
         }
 
-        // SSH Call -> Pake Proxy
+        // === FUNGSI LAMA (Trigger 'fire-and-forget') ===
         internal static async Task TriggerStartupScript(TokenEntry token, string codespaceName)
         {
-            AnsiConsole.MarkupLine("[cyan]Triggering remote auto-start.sh script...[/]");
-            
-            // === PERBAIKAN: Hapus .ToLower() ===
-            // Biarkan nama repo apa adanya (case-sensitive) sesuai config
-            string repo = token.Repo;
-            // === AKHIR PERBAIKAN ===
-            
+            AnsiConsole.MarkupLine("[cyan]Triggering remote auto-start.sh script (keep-alive)...[/]");
+            string repo = token.Repo; 
             string scriptPath = $"/workspaces/{repo}/auto-start.sh";
             AnsiConsole.Markup("[dim]Executing command in background (nohup)... [/]");
             string command = $"nohup bash \"{scriptPath.Replace("\"", "\\\"")}\" > /tmp/startup.log 2>&1 &";
@@ -105,6 +99,54 @@ namespace Orchestrator.Codespace
                 AnsiConsole.MarkupLine($"[yellow]Warn: Failed trigger auto-start: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); 
             }
         }
+        // === AKHIR FUNGSI LAMA ===
+
+        // === FUNGSI BARU (Streaming Log Real-time) ===
+        internal static async Task<bool> RunStartupScriptAndStreamLogs(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
+        {
+            AnsiConsole.MarkupLine("[cyan]Executing remote auto-start.sh and streaming logs...[/]");
+            string repo = token.Repo; 
+            string scriptPath = $"/workspaces/{repo}/auto-start.sh";
+            
+            string command = $"set -o pipefail; bash \"{scriptPath.Replace("\"", "\\\"")}\" | tee /tmp/startup.log";
+            string args = $"codespace ssh -c \"{codespaceName}\" -- {command}";
+
+            bool scriptSuccess = false; 
+            try 
+            {
+                Func<string, bool> logCallback = (line) => {
+                    AnsiConsole.MarkupLine($"[grey]   [REMOTE] {line.EscapeMarkup()}[/]");
+                    
+                    if(line.Contains("DEPLOYMENT SUMMARY")) {
+                        scriptSuccess = true; 
+                    }
+                    if(line.Contains("ERROR: Bot deployment failed") || line.Contains("ERROR: ProxySync failed")) {
+                        scriptSuccess = false; 
+                    }
+                    return false; 
+                };
+
+                string stdout = await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken, logCallback);
+                
+                if(!stdout.Contains("ERROR: Bot deployment failed") && !stdout.Contains("ERROR: ProxySync failed")) {
+                    scriptSuccess = true;
+                }
+
+                AnsiConsole.MarkupLine($"[green]✓ Remote script finished.[/]");
+                return scriptSuccess;
+            }
+            catch (OperationCanceledException) {
+                AnsiConsole.MarkupLine("\n[yellow]Log streaming cancelled by user.[/]");
+                return false;
+            }
+            catch (Exception ex) { 
+                AnsiConsole.MarkupLine($"\n[red]✗ Remote script FAILED (Exit Code != 0).[/]"); 
+                AnsiConsole.MarkupLine($"[dim]   Error: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
+                return false; 
+            }
+        }
+        // === AKHIR FUNGSI BARU ===
+
 
         // API Call -> Pake Proxy
         internal static async Task<List<CodespaceInfo>> ListAllCodespaces(TokenEntry token)
