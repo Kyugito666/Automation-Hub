@@ -13,6 +13,7 @@ namespace Orchestrator.TUI
 {
     internal static class TuiMenus
     {
+        // ... (RunInteractiveMenuAsync tidak berubah dari sebelumnya) ...
         internal static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken) 
         {
             while (!cancellationToken.IsCancellationRequested) {
@@ -23,7 +24,7 @@ namespace Orchestrator.TUI
                 var selection = AnsiConsole.Prompt(
                     new SelectionPrompt<string>()
                         .Title("\n[bold white]MAIN MENU[/]")
-                        .PageSize(8) // <-- Ukuran diubah jadi 8
+                        .PageSize(8) 
                         .WrapAround(true)
                         .AddChoices(new[] {
                             "1. Start/Manage Codespace Runner (Continuous Loop)",
@@ -32,7 +33,6 @@ namespace Orchestrator.TUI
                             "4. Attach to Bot Session (Remote Tmux)",
                             "5. Migrasi Kredensial Lokal (Jalankan 1x)",
                             "6. Open Remote Shell (Codespace)",
-                            // "7. Delete All GitHub Secrets" <-- DIHAPUS
                             "0. Exit"
                         }));
 
@@ -51,12 +51,13 @@ namespace Orchestrator.TUI
                             break; 
                         case "2": await ShowSetupMenuAsync(linkedCtsMenu.Token); break; 
                         case "3": await ShowLocalMenuAsync(linkedCtsMenu.Token); break; 
+                        // --- PERUBAHAN DI SINI ---
                         case "4": await ShowAttachMenuAsync(linkedCtsMenu.Token); break; 
                         case "5": 
                             await MigrateService.RunMigration(linkedCtsMenu.Token); 
                             Program.Pause("Tekan Enter...", linkedCtsMenu.Token); break; 
+                        // --- PERUBAHAN DI SINI ---
                         case "6": await ShowRemoteShellAsync(linkedCtsMenu.Token); break; 
-                        // case "7": <-- DIHAPUS
                         case "0":
                             AnsiConsole.MarkupLine("Exiting...");
                             Program.TriggerFullShutdown(); 
@@ -88,8 +89,7 @@ namespace Orchestrator.TUI
             AnsiConsole.MarkupLine("[yellow]Exiting Menu loop due to main cancellation.[/]");
         } 
 
-        // ... (Sisa file TuiMenus.cs tidak berubah, semua Show...MenuAsync tetap sama) ...
-        
+        // ... (ShowSetupMenuAsync dan ShowLocalMenuAsync tidak berubah) ...
         private static async Task ShowSetupMenuAsync(CancellationToken linkedCancellationToken) {
             while (!linkedCancellationToken.IsCancellationRequested) {
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup").Color(Color.Yellow));
@@ -127,6 +127,7 @@ namespace Orchestrator.TUI
             }
         }
 
+        // --- PERUBAHAN DI SINI ---
         private static async Task ShowAttachMenuAsync(CancellationToken linkedCancellationToken) {
             if (linkedCancellationToken.IsCancellationRequested) return; 
 
@@ -156,13 +157,17 @@ namespace Orchestrator.TUI
             try {
                 string tmuxSessionName = "automation_hub_bots"; string escapedBotName = selectedBot.Replace("\"", "\\\"");
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken);
+                
+                // Panggil ShellUtil dengan useProxy: false
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCtsMenu.Token, useProxy: false);
+                
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
             }
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Attach session cancelled (likely Ctrl+C).[/]"); }
             catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
         }
 
+        // --- PERUBAHAN DI SINI ---
         private static async Task ShowRemoteShellAsync(CancellationToken linkedCancellationToken)
         {
             if (linkedCancellationToken.IsCancellationRequested) return;
@@ -177,7 +182,10 @@ namespace Orchestrator.TUI
 
             try {
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken);
+                
+                // Panggil ShellUtil dengan useProxy: false
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCtsMenu.Token, useProxy: false);
+                
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
             }
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Remote shell session cancelled (likely Ctrl+C).[/]"); }
