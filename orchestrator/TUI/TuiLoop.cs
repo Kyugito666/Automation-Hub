@@ -20,7 +20,7 @@ namespace Orchestrator.TUI
         {
             AnsiConsole.Clear(); AnsiConsole.MarkupLine("[cyan]Starting Orchestrator Loop...[/]"); AnsiConsole.MarkupLine("[dim](Press Ctrl+C ONCE for graceful shutdown)[/]");
             
-            Program.SetLoopActive(true); // <-- BARU: SET FLAG
+            Program.SetLoopActive(true); 
             int consecutiveErrors = 0;
 
             try {
@@ -45,7 +45,6 @@ namespace Orchestrator.TUI
                                     AnsiConsole.MarkupLine("[green]IP Auth OK. Testing & Reloading...[/]");
                                     await ProxyService.RunProxyTestAndSaveAsync(cancellationToken); cancellationToken.ThrowIfCancellationRequested(); 
                                     
-                                    // PERBAIKAN: Reload config LENGKAP (termasuk proxy list)
                                     AnsiConsole.MarkupLine("[cyan]Reloading all configs (tokens + proxies)...[/]");
                                     TokenManager.ReloadAllConfigs();
                                     currentToken = TokenManager.GetCurrentToken();
@@ -70,6 +69,7 @@ namespace Orchestrator.TUI
                         cancellationToken.ThrowIfCancellationRequested(); AnsiConsole.MarkupLine("Ensuring codespace...");
                         string ensuredCodespaceName;
                         try { 
+                            // Ini sekarang manggil logic streaming yang baru
                             ensuredCodespaceName = await CodeManager.EnsureHealthyCodespace(currentToken, $"{currentToken.Owner}/{currentToken.Repo}", cancellationToken); 
                         } 
                         catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Codespace ensure cancelled.[/]"); throw; } 
@@ -86,22 +86,25 @@ namespace Orchestrator.TUI
 
                         cancellationToken.ThrowIfCancellationRequested(); currentState = TokenManager.GetState(); activeCodespace = currentState.ActiveCodespaceName;
                         if (string.IsNullOrEmpty(activeCodespace)) { AnsiConsole.MarkupLine("[yellow]No active codespace after sleep. Restarting cycle.[/]"); continue; }
-                        AnsiConsole.MarkupLine("\n[yellow]Performing Keep-Alive check...[/]");
-                        if (!await CodeManager.CheckHealthWithRetry(currentToken, activeCodespace, cancellationToken)) { 
-                            AnsiConsole.MarkupLine("[red]Keep-alive FAILED! Resetting state...[/]"); currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState); continue;
-                        } else {
-                            AnsiConsole.MarkupLine("[green]Health OK.[/]");
-                            try { 
-                                AnsiConsole.MarkupLine("[dim]Triggering keep-alive script...[/]"); 
-                                await CodeManager.TriggerStartupScript(currentToken, activeCodespace); 
-                                AnsiConsole.MarkupLine("[green]Keep-alive triggered.[/]"); 
-                            } 
-                            catch (Exception trigEx) { AnsiConsole.MarkupLine($"[yellow]Keep-alive trigger failed: {trigEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}. Resetting state...[/]"); currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState); continue; }
+                        
+                        // === PERBAIKAN: Ganti logic Keep-Alive ===
+                        AnsiConsole.MarkupLine("\n[yellow]Performing Keep-Alive trigger...[/]");
+                        try { 
+                            // Kita panggil fungsi 'fire-and-forget' yang lama
+                            await CodeManager.TriggerStartupScript(currentToken, activeCodespace); 
+                            AnsiConsole.MarkupLine("[green]Keep-alive triggered.[/]"); 
+                        } 
+                        catch (Exception trigEx) { 
+                            AnsiConsole.MarkupLine($"[yellow]Keep-alive trigger failed: {trigEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}. Resetting state...[/]"); 
+                            currentState.ActiveCodespaceName = null; 
+                            TokenManager.SaveState(currentState); 
+                            continue; 
                         }
+                        // === AKHIR PERBAIKAN ===
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { 
                         AnsiConsole.MarkupLine("\n[yellow]Orchestrator loop cancellation requested.[/]"); 
-                        break; // Keluar dari while loop
+                        break; 
                     } 
                     catch (Exception ex) { 
                         consecutiveErrors++; AnsiConsole.MarkupLine("\n[bold red]UNEXPECTED LOOP ERROR[/]"); AnsiConsole.WriteException(ex);
@@ -121,7 +124,7 @@ namespace Orchestrator.TUI
             }
             finally
             {
-                Program.SetLoopActive(false); // <-- BARU: CLEAR FLAG
+                Program.SetLoopActive(false); 
                 AnsiConsole.MarkupLine("\n[cyan]Orchestrator Loop Stopped.[/]");
             }
         }
