@@ -3,6 +3,7 @@
 deploy_bots.py - Remote Environment Orchestrator
 Fitur: Self-healing, Proxy distribution, Git sync, Dependency install, Tmux launch
 (Versi 2: Smart Install & Prioritas Success Proxy)
+(Versi 3: Perbaikan 'git reset --hard' yang menghapus kredensial)
 """
 
 import os
@@ -24,7 +25,6 @@ CONFIG_FILE = CONFIG_DIR / "bots_config.json"
 PATHS_FILE = CONFIG_DIR / "paths.txt" # Path target distribusi ada di config/
 
 # === PERBAIKAN PATH PROXY ===
-# File proxy sumber sekarang ada di dalam folder proxysync
 MASTER_PROXY_FILE = PROXYSYNC_DIR / "success_proxy.txt"
 FALLBACK_PROXY_FILE = PROXYSYNC_DIR / "proxy.txt"
 # === AKHIR PERBAIKAN ===
@@ -61,17 +61,14 @@ def run_cmd(command, cwd=None, env=None, capture=False):
 
 def load_proxies():
     """Memuat proxy dari success_proxy.txt atau fallback ke proxy.txt (di dalam proxysync/)."""
-    # Logika prioritas sudah benar
     if MASTER_PROXY_FILE.exists() and MASTER_PROXY_FILE.stat().st_size > 0:
         file_to_load = MASTER_PROXY_FILE
-        # Gunakan Path().name untuk nama file saja
         source = f"'{file_to_load.name}' (tested)"
     elif FALLBACK_PROXY_FILE.exists() and FALLBACK_PROXY_FILE.stat().st_size > 0:
         file_to_load = FALLBACK_PROXY_FILE
         source = f"'{file_to_load.name}' (fallback)"
         print(f"  [Proxy] ⚠️  '{MASTER_PROXY_FILE.name}' not found or empty. Using fallback '{FALLBACK_PROXY_FILE.name}'.")
     else:
-        # Tampilkan path relatif biar jelas
         print(f"  [Proxy] ⚠️  No proxy files found in '{PROXYSYNC_DIR.relative_to(WORKDIR)}' ('{MASTER_PROXY_FILE.name}' or '{FALLBACK_PROXY_FILE.name}'). Proxy distribution skipped.")
         return []
 
@@ -87,19 +84,14 @@ def load_proxies():
 def load_paths(file_path):
     """Memuat daftar path target dari file config/paths.txt."""
     if not file_path.exists():
-        # Tampilkan path relatif
         print(f"  [Proxy] ⚠️  Paths file '{file_path.relative_to(WORKDIR)}' not found. Proxy distribution skipped.")
         return []
     try:
         with open(file_path, "r", encoding='utf-8') as f:
-            # Buat path absolut relatif terhadap WORKDIR
-            # Contoh: jika WORKDIR=/workspaces/automation-hub dan line='bots/bot1'
-            # Hasilnya akan jadi Path('/workspaces/automation-hub/bots/bot1')
             paths = [
-                (WORKDIR / line.strip()).resolve() # resolve() untuk path absolut bersih
+                (WORKDIR / line.strip()).resolve() 
                 for line in f if line.strip() and not line.startswith("#")
             ]
-        # Tampilkan path relatif
         print(f"  [Proxy] ✅ {len(paths)} target paths loaded from '{file_path.relative_to(WORKDIR)}'.")
         return paths
     except Exception as e:
@@ -118,7 +110,6 @@ def distribute_proxies(proxies, paths):
     skipped_count = 0
     for bot_path in paths:
         if not bot_path.is_dir():
-            # Tampilkan path relatif
             print(f"    🟡 Skip (Invalid path): {bot_path.relative_to(WORKDIR)}")
             skipped_count += 1
             continue
@@ -127,11 +118,12 @@ def distribute_proxies(proxies, paths):
         target_filename = "proxies.txt"
         if not proxy_file_target.exists():
             fallback_target = bot_path / "proxy.txt"
-            if fallback_target.exists():
+            # === PERBAIKAN: Cek juga kalo file-nya ada tapi KOSONG ===
+            if fallback_target.exists() and fallback_target.stat().st_size > 0:
                  proxy_file_target = fallback_target
                  target_filename = "proxy.txt"
+            # === AKHIR PERBAIKAN ===
             
-        # Shuffle sudah dilakukan di sini
         proxies_shuffled = random.sample(proxies, len(proxies))
         try:
             proxy_file_target.parent.mkdir(parents=True, exist_ok=True)
@@ -151,10 +143,6 @@ def distribute_proxies(proxies, paths):
             skipped_count += 1
             
     print(f"  [Proxy] Distribution finished. OK: {distributed_count}, Skipped/Failed: {skipped_count}")
-
-# --- Fungsi get_active_venv_path, get_venv_executable, install_dependencies, ---
-# --- get_run_command, sync_bot_repo, launch_in_tmux, is_bot_running_in_tmux ---
-# --- TIDAK BERUBAH dari versi sebelumnya ---
 
 def get_active_venv_path(bot_path: Path):
     """Mencari path venv yang aktif di dalam folder bot."""
@@ -283,8 +271,9 @@ def get_run_command(bot_path: Path, bot_type: str):
     print(f"   [Run] 🔴 Unknown bot type '{bot_type}' for '{bot_path.name}'.")
     return None, None
 
+# === PERBAIKAN: Hapus 'git reset --hard' ===
 def sync_bot_repo(name: str, bot_path: Path, repo_url: str):
-    """Melakukan git clone atau git pull untuk repo bot."""
+    """Melakukan git clone atau git pull (secara aman) untuk repo bot."""
     print(f"\n--- 🔄 Syncing: {name} ---")
     try: bot_path.relative_to(WORKDIR)
     except ValueError:
@@ -295,13 +284,18 @@ def sync_bot_repo(name: str, bot_path: Path, repo_url: str):
     git_dir = bot_path / ".git"
     
     if git_dir.is_dir():
-        print(f"  [Sync] Repository exists. Performing 'git pull --rebase'...")
-        run_cmd("git reset --hard HEAD", cwd=str(bot_path))
+        print(f"  [Sync] Repository exists. Performing 'git pull' (safe mode)...")
+        # Kita HAPUS 'git reset --hard HEAD'
+        # run_cmd("git reset --hard HEAD", cwd=str(bot_path)) # <-- DIHAPUS
+        
+        # 'git pull --rebase --autostash' harusnya aman untuk file untracked (seperti pk.txt)
         if not run_cmd("git pull --rebase --autostash", cwd=str(bot_path)):
-            print(f"  [Sync] 🟡 Pull failed. Attempting fetch + reset...")
+            print(f"  [Sync] 🟡 Pull failed. Attempting fetch + reset (safe)...")
+            # Coba reset 'soft' atau 'mixed' dulu, tapi kalo gagal ya udah
+            # Untuk skrip, 'autostash' biasanya udah cukup
             if run_cmd("git fetch origin", cwd=str(bot_path)) and \
-               run_cmd("git reset --hard origin/HEAD", cwd=str(bot_path)):
-                 print(f"  [Sync] ✅ Recovered via fetch + reset.")
+               run_cmd("git reset --hard origin/HEAD", cwd=str(bot_path)): # <--- Pengecualian, ini OK kalo pull gagal
+                 print(f"  [Sync] ✅ Recovered via fetch + HARD reset.")
             else:
                  print(f"  [Sync] 🔴 Recovery failed. Using existing code.")
     else:
@@ -324,6 +318,7 @@ def sync_bot_repo(name: str, bot_path: Path, repo_url: str):
          print(f"  [Sync] 🔴 Bot directory '{bot_path.name}' not found after sync.")
          return False
     return True
+# === AKHIR PERBAIKAN ===
 
 def launch_in_tmux(name: str, bot_path: Path, executor: str, args: str):
     """Meluncurkan bot di window tmux baru."""
@@ -364,7 +359,7 @@ def main():
     if master_proxies and target_paths:
         distribute_proxies(master_proxies, target_paths) # Distribusi ke path target
     else:
-        print("  [Proxy] ⏭️  Skipping distribution.")
+        print("  [Proxy] ⏭️  Skipping distribution (proxies or paths missing).")
 
     print(f"\n[3/5] 📋 Loading Bot Configuration ('{CONFIG_FILE.relative_to(WORKDIR)}')...")
     try:
@@ -390,7 +385,7 @@ def main():
         if not all([name, path_str, repo_url, bot_type]):
             print(f"\n--- 🟡 Skipping Invalid Entry ---\n  Data: {entry}"); skip_count += 1; continue
             
-        if name == "ProxySync-Tool": # Selalu skip ProxySync di deploy_bots.py
+        if name == "ProxySync-Tool": 
             print(f"\n--- ⏭️ Skipping: {name} (Handled by auto-start.sh) ---"); skip_count += 1; continue
 
         if not enabled: print(f"\n--- 🔵 Skipping Disabled: {name} ---"); skip_count += 1; continue
