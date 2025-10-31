@@ -33,8 +33,9 @@ def load_webshare_apikeys(file_path):
         ui.console.print(f"[bold red]Gagal membaca file '{file_path}': {e}[/bold red]")
         return []
 
+# === PERBAIKAN: Logic baca apilist.txt ===
 def load_apis_from_file(file_path):
-    """Memuat daftar URL API dari file teks."""
+    """Memuat daftar URL API dari file teks dengan bersih."""
     urls = set()
     if not os.path.exists(file_path):
         try:
@@ -44,12 +45,12 @@ def load_apis_from_file(file_path):
             ui.console.print(f"[yellow]'{os.path.basename(file_path)}' dibuat di '{os.path.dirname(file_path)}'. Anda bisa isi URL manual jika perlu.[/yellow]")
         except IOError as e:
             ui.console.print(f"[bold red]Gagal membuat file '{file_path}': {e}[/bold red]")
-        return list(urls)
+        return list(urls) # Kembalikan list kosong
 
     try:
         with open(file_path, "r") as f:
             for line in f:
-                line = line.strip()
+                line = line.strip() # Menghapus spasi dan newline
                 if line and not line.startswith("#"):
                     if "proxy.webshare.io/api/v2/proxy/list/download/" in line:
                          urls.add(line)
@@ -58,12 +59,14 @@ def load_apis_from_file(file_path):
     except IOError as e:
         ui.console.print(f"[bold red]Gagal membaca file '{file_path}': {e}[/bold red]")
 
-    return list(urls)
+    return list(urls) # Kembalikan list dari set
+# === AKHIR PERBAIKAN ===
 
+# === PERBAIKAN: Logic simpan apilist.txt ===
 def save_discovered_url(file_path, url):
-    """Menyimpan URL baru ke file apilist.txt jika belum ada."""
+    """Menyimpan URL baru ke file apilist.txt secara bersih (mencegah baris kosong)."""
     try:
-        # Baca ulang setiap kali untuk memastikan data terbaru
+        # 1. Baca semua URL yang ada ke dalam set (dibersihkan)
         existing_urls = set()
         if os.path.exists(file_path):
             with open(file_path, "r") as f_read:
@@ -72,29 +75,29 @@ def save_discovered_url(file_path, url):
                     if line and not line.startswith("#"):
                         existing_urls.add(line)
 
+        # 2. Cek apakah URL baru sudah ada
         if url not in existing_urls:
-                # Pastikan direktori ada sebelum menulis
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                with open(file_path, "a") as f_append:
-                    # Tambah newline di awal jika file tidak kosong DAN tidak diakhiri newline
-                    needs_newline = False
-                    if os.path.getsize(file_path) > 0:
-                         with open(file_path, 'rb') as f_check:
-                              f_check.seek(-1, os.SEEK_END)
-                              if f_check.read() != b'\n':
-                                   needs_newline = True
-
-                    if needs_newline:
-                        f_append.write("\n")
-                    f_append.write(f"{url}\n")
-                ui.console.print(f"   -> [green]URL baru disimpan ke '{os.path.basename(file_path)}'[/green]")
-                return True
+            # 3. Jika belum ada, tambahkan ke set dan tulis ulang seluruh file
+            existing_urls.add(url)
+            
+            # Urutkan biar rapi
+            sorted_urls = sorted(list(existing_urls))
+            
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "w") as f_write:
+                f_write.write("# Masukkan URL download proxy Webshare manual di sini, SATU per baris\n")
+                f_write.write("\n".join(sorted_urls))
+                f_write.write("\n") # Pastikan ada newline di akhir file
+            
+            ui.console.print(f"   -> [green]URL baru disimpan ke '{os.path.basename(file_path)}'[/green]")
+            return True
         else:
              ui.console.print(f"   -> [dim]URL sudah ada di '{os.path.basename(file_path)}', simpan dilewati.[/dim]")
              return False # Return False jika sudah ada
     except IOError as e:
         ui.console.print(f"[bold red]   Gagal menyimpan URL ke '{os.path.basename(file_path)}': {e}[/bold red]")
         return False
+# === AKHIR PERBAIKAN ===
 
 def convert_proxylist_to_http():
     if not os.path.exists(PROXYLIST_SOURCE_FILE):
@@ -160,11 +163,9 @@ def convert_proxylist_to_http():
              except OSError as e: ui.console.print(f"[yellow] Gagal menghapus '{os.path.basename(PROXY_SOURCE_FILE)}': {e}[/yellow]")
         return False
     try:
-        # Pastikan direktori ada sebelum menulis
         os.makedirs(os.path.dirname(PROXY_SOURCE_FILE), exist_ok=True)
         with open(PROXY_SOURCE_FILE, "w") as f:
             for proxy in converted_proxies: f.write(proxy + "\n")
-        # Kosongkan proxylist.txt HANYA jika konversi berhasil dan file ada
         if os.path.exists(PROXYLIST_SOURCE_FILE):
              open(PROXYLIST_SOURCE_FILE, "w").close()
              ui.console.print(f"[bold cyan]   '{os.path.basename(PROXYLIST_SOURCE_FILE)}' dikosongkan.[/bold cyan]")
@@ -192,7 +193,6 @@ def load_paths(file_path):
     if not os.path.exists(file_path): ui.console.print(f"[bold red]Error: File path target '{file_path}' tidak ditemukan.[/bold red]"); return []
     try:
         with open(file_path, "r") as f:
-            # === PERBAIKAN: Gunakan SCRIPT_DIR sebagai basis ===
             project_root = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
             raw_paths = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
@@ -223,7 +223,6 @@ def load_paths(file_path):
 def backup_file(file_path, backup_path):
     if os.path.exists(file_path):
         try:
-            # Pastikan direktori backup ada (sekarang backup_path sudah absolut)
             os.makedirs(os.path.dirname(backup_path), exist_ok=True)
             shutil.copy(file_path, backup_path)
             ui.console.print(f"[green]Backup '{os.path.basename(file_path)}' -> '{os.path.basename(backup_path)}'[/green]")
@@ -234,7 +233,6 @@ def backup_file(file_path, backup_path):
 def distribute_proxies(proxies, paths):
     if not proxies or not paths: ui.console.print("[yellow]Distribusi proxy dilewati (tidak ada proxy valid atau path target).[/yellow]"); return
     ui.console.print(f"\n[cyan]Mendistribusikan {len(proxies)} proksi valid ke {len(paths)} path target...[/cyan]")
-    # === PERBAIKAN: Gunakan SCRIPT_DIR sebagai basis ===
     project_root_abs = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
     success_count = 0
     fail_count = 0
@@ -266,7 +264,6 @@ def distribute_proxies(proxies, paths):
 
 def save_good_proxies(proxies, file_path):
     try:
-        # Pastikan direktori ada (sekarang file_path sudah absolut)
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, "w") as f:
             for proxy in proxies: f.write(proxy + "\n")
