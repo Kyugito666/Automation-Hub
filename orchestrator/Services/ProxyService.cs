@@ -1,12 +1,11 @@
 using Spectre.Console;
 using System.Threading;
 using System.Threading.Tasks;
-using System.IO; // Diperlukan untuk Path, File, dkk.
-using Orchestrator.Util; // Menggunakan ShellUtil
+using System.IO; 
+using Orchestrator.Util; // <-- PERBAIKAN: Ditambahkan
 
-namespace Orchestrator.Services // Namespace baru
+namespace Orchestrator.Services 
 {
-    // Ganti nama kelas
     public static class ProxyService
     {
         private static readonly string ProjectRoot = GetProjectRoot();
@@ -35,7 +34,6 @@ namespace Orchestrator.Services // Namespace baru
             }
             AnsiConsole.MarkupLine("[dim]   Memulai proses IP Auth...[/]");
             try {
-                // Menggunakan ShellUtil (dulu ShellHelper)
                 await ShellUtil.RunCommandAsync("python", $"\"{ProxySyncScript}\" --ip-auth-only", ProxySyncDir);
                 AnsiConsole.MarkupLine("[green]   ✓ Proses IP Auth selesai.[/]");
                 return true;
@@ -60,7 +58,6 @@ namespace Orchestrator.Services // Namespace baru
             AnsiConsole.MarkupLine("[dim]   Memulai proses Test & Save...[/]");
             try
             {
-                // Menggunakan ShellUtil (dulu ShellHelper)
                 await ShellUtil.RunCommandAsync("python", $"\"{ProxySyncScript}\" --test-and-save-only", ProxySyncDir); 
                 AnsiConsole.MarkupLine("[green]   ✓ Proses Test & Save selesai. 'success_proxy.txt' mungkin diperbarui.[/]");
                 return true; 
@@ -75,7 +72,6 @@ namespace Orchestrator.Services // Namespace baru
             }
         }
 
-
         public static async Task DeployProxies(CancellationToken cancellationToken = default)
         {
             AnsiConsole.MarkupLine("[bold cyan]--- Menjalankan ProxySync (Lokal - Menu Lengkap) ---[/]");
@@ -85,7 +81,6 @@ namespace Orchestrator.Services // Namespace baru
             }
             AnsiConsole.MarkupLine("\n[cyan]1. Menginstal/Update dependensi ProxySync (pip)...[/]");
             try {
-                // Menggunakan ShellUtil (dulu ShellHelper)
                 await ShellUtil.RunCommandAsync("pip", $"install --no-cache-dir --upgrade -r \"{ProxySyncReqs}\"", ProxySyncDir);
                 AnsiConsole.MarkupLine("[green]   ✓ Dependensi ProxySync siap.[/]");
             } catch (Exception ex) {
@@ -94,7 +89,6 @@ namespace Orchestrator.Services // Namespace baru
             AnsiConsole.MarkupLine("\n[cyan]2. Menjalankan Menu Interaktif ProxySync...[/]");
             AnsiConsole.MarkupLine("[dim]   (Anda akan masuk ke UI interaktif ProxySync)[/]");
             try {
-                // Menggunakan ShellUtil (dulu ShellHelper)
                 await ShellUtil.RunInteractive("python", $"\"{ProxySyncScript}\"", ProxySyncDir, null, cancellationToken);
             } catch (OperationCanceledException) {
                  AnsiConsole.MarkupLine("[yellow]   ProxySync dibatalkan oleh user.[/]");
