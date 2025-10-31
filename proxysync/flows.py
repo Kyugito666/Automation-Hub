@@ -109,7 +109,6 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
         choice = ui.Prompt.ask(f"[bold yellow]File '{os.path.basename(PROXYLIST_SOURCE_FILE)}' sudah ada isinya. Hapus dan timpa? (y/n)[/bold yellow]", choices=["y", "n"], default="y").lower()
         if choice == 'n': ui.console.print("[cyan]Operasi unduh dibatalkan.[/cyan]"); return False
     try:
-        # Pastikan direktori ada sebelum menulis
         os.makedirs(os.path.dirname(PROXYLIST_SOURCE_FILE), exist_ok=True)
         with open(PROXYLIST_SOURCE_FILE, "w") as f: pass
         ui.console.print(f"\n[green]File '{os.path.basename(PROXYLIST_SOURCE_FILE)}' siap diisi.[/green]")
@@ -135,12 +134,21 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
         ui.console.print(f"\n[bold red]Gagal menulis hasil ke '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
         return False
 
-def run_automated_test_and_save():
+# === PERBAIKAN: Terima flag is_auto ===
+def run_automated_test_and_save(is_auto=False):
     ui.print_header()
     ui.console.print("[bold cyan]Mode Auto: Tes Akurat & Simpan Hasil...[/bold cyan]")
-    if not tester.load_github_token(): # Memanggil dari modul tester
-        ui.console.print("[bold red]Tes proxy dibatalkan: Gagal memuat token GitHub.[/bold red]")
-        return False
+    
+    # === PERBAIKAN: Cuma load token kalo BUKAN auto ===
+    if not is_auto:
+        ui.console.print("[dim]   (Mode Manual/Lokal terdeteksi, memuat token GitHub...)[/dim]")
+        if not tester.load_github_token(): # Memanggil dari modul tester
+            ui.console.print("[bold red]Tes proxy dibatalkan: Gagal memuat token GitHub.[/bold red]")
+            return False
+    else:
+        ui.console.print("[dim]   (Mode Auto/Codespace terdeteksi, token GitHub dilewati. Tes ke ipify.org...)[/dim]")
+    # === AKHIR PERBAIKAN ===
+        
     ui.console.print("-" * 40)
     ui.console.print("[bold cyan]Langkah 1: Memuat & Membersihkan Proxy Input...[/bold cyan]")
     proxies = utils.load_and_deduplicate_proxies(PROXY_SOURCE_FILE)
@@ -152,8 +160,17 @@ def run_automated_test_and_save():
         return False
     ui.console.print(f"Siap menguji {len(proxies)} proksi unik dari '{os.path.basename(PROXY_SOURCE_FILE)}'.")
     ui.console.print("-" * 40)
-    ui.console.print("[bold cyan]Langkah 2: Menjalankan Tes Akurat via GitHub API...[/bold cyan]")
-    good_proxies = ui.run_concurrent_checks_display(proxies, tester.check_proxy_final, MAX_WORKERS, FAIL_PROXY_FILE) # Memanggil dari modul tester
+    
+    if is_auto:
+        ui.console.print("[bold cyan]Langkah 2: Menjalankan Tes Cepat via ipify.org...[/bold cyan]")
+    else:
+        ui.console.print("[bold cyan]Langkah 2: Menjalankan Tes Akurat via GitHub API...[/bold cyan]")
+    
+    # === PERBAIKAN: Buat lambda untuk ngirim flag is_auto ke tester ===
+    check_func_auto = lambda p: tester.check_proxy_final(p, is_auto=is_auto)
+    good_proxies = ui.run_concurrent_checks_display(proxies, check_func_auto, MAX_WORKERS, FAIL_PROXY_FILE) # Memanggil dari modul tester
+    # === AKHIR PERBAIKAN ===
+    
     if not good_proxies:
         ui.console.print("[bold red]Berhenti: Tidak ada proksi yang lolos tes.[/bold red]")
         if os.path.exists(SUCCESS_PROXY_FILE):
