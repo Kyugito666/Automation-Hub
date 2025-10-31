@@ -33,16 +33,25 @@ namespace Orchestrator.Codespace
 
         private static List<string> LoadUploadFileList()
         {
+            // Mengambil daftar dari file, tapi pastikan file-file config rahasia ADA
             var defaultList = new List<string> { "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", "config.json", "data.txt", "query.txt", "wallet.txt", "settings.yaml", "mnemonics.txt" };
+            
             if (!File.Exists(UploadFilesListPath)) {
-                AnsiConsole.MarkupLine($"[yellow]Warn: '{UploadFilesListPath}' not found. Using defaults.[/]");
+                AnsiConsole.MarkupLine($"[yellow]Warn: '{UploadFilesListPath}' (dari commit {Program.AppCommitHash}) not found. Using defaults.[/]");
                 return defaultList;
             }
             try {
-                return File.ReadAllLines(UploadFilesListPath)
+                var lines = File.ReadAllLines(UploadFilesListPath)
                            .Select(l => l.Trim())
                            .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#"))
                            .ToList();
+                
+                // Pastikan file config RAHASIA (yg tidak di-commit) ada di daftar default
+                if (!lines.Contains("apikeys.txt")) lines.Add("apikeys.txt");
+                if (!lines.Contains("apilist.txt")) lines.Add("apilist.txt");
+
+                return lines;
+
             } catch (Exception ex) {
                 AnsiConsole.MarkupLine($"[red]Error reading '{UploadFilesListPath}': {ex.Message.EscapeMarkup()}. Using defaults.[/]");
                 return defaultList; 
@@ -56,8 +65,10 @@ namespace Orchestrator.Codespace
                  return existingFiles; 
             }
             foreach (var fileName in allPossibleFiles) {
-                var filePath = Path.Combine(localBotDir, fileName);
-                if (File.Exists(filePath)) { existingFiles.Add(fileName); }
+                // Normalisasi nama file (buat jaga-jaga)
+                var normalizedFileName = Path.GetFileName(fileName);
+                var filePath = Path.Combine(localBotDir, normalizedFileName);
+                if (File.Exists(filePath)) { existingFiles.Add(normalizedFileName); }
             }
             return existingFiles; 
         }
@@ -134,14 +145,14 @@ namespace Orchestrator.Codespace
                                     catch (OperationCanceledException) { throw; } 
                                     catch (Exception cpEx)
                                     {
-                                        // === PERBAIKAN: Menambahkan 'error connecting' ===
+                                        // Ini logic retry "keras" buat koneksi gh lokal lu
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
                                                                        errorMsg.Contains("unavailable desc") ||
                                                                        errorMsg.Contains("the pipe has been ended") ||
-                                                                       errorMsg.Contains("error connecting"); // <-- DITAMBAHKAN
+                                                                       errorMsg.Contains("error connecting"); 
 
                                         if (isRetryableNetworkError)
                                         {
@@ -156,7 +167,6 @@ namespace Orchestrator.Codespace
                                             uploadSuccess = false;
                                             break; 
                                         }
-                                        // === AKHIR PERBAIKAN ===
                                     }
                                 } 
 
@@ -171,11 +181,11 @@ namespace Orchestrator.Codespace
                             task.Increment(1);
                         } 
 
-                        // STEP 2: ProxySync Configs
-                        task.Description = "[cyan]Uploading ProxySync Configs...";
+                        // STEP 2: ProxySync Configs (HANYA YANG RAHASIA)
+                        task.Description = "[cyan]Uploading Secret Configs...";
                         
-                        // === PERBAIKAN: Tambahkan paths.txt ===
-                        var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt", "paths.txt" };
+                        // === PERBAIKAN: Hapus paths.txt dan github_tokens.txt ===
+                        var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
                         // === AKHIR PERBAIKAN ===
                         
                         string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/config".Replace('\\', '/');
@@ -188,7 +198,7 @@ namespace Orchestrator.Codespace
                              string remoteConfigPath = $"{remoteProxySyncConfigDir}/{configFileName}".Replace('\\', '/');
 
                              if (!File.Exists(localConfigPath)) {
-                                 AnsiConsole.MarkupLine($"[yellow]Warn: Config file '{configFileName}' not found locally. Skipping upload.[/]");
+                                 AnsiConsole.MarkupLine($"[yellow]Warn: Secret config file '{configFileName}' not found locally. Skipping upload.[/]");
                                  continue;
                              }
                              
@@ -223,14 +233,14 @@ namespace Orchestrator.Codespace
                                  catch (OperationCanceledException) { throw; }
                                  catch (Exception cpEx)
                                  {
-                                     // === PERBAIKAN: Menambahkan 'error connecting' ===
+                                        // Ini logic retry "keras" buat koneksi gh lokal lu
                                         string errorMsg = cpEx.Message.ToLowerInvariant();
                                         bool isRetryableNetworkError = errorMsg.Contains("connection error") ||
                                                                        errorMsg.Contains("closed network connection") ||
                                                                        errorMsg.Contains("rpc error") ||
                                                                        errorMsg.Contains("unavailable desc") ||
                                                                        errorMsg.Contains("the pipe has been ended") ||
-                                                                       errorMsg.Contains("error connecting"); // <-- DITAMBAHKAN
+                                                                       errorMsg.Contains("error connecting");
 
                                         if (isRetryableNetworkError)
                                         {
@@ -245,7 +255,6 @@ namespace Orchestrator.Codespace
                                             uploadSuccess = false;
                                             break; 
                                         }
-                                     // === AKHIR PERBAIKAN ===
                                  }
                              } 
                              
