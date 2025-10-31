@@ -76,26 +76,24 @@ namespace Orchestrator.Services
                     AnsiConsole.MarkupLine("[dim]   (Interpreted benign 'stop' error as success)[/]");
                     return stdout; 
                 }
-
-                // === INI PERBAIKANNYA ===
-                // 1. Deteksi error 'gh' internal timeout
+                
                 bool isCodespaceStartTimeout = lowerStderr.Contains("timed out while waiting for the codespace to start");
-                // === AKHIR PERBAIKAN ===
-
                 bool isRateLimit = lowerStderr.Contains("api rate limit exceeded") || lowerStderr.Contains("403 forbidden");
                 bool isAuthError = lowerStderr.Contains("bad credentials") || lowerStderr.Contains("401 unauthorized");
                 bool isProxyAuthError = lowerStderr.Contains("407 proxy authentication required");
                 
-                // === INI PERBAIKANNYA ===
-                // 2. Masukkan 'isCodespaceStartTimeout' sebagai 'isNetworkError' (bisa di-retry)
+                // === PERBAIKAN: Deteksi error tmux ===
+                bool isTmuxError = lowerStderr.Contains("/tmp/tmux-") && lowerStderr.Contains("no such file or directory");
+                // === AKHIR PERBAIKAN ===
+                
                 bool isNetworkError = (lowerStderr.Contains("dial tcp") || lowerStderr.Contains("connection refused") ||
                                       lowerStderr.Contains("i/o timeout") || lowerStderr.Contains("error connecting") ||
                                       lowerStderr.Contains("wsarecv") || lowerStderr.Contains("forcibly closed") ||
                                       lowerStderr.Contains("resolve host") || lowerStderr.Contains("tls handshake timeout") ||
                                       lowerStderr.Contains("unreachable network") || lowerStderr.Contains("unexpected eof") ||
-                                      lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed"))
-                                      || isCodespaceStartTimeout; // <-- 3. Ditambahkan di sini
-                // === AKHIR PERBAIKAN ===
+                                      lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed") ||
+                                      isCodespaceStartTimeout) 
+                                      && !isTmuxError; // <-- Tambahkan pengecualian di sini
                 
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
@@ -132,10 +130,7 @@ namespace Orchestrator.Services
                     } else { AnsiConsole.MarkupLine("[yellow]IP Auth in progress. Treating as network error.[/]"); }
                 }
 
-                // === INI PERBAIKANNYA ===
-                // 4. Pastikan 'isNetworkError' (termasuk timeout 'gh') masuk ke sini
                 if ((isNetworkError || isProxyAuthError) && !isNotFoundError) { 
-                // === AKHIR PERBAIKAN ===
                     string errorMsg = TokenManager.IsProxyGloballyEnabled() 
                         ? "[magenta]Network/Proxy error. Retrying in" 
                         : "[magenta]Network error (No Proxy). Retrying in";
@@ -152,6 +147,16 @@ namespace Orchestrator.Services
                     lastException = new Exception($"GH Command Failed ({errorType}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
                     break; 
                 }
+
+                // === PERBAIKAN: Tangani error tmux sebagai error permanen (bukan network error) ===
+                if (isTmuxError)
+                {
+                    AnsiConsole.MarkupLine($"[red]FATAL App Error: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}[/]");
+                    lastException = new Exception($"tmux session not found: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
+                    break; 
+                }
+                // === AKHIR PERBAIKAN ===
+
 
                 AnsiConsole.MarkupLine($"[red]FATAL Unhandled gh command error (Exit {exitCode}). Command failed permanently.[/]");
                 lastException = new Exception($"Unhandled GH Command Failed (Exit {exitCode}): {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()}");
