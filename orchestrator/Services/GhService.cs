@@ -14,34 +14,21 @@ namespace Orchestrator.Services
 
         private static bool _isAttemptingIpAuth = false;
 
-        // --- FUNGSI BARU ---
-        // Fungsi ini adalah wrapper yang memanggil RunGhCommand
-        // tapi dengan token kloningan yang proxynya di-null-kan.
+        // --- FUNGSI INI DIUBAH ---
+        // Sekarang cuma jadi shortcut ke RunGhCommand
         public static async Task<string> RunGhCommandNoProxyAsync(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
         {
-            // 1. Buat kloningan token
-            var tokenNoProxy = new TokenEntry {
-                Token = token.Token,
-                Owner = token.Owner,
-                Repo = token.Repo,
-                Username = token.Username,
-                Proxy = null // <-- Proxy di-set null
-            };
-
             AnsiConsole.MarkupLine($"[dim]   (Running 'gh {args.Split(' ')[0]}...' [bold yellow]NO PROXY[/])[/]");
-
-            // 2. Panggil fungsi RunGhCommand yang sudah ada, tapi pakai token kloningan
-            // Ini akan membuat ShellUtil.SetEnvironmentVariables tidak mengatur var proxy.
-            // Logika retry, auth, dan timeout lainnya tetap berjalan.
-            return await RunGhCommand(tokenNoProxy, args, timeoutMilliseconds);
+            // Panggil RunGhCommand dengan flag useProxy: false
+            return await RunGhCommand(token, args, timeoutMilliseconds, useProxy: false);
         }
-        // --- AKHIR FUNGSI BARU ---
 
-
-        public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS)
+        // --- FUNGSI INI DIUBAH ---
+        // Tambah parameter bool useProxy = true
+        public static async Task<string> RunGhCommand(TokenEntry token, string args, int timeoutMilliseconds = DEFAULT_TIMEOUT_MS, bool useProxy = true)
         {
-            // Fungsi ini tidak berubah
-            var startInfo = ShellUtil.CreateStartInfo("gh", args, token);
+            // Teruskan flag useProxy ke CreateStartInfo
+            var startInfo = ShellUtil.CreateStartInfo("gh", args, token, useProxy);
             Exception? lastException = null;
             var globalCancelToken = Program.GetMainCancellationToken(); 
 
@@ -90,12 +77,11 @@ namespace Orchestrator.Services
                                       lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed");
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
-                // Jika proxy di-null-kan, isProxyAuthError seharusnya tidak terjadi,
-                // tapi kita biarkan logic-nya untuk keamanan.
                 if (isProxyAuthError) {
                     AnsiConsole.MarkupLine($"[yellow]Proxy Auth Error (407). Rotating proxy...[/]");
                     if (TokenManager.RotateProxyForToken(token)) {
-                        startInfo = ShellUtil.CreateStartInfo("gh", args, token); 
+                        // Pastikan startInfo di-update dengan proxy baru (dan flag useProxy)
+                        startInfo = ShellUtil.CreateStartInfo("gh", args, token, useProxy); 
                         AnsiConsole.MarkupLine($"[cyan]Proxy rotated. Retrying command...[/]");
                         try { await Task.Delay(1000, globalCancelToken); } catch (OperationCanceledException) { throw; }
                         continue; 
