@@ -6,13 +6,13 @@ using System.Linq;
 using System.Text.RegularExpressions; 
 using System; 
 using System.Threading.Tasks;
-using Orchestrator.Services; // Menggunakan GhService & TokenManager
+using Orchestrator.Services; 
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
 
 namespace Orchestrator.Codespace
 {
     internal static class CodeActions
     {
-        // Konstanta timeout
         private const int SSH_COMMAND_TIMEOUT_MS = 120000;
         private const int STOP_TIMEOUT_MS = 120000;
         private const int START_TIMEOUT_MS = 300000;
@@ -120,7 +120,6 @@ namespace Orchestrator.Codespace
         internal static async Task<DateTime?> GetRepoLastCommitDate(TokenEntry token)
         {
             try {
-                // Menggunakan TokenManager (file ini belum dipindah, jadi masih OK)
                 using var client = TokenManager.CreateHttpClient(token); 
                 client.Timeout = TimeSpan.FromSeconds(30);
                 var response = await client.GetAsync($"https://api.github.com/repos/{token.Owner}/{token.Repo}/commits?per_page=1");
@@ -168,7 +167,6 @@ namespace Orchestrator.Codespace
         }
     }
 
-    // Class DTO JSON (dipindah ke sini karena hanya dipakai oleh CodeActions)
     internal class CodespaceInfo 
     { 
         [JsonPropertyName("name")] public string Name { get; set; } = ""; 
