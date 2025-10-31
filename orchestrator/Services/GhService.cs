@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Orchestrator.Util;      
 using Orchestrator.Core;      
 using System; 
+using System.Linq; // Pastikan ini ada
 
 namespace Orchestrator.Services 
 {
@@ -143,14 +144,19 @@ namespace Orchestrator.Services
                 
                 bool isTmuxError = lowerStderr.Contains("/tmp/tmux-") && lowerStderr.Contains("no such file or directory");
                 
+                // === PERBAIKAN (Request 1 & 3) ===
+                // Menambahkan error "rpc error" dan "connection error" ke logic retry
                 bool isNetworkError = (lowerStderr.Contains("dial tcp") || lowerStderr.Contains("connection refused") ||
                                       lowerStderr.Contains("i/o timeout") || lowerStderr.Contains("error connecting") ||
                                       lowerStderr.Contains("wsarecv") || lowerStderr.Contains("forcibly closed") ||
                                       lowerStderr.Contains("resolve host") || lowerStderr.Contains("tls handshake timeout") ||
                                       lowerStderr.Contains("unreachable network") || lowerStderr.Contains("unexpected eof") ||
                                       lowerStderr.Contains("connection reset") || lowerStderr.Contains("handshake failed") ||
+                                      lowerStderr.Contains("connection error") || // <-- DITAMBAHKAN
+                                      lowerStderr.Contains("rpc error") || // <-- DITAMBAHKAN
                                       isCodespaceStartTimeout) 
                                       && !isTmuxError; 
+                // === AKHIR PERBAIKAN ===
                 
                 bool isNotFoundError = lowerStderr.Contains("404 not found");
 
@@ -192,8 +198,12 @@ namespace Orchestrator.Services
                         ? "[magenta]Network/Proxy error. Retrying in" 
                         : "[magenta]Network error (No Proxy). Retrying in";
                     
+                    // === PERBAIKAN (Request 1) ===
+                    // Menyembunyikan log error detail saat retry
                     AnsiConsole.MarkupLine($"{errorMsg} {NETWORK_RETRY_DELAY_MS / 1000}s...[/]");
-                    AnsiConsole.MarkupLine($"[grey]   (Detail: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()})[/]");
+                    // AnsiConsole.MarkupLine($"[grey]   (Detail: {stderr.Split('\n').FirstOrDefault()?.Trim().EscapeMarkup()})[/]"); // <-- DIMATIKAN
+                    // === AKHIR PERBAIKAN ===
+                    
                     try { await Task.Delay(NETWORK_RETRY_DELAY_MS, globalCancelToken); } catch (OperationCanceledException) { throw; }
                     continue; 
                 }
