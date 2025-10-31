@@ -3,13 +3,17 @@ using System.Text.Json.Serialization;
 using Spectre.Console;
 using System.Net;
 using Orchestrator.Core;
+using System.Collections.Generic; // <-- Tambahkan
+using System; // <-- Tambahkan
+using System.Linq; // <-- Tambahkan
+using System.Threading.Tasks; // <-- Tambahkan
 
 namespace Orchestrator.Services 
 {
     public static class BillingService
     {
         private const double INCLUDED_CORE_HOURS = 120.0;
-        private const double MACHINE_CORE_COUNT = 4.0;
+        private const double MACHINE_CORE_COUNT = 4.0; // Sesuai Automation-Hub (bukan 8.0 seperti Nexus)
         private const double SAFE_HOUR_BUFFER = 2.0;
         private const int MAX_BILLING_RETRIES = 2;
 
@@ -28,25 +32,52 @@ namespace Orchestrator.Services
             
             for (int attempt = 1; attempt <= MAX_BILLING_RETRIES; attempt++) {
                 using var client = TokenManager.CreateHttpClient(token);
-                // FIX: Gunakan endpoint yang benar untuk Codespaces billing
-                var url = $"/users/{token.Username}/settings/billing/shared-storage";
+                
+                // === PERBAIKAN: Ganti endpoint /shared-storage -> /usage ===
+                var url = $"/users/{token.Username}/settings/billing/usage";
+                // === AKHIR PERBAIKAN ===
+
                 client.DefaultRequestHeaders.UserAgent.ParseAdd($"Orchestrator-BillingCheck/{token.Username}");
                 try {
                     AnsiConsole.Markup($"[dim]   Attempt billing check ({attempt}/{MAX_BILLING_RETRIES})...[/]");
                     var response = await client.GetAsync("https://api.github.com" + url);
+                    
                     if (response.IsSuccessStatusCode) {
                         AnsiConsole.MarkupLine("[green]OK[/]");
                         var json = await response.Content.ReadAsStringAsync();
-                        var storageReport = JsonSerializer.Deserialize<SharedStorageReport>(json);
-                        if (storageReport == null) { 
-                            AnsiConsole.MarkupLine("[yellow]WARN: Invalid format.[/]"); 
+                        
+                        // === PERBAIKAN: Ganti logic kalkulasi dan model deserializer ===
+                        var billingReport = JsonSerializer.Deserialize<BillingReport>(json);
+                        if (billingReport?.UsageItems == null) { 
+                            AnsiConsole.MarkupLine("[yellow]WARN: Invalid format (UsageItems null).[/]"); 
                             return new BillingInfo { IsQuotaOk = false, Error = "Invalid JSON format" }; 
                         }
                         
-                        // Hitung dari "days_left_in_billing_cycle" dan "estimated_paid_storage_for_month"
-                        // Asumsi: 120 core-hours = ~$9 free tier untuk 32GB machine
-                        double totalCoreHoursUsed = storageReport.EstimatedPaidStorageForMonth / 0.075; // $0.075/core-hour approx
+                        double totalCoreHoursUsed = 0.0;
+                        foreach (var item in billingReport.UsageItems)
+                        {
+                            if (item.Product?.Equals("codespaces", StringComparison.OrdinalIgnoreCase) == true)
+                            {
+                                if (item.Sku?.Contains("compute 2-core") == true) {
+                                    totalCoreHoursUsed += item.Quantity * 2.0;
+                                } else if (item.Sku?.Contains("compute 4-core") == true) {
+                                    totalCoreHoursUsed += item.Quantity * 4.0;
+                                }
+                                else if (item.Sku?.Contains("compute 8-core") == true) {
+                                    totalCoreHoursUsed += item.Quantity * 8.0;
+                                }
+                                else if (item.Sku?.Contains("compute 16-core") == true) {
+                                    totalCoreHoursUsed += item.Quantity * 16.0;
+                                }
+                                else if (item.Sku?.Contains("compute 32-core") == true) {
+                                    totalCoreHoursUsed += item.Quantity * 32.0;
+                                }
+                            }
+                        }
+                        
                         var remainingCoreHours = INCLUDED_CORE_HOURS - totalCoreHoursUsed;
+                        
+                        // Gunakan MACHINE_CORE_COUNT (4.0) dari file ini
                         var hoursRemaining = Math.Max(0.0, remainingCoreHours / MACHINE_CORE_COUNT);
                         var isQuotaOk = hoursRemaining > SAFE_HOUR_BUFFER;
                         
@@ -56,6 +87,7 @@ namespace Orchestrator.Services
                             HoursRemaining = hoursRemaining, 
                             IsQuotaOk = isQuotaOk 
                         };
+                        // === AKHIR PERBAIKAN ===
                     } 
                     else if (response.StatusCode == HttpStatusCode.ProxyAuthenticationRequired) {
                         AnsiConsole.MarkupLine($"[yellow]FAIL (407 Proxy Auth)[/]");
@@ -87,6 +119,13 @@ namespace Orchestrator.Services
                         AnsiConsole.MarkupLine($"[red]   Failed after retries (407). Likely bandwidth limit.[/]"); 
                         return new BillingInfo { IsQuotaOk = false, Error = PersistentProxyError }; 
                     } 
+                    // === PERBAIKAN: Tangani error 410 (Gone) secara eksplisit jika muncul lagi ===
+                    else if (response.StatusCode == HttpStatusCode.Gone) {
+                        AnsiConsole.MarkupLine($"[red]FAIL (410 Gone)[/]"); 
+                        AnsiConsole.MarkupLine($"[red]   FATAL: Endpoint billing '{url}' sudah mati.[/]"); 
+                        return new BillingInfo { IsQuotaOk = false, Error = "410 Gone" }; 
+                    }
+                    // === AKHIR PERBAIKAN ===
                     else { 
                         var error = await response.Content.ReadAsStringAsync(); 
                         AnsiConsole.MarkupLine($"[red]FAIL ({response.StatusCode})[/]"); 
@@ -154,13 +193,21 @@ namespace Orchestrator.Services
     
     public class BillingInfo { public double TotalCoreHoursUsed{get;set;} public double IncludedCoreHours{get;set;}=120.0; public double HoursRemaining{get;set;} public bool IsQuotaOk{get;set;} public string? Error{get;set;} }
     
-    // FIX: Model untuk shared-storage endpoint
-    public class SharedStorageReport { 
-        [JsonPropertyName("days_left_in_billing_cycle")] 
-        public int DaysLeftInBillingCycle{get;set;} 
-        [JsonPropertyName("estimated_paid_storage_for_month")] 
-        public double EstimatedPaidStorageForMonth{get;set;} 
-        [JsonPropertyName("estimated_storage_for_month")] 
-        public double EstimatedStorageForMonth{get;set;} 
+    // === PERBAIKAN: Ganti Model SharedStorageReport -> BillingReport + UsageItem ===
+    public class UsageItem
+    {
+        [JsonPropertyName("product")]
+        public string Product { get; set; } = "";
+        [JsonPropertyName("sku")]
+        public string Sku { get; set; } = "";
+        [JsonPropertyName("quantity")]
+        public double Quantity { get; set; }
     }
+
+    public class BillingReport
+    {
+        [JsonPropertyName("usageItems")]
+        public List<UsageItem> UsageItems { get; set; } = new();
+    }
+    // === AKHIR PERBAIKAN ===
 }
