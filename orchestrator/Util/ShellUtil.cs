@@ -222,13 +222,14 @@ namespace Orchestrator.Util
                     }
                 } 
             };
-            process.ErrorDataReceived += (s, e) => { 
-                if (e.Data != null) {
-                    // Selalu stream error
-                    AnsiConsole.MarkupLine($"[red]   [REMOTE_ERR] {e.Data.EscapeMarkup()}[/]");
-                    stderrBuilder.AppendLine(e.Data);
-                } 
-            };
+            // GANTI KE:
+process.ErrorDataReceived += (s, e) => { 
+    if (e.Data != null) {
+        // Selalu stream error
+        AnsiConsole.MarkupLine($"[red]   [dim]REMOTE_ERR:[/] {e.Data.EscapeMarkup()}[/]"); // <-- PERBAIKAN DI SINI
+        stderrBuilder.AppendLine(e.Data);
+    } 
+};
             process.Exited += (s, e) => tcs.TrySetResult((stdoutBuilder.ToString().TrimEnd(), stderrBuilder.ToString().TrimEnd(), process.ExitCode));
             
             using var cancellationRegistration = cancellationToken.Register(() => { 
