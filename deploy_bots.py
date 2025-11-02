@@ -414,7 +414,11 @@ def main():
     print(f"\n  ✨ All complete. Use 'tmux a -t {TMUX_SESSION}' or TUI Menu 4.")
     print("=" * 60)
 
-    sys.exit(1 if fail_count > 0 else 0)
+    # === PERBAIKAN LOG: Selalu exit 0 ===
+    # Biarkan Orchestrator tahu bahwa skrip *selesai* berjalan,
+    # meskipun beberapa bot gagal. Kegagalan bot bukan error fatal.
+    sys.exit(0)
+    # === AKHIR PERBAIKAN ===
 
 if __name__ == "__main__":
     main()
