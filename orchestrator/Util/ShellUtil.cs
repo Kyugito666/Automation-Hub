@@ -16,7 +16,6 @@ namespace Orchestrator.Util
         private const int DEFAULT_TIMEOUT_MS = 120000;
 
         // === FUNGSI LAMA (DIBALIKIN BIAR BUILD SUKSES) ===
-        // Wrapper-wrapper ini sekarang manggil logic RunProcessAsync yang baru
         #region "Fungsi Lama (Wajib Ada)"
         
         public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
@@ -148,7 +147,7 @@ namespace Orchestrator.Util
         internal static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
              if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                 startInfo.FileName = "cmd.exe";
-                startInfo.Arguments = $"/c \"\"{command}\" {args}\""; 
+                startInfo.Arguments = $"/c \"{command} {args}\"";
             } else { 
                 startInfo.FileName = "/bin/bash";
                 string escapedArgs = args.Replace("\"", "\\\""); 
@@ -209,18 +208,17 @@ namespace Orchestrator.Util
                 UseShellExecute = false, CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
             
-            string ghPath = FindExecutablePath(command) ?? command;
-            string escapedExe = $"\"{ghPath}\""; // -> "D:\path\to\gh.exe"
-
+            string ghPath = FindExecutablePath(command) ?? command; 
+            
             if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy);
             
              if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                 startInfo.FileName = "cmd.exe";
-                // === PERBAIKAN: Hapus kutip ganda " " di depan escapedExe ===
+                // === PERBAIKAN: Kutip di sekitar ghPath ===
+                string escapedExe = $"\"{ghPath}\"";
                 startInfo.Arguments = $"/c \"{escapedExe} {args}\"";
-                // === DULU: $"/c \"\"{escapedExe}\" {args}\"" ===
             } else { 
-                startInfo.FileName = escapedExe; // Langsung panggil 'gh'
+                startInfo.FileName = ghPath; // Langsung panggil 'gh'
                 startInfo.Arguments = args; // Dan kasih argumennya
             }
             return startInfo;
@@ -330,7 +328,9 @@ namespace Orchestrator.Util
                 } else if (!stopStreaming) {
                     stderrBuilder.AppendLine(e.Data);
                     try {
-                        AnsiConsole.MarkupLine($"[red]REMOTE_ERR:[/] {e.Data.EscapeMarkup()}");
+                        // === PERBAIKAN: Escape [REMOTE_ERR] jadi [[REMOTE_ERR]] ===
+                        AnsiConsole.MarkupLine($"[red][[REMOTE_ERR]][/] {e.Data.EscapeMarkup()}");
+                        // === AKHIR PERBAIKAN ===
                     } catch (Exception ex) {
                         AnsiConsole.MarkupLine($"[red]Error in StdErr callback: {ex.Message.EscapeMarkup()}[/]");
                     }
