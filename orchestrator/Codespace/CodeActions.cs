@@ -89,8 +89,13 @@ namespace Orchestrator.Codespace
             string repo = token.Repo; 
             string scriptPath = $"/workspaces/{repo}/auto-start.sh";
             AnsiConsole.Markup("[dim]Executing command in background (nohup)... [/]");
-            string command = $"nohup bash \"{scriptPath.Replace("\"", "\\\"")}\" > /tmp/startup.log 2>&1 &";
-            string args = $"codespace ssh -c \"{codespaceName}\" -- {command}";
+            // Perintah yang ingin dieksekusi di remote
+            string remoteCommand = $"set -o pipefail; bash \"{scriptPath.Replace("\"", "\\\"")}\" | tee /tmp/startup.log";
+            
+            // PERBAIKAN: Bungkus seluruh remoteCommand dengan tanda kutip ("...") 
+            // Tanda kutip ini di-escape (\") agar bisa masuk ke string C#
+            // Ini mencegah cmd.exe lokal menginterpretasi pipe '|'
+            string args = $"codespace ssh -c \"{codespaceName}\" -- \"{remoteCommand.Replace("\"", "\\\"")}\"";
             try { 
                 await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
