@@ -181,7 +181,7 @@ namespace Orchestrator.TUI
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotNameForTmux}\"";
                 
                 // === PERBAIKAN: Paksa useProxy: false untuk SSH ===
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, **useProxy: false**);
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
             }
@@ -207,7 +207,7 @@ namespace Orchestrator.TUI
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
                 
                 // === PERBAIKAN: Paksa useProxy: false untuk SSH ===
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, **useProxy: false**);
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
             }
