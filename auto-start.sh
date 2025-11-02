@@ -48,25 +48,35 @@ else
 fi
 # === AKHIR PERBAIKAN ===
 
-echo "[2/3] Running ProxySync (IP Auth, Download, Test)..."
+# === PERBAIKAN: Logic ProxySync Cerdas ===
+echo "[2/3] Running ProxySync..."
 if ! command -v python3 &> /dev/null; then
     echo "   ❌ ERROR: python3 command not found!"
     touch "$HEALTH_CHECK_FAIL_DEPLOY"
     exit 1
 fi
 
-if [ "$IS_FIRST_RUN" = false ] && [ -f "$WORKDIR/proxysync/success_proxy.txt" ] && [ -s "$WORKDIR/proxysync/success_proxy.txt" ]; then
-    echo "   ⏭️  SKIP: ProxySync already ran (success_proxy.txt exists)."
-else
-    # === PERBAIKAN: Gunakan $WORKDIR variabel ===
+if [ "$IS_FIRST_RUN" = true ]; then
+    echo "   [First Run] Running FULL ProxySync (IP Auth, Download, Test)..."
     python3 "$WORKDIR/proxysync/main.py" --full-auto
     if [ $? -ne 0 ]; then
-        echo "   ❌ ERROR: ProxySync failed! Check $LOG_FILE for details."
+        echo "   ❌ ERROR: ProxySync (Full Auto) failed! Check $LOG_FILE for details."
         touch "$HEALTH_CHECK_FAIL_PROXY"
         exit 1
     fi
-    echo "   ✓ ProxySync completed. success_proxy.txt updated."
+    echo "   ✓ ProxySync (Full Auto) completed. success_proxy.txt updated."
+else
+    echo "   [Restart] Running IP Authorization ONLY..."
+    python3 "$WORKDIR/proxysync/main.py" --ip-auth-only
+    if [ $? -ne 0 ]; then
+        echo "   ❌ ERROR: ProxySync (IP Auth Only) failed! Check $LOG_FILE for details."
+        # Ini fatal, karena bot ga akan bisa jalan tanpa IP auth
+        touch "$HEALTH_CHECK_FAIL_PROXY"
+        exit 1
+    fi
+    echo "   ✓ ProxySync (IP Auth Only) completed."
 fi
+# === AKHIR PERBAIKAN ===
 
 echo "[3/3] Running Bot Deployer (Smart Install)..."
 
