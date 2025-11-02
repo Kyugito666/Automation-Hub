@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Orchestrator.Core; 
 using System.IO; 
 using System; 
+using System.Linq; // Pastikan ini ada
 
 namespace Orchestrator.Util 
 {
@@ -44,7 +45,7 @@ namespace Orchestrator.Util
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
             if (workingDir != null) startInfo.WorkingDirectory = workingDir;
             if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy: true);
-            SetFileNameAndArgs(startInfo, command, args); 
+            SetFileNameAndArgs(startInfo, command, args); // Pake helper lama buat ini
             using var process = new Process { StartInfo = startInfo };
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Program.GetMainCancellationToken());
             try {
@@ -70,7 +71,7 @@ namespace Orchestrator.Util
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
             if (workingDir != null) startInfo.WorkingDirectory = workingDir;
             if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy);
-            SetFileNameAndArgs(startInfo, command, args); 
+            SetFileNameAndArgs(startInfo, command, args); // Pake helper lama buat ini
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, Program.GetMainCancellationToken());
             var processExitedTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -120,6 +121,7 @@ namespace Orchestrator.Util
             }
         }
         
+        // Helper LAMA yang dipake sama RunInteractive dkk.
         internal static void SetEnvironmentVariables(ProcessStartInfo startInfo, TokenEntry token, string command, bool useProxy = true) {
             bool isGhCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? command.ToLower().EndsWith("gh.exe") || command.ToLower() == "gh"
@@ -127,7 +129,7 @@ namespace Orchestrator.Util
             if (isGhCommand && !string.IsNullOrEmpty(token.Token)) {
                 startInfo.EnvironmentVariables["GH_TOKEN"] = token.Token;
             }
-             startInfo.EnvironmentVariables.Remove("httpsS_proxy"); // <-- Typo dari commit lama, biarin aja
+             startInfo.EnvironmentVariables.Remove("httpsS_proxy"); 
              startInfo.EnvironmentVariables.Remove("http_proxy");
              startInfo.EnvironmentVariables.Remove("HTTPS_PROXY");
              startInfo.EnvironmentVariables.Remove("HTTP_PROXY");
@@ -135,13 +137,14 @@ namespace Orchestrator.Util
              startInfo.EnvironmentVariables.Remove("no_proxy");
             
             if (useProxy && TokenManager.IsProxyGloballyEnabled() && !string.IsNullOrEmpty(token.Proxy)) {
-                startInfo.EnvironmentVariables["https_proxy"] = token.Proxy; // <-- Typo dari commit lama
+                startInfo.EnvironmentVariables["https_proxy"] = token.Proxy; 
                 startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
                 startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy;
                 startInfo.EnvironmentVariables["HTTP_PROXY"] = token.Proxy;
             }
         }
         
+        // Helper LAMA yang dipake sama RunInteractive dkk.
         internal static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
              if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                 startInfo.FileName = "cmd.exe";
@@ -207,15 +210,15 @@ namespace Orchestrator.Util
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
             
             string ghPath = FindExecutablePath(command) ?? command;
-            string escapedExe = $"\"{ghPath}\"";
+            string escapedExe = $"\"{ghPath}\""; // -> "D:\path\to\gh.exe"
 
             if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy);
             
-            // Logic baru buat Windows
              if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                 startInfo.FileName = "cmd.exe";
-                // Ini logic 'escaping' yang bener buat 'gh codespace ssh -- "command"'
-                startInfo.Arguments = $"/c \"\"{escapedExe}\" {args}\""; 
+                // === PERBAIKAN: Hapus kutip ganda " " di depan escapedExe ===
+                startInfo.Arguments = $"/c \"{escapedExe} {args}\"";
+                // === DULU: $"/c \"\"{escapedExe}\" {args}\"" ===
             } else { 
                 startInfo.FileName = escapedExe; // Langsung panggil 'gh'
                 startInfo.Arguments = args; // Dan kasih argumennya
@@ -227,8 +230,6 @@ namespace Orchestrator.Util
         public static async Task RunProcessWithFileStdinAsync(ProcessStartInfo startInfo, string localFilePath, CancellationToken cancellationToken)
         {
             startInfo.RedirectStandardInput = true; 
-            // startInfo.RedirectStandardOutput = true; // Udah di-set di CreateStartInfo
-            // startInfo.RedirectStandardError = true;  // Udah di-set di CreateStartInfo
             
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             var stdoutBuilder = new StringBuilder();
@@ -269,15 +270,14 @@ namespace Orchestrator.Util
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
                 
-                // Upload file via STDIN
                 using (var fileStream = new FileStream(localFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
                 {
                     await fileStream.CopyToAsync(process.StandardInput.BaseStream, cancellationToken);
                 }
-                process.StandardInput.Close(); // Kirim EOF
+                process.StandardInput.Close(); 
                 
-                int exitCode = await tcs.Task; // Tunggu proses selesai
-                await Task.WhenAll(outputWaitHandle.Task, errorWaitHandle.Task); // Tunggu stream I/O selesai
+                int exitCode = await tcs.Task; 
+                await Task.WhenAll(outputWaitHandle.Task, errorWaitHandle.Task); 
 
                 if (exitCode != 0)
                 {
@@ -330,9 +330,7 @@ namespace Orchestrator.Util
                 } else if (!stopStreaming) {
                     stderrBuilder.AppendLine(e.Data);
                     try {
-                        // === PERBAIKAN: Ganti style 'REMOTE_ERR' jadi 'red' ===
                         AnsiConsole.MarkupLine($"[red]REMOTE_ERR:[/] {e.Data.EscapeMarkup()}");
-                        // === AKHIR PERBAIKAN ===
                     } catch (Exception ex) {
                         AnsiConsole.MarkupLine($"[red]Error in StdErr callback: {ex.Message.EscapeMarkup()}[/]");
                     }
