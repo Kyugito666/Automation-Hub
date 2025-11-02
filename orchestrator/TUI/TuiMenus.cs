@@ -50,7 +50,11 @@ namespace Orchestrator.TUI
                             bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
                             TokenManager.SetProxyUsage(useProxy);
 
-                            await TuiLoop.RunOrchestratorLoopAsync(cancellationToken);
+                            // === PERBAIKAN: Ganti 'cancellationToken' -> 'linkedCtsMenu.Token' ===
+                            // Ini membuat Menu 1 bisa dibatalkan dengan Ctrl+C (interaktif)
+                            // tanpa mematikan seluruh aplikasi.
+                            await TuiLoop.RunOrchestratorLoopAsync(linkedCtsMenu.Token);
+                            
                             if (cancellationToken.IsCancellationRequested) return; 
                             break; 
                         case "2": await ShowSetupMenuAsync(linkedCtsMenu.Token); break; 
@@ -147,40 +151,42 @@ namespace Orchestrator.TUI
 
             if (!sessions.Any()) { AnsiConsole.MarkupLine("[yellow]No running bot sessions found in tmux.[/]"); Program.Pause("Press Enter...", linkedCancellationToken); return; }
             
-            // === PERBAIKAN: Escape Markup ===
-            // Kita escape nama bot, TAPI JANGAN escape "[ << Back ]"
-            var backOption = "[ << Back ]";
-            // 'Markup.Escape' adalah cara aman untuk 'membersihkan' string dari tag '[...]'
-            var escapedSessions = sessions.Select(s => Markup.Escape(s)).ToList(); 
-            escapedSessions.Insert(0, backOption);
-            // === AKHIR PERBAIKAN ===
+            // === PERBAIKAN: Gunakan string polosan (bukan markup) untuk data ===
+            var backOption = "<< Back"; // String polosan
             
-            // Variabel diganti namanya jadi 'selectedBotEscaped' biar jelas
-            var selectedBotEscaped = AnsiConsole.Prompt(
+            var choices = new List<string> { backOption };
+            choices.AddRange(sessions); // Tambahkan nama bot polosan (misal "bot1", "[bot2]")
+            
+            var selectedBot = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title($"Attach to session (in [green]{activeCodespace.EscapeMarkup()}[/]):")
                     .PageSize(15)
-                    .AddChoices(escapedSessions) // <-- Pake list yang udah di-escape
+                    .AddChoices(choices) // <-- Kirim list polosan
+                    // === PERBAIKAN: Gunakan Converter untuk escape markup SAAT TAMPIL ===
+                    .UseConverter(s => {
+                        if (s == backOption) return $"[green]{s.EscapeMarkup()}[/]";
+                        // Ini akan mengubah "bot-[testing]" menjadi "bot-[[testing]]"
+                        // hanya untuk tampilan, mencegah crash.
+                        return s.EscapeMarkup();
+                    })
                 );
 
-            if (selectedBotEscaped == backOption || linkedCancellationToken.IsCancellationRequested) return;
+            if (selectedBot == backOption || linkedCancellationToken.IsCancellationRequested) return;
 
-            // Kita harus 'Unescape' lagi nama bot-nya pas kirim ke tmux
-            // 'RemoveMarkup' adalah kebalikan dari 'Escape'
-            string originalBotName = selectedBotEscaped.RemoveMarkup();
+            // === PERBAIKAN: selectedBot sekarang adalah nama asli, tidak perlu RemoveMarkup ===
+            string originalBotName = selectedBot;
 
-            AnsiConsole.MarkupLine($"\n[cyan]Attaching to tmux window [yellow]{selectedBotEscaped.EscapeMarkup()}[/]...[/]");
+            AnsiConsole.MarkupLine($"\n[cyan]Attaching to tmux window [yellow]{originalBotName.EscapeMarkup()}[/]...[/]");
             AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B, D[/] to detach)[/]");
             AnsiConsole.MarkupLine("[red](Ctrl+C inside attach will detach you)[/]");
 
             try {
                 string tmuxSessionName = "automation_hub_bots"; 
-                // Kirim nama asli (yang sudah di-unescape) ke tmux
                 string escapedBotNameForTmux = originalBotName.Replace("\"", "\\\"");
 
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotNameForTmux}\"";
                 
-                // === PERBAIKAN: Paksa useProxy: false untuk SSH ===
+                // Panggil ShellUtil dengan useProxy: false (sudah benar)
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
@@ -190,7 +196,7 @@ namespace Orchestrator.TUI
         }
         // --- AKHIR FUNGSI YANG DIPERBAIKI ---
 
-        // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) -> DIUBAH JADI NO PROXY ---
+        // --- INI FUNGSI YANG DIPERBAIKI ---
         private static async Task ShowRemoteShellAsync(CancellationToken linkedCancellationToken)
         {
             if (linkedCancellationToken.IsCancellationRequested) return;
@@ -206,7 +212,7 @@ namespace Orchestrator.TUI
             try {
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
                 
-                // === PERBAIKAN: Paksa useProxy: false untuk SSH ===
+                // Panggil ShellUtil dengan useProxy: false (sudah benar)
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
@@ -214,6 +220,6 @@ namespace Orchestrator.TUI
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Remote shell session cancelled (likely Ctrl+C).[/]"); }
             catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Remote shell error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
         }
-        // --- AKHIR PERBAIKAN ---
+        // --- AKHIR FUNGSI YANG DIPERBAIKI ---
     }
 }
