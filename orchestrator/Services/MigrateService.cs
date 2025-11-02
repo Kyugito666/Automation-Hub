@@ -2,9 +2,9 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Spectre.Console;
-using Orchestrator.Core; 
-using System.Collections.Generic; // <-- Tambahkan
-using System; // <-- Tambahkan
+using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using System.Collections.Generic; // <-- Tambahan dari file asli
+using System; // <-- Tambahan dari file asli
 
 namespace Orchestrator.Services 
 {
@@ -12,7 +12,8 @@ namespace Orchestrator.Services
     {
         private static readonly string ProjectRoot = GetProjectRoot();
         private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
-        private static readonly string OldPathFile = Path.Combine(ConfigRoot, "localpath.txt"); // <-- Sumber Path (SAMA UNTUK SEMUA)
+        private static readonly string OldPathFile = Path.Combine(ConfigRoot, "localpath.txt");
+        private static readonly string UploadFilesListPath = Path.Combine(ConfigRoot, "upload_files.txt");
 
         private static string GetProjectRoot()
         {
@@ -26,14 +27,13 @@ namespace Orchestrator.Services
             return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory!, "..", "..", "..", ".."));
         }
         
-        // Helper ini (GetOldPaths) sekarang dipakai oleh KEDUA menu
         private static List<string> GetOldPaths()
         {
             var paths = new List<string>();
             if (!File.Exists(OldPathFile))
             {
                 AnsiConsole.MarkupLine($"[red]✗ File '{OldPathFile}' tidak ditemukan.[/]");
-                AnsiConsole.MarkupLine($"[dim]   Buat file itu dan isi dengan path root (misal: D:\\SC\\PrivateKey)[/]");
+                AnsiConsole.MarkupLine($"[dim]   Buat file itu dan isi dengan path root lama (misal: D:\\SC\\PrivateKey)[/]");
                 return paths;
             }
             try
@@ -70,82 +70,30 @@ namespace Orchestrator.Services
             }
         }
 
-        // Helper generik untuk baca file list (sync_files.txt ATAU upload_files.txt)
-        private static List<string> LoadFileList(string configFileName, List<string> defaultList, string helpText)
+        private static List<string> LoadUploadFileList()
         {
-            string configFilePath = Path.Combine(ConfigRoot, configFileName);
-            
-            if (!File.Exists(configFilePath)) {
-                AnsiConsole.MarkupLine($"[yellow]Warn: '{configFilePath}' tidak ditemukan.[/]");
-                try 
-                {
-                    File.WriteAllText(configFilePath, $"# {helpText}\n# Contoh:\n# file1.txt\n# file2.js\n");
-                    AnsiConsole.MarkupLine($"[green]✓ File '{configFilePath}' baru saja dibuatkan. Silakan isi.[/]");
-                } 
-                catch (Exception ex) 
-                {
-                    AnsiConsole.MarkupLine($"[red]Gagal buat file '{configFilePath}': {ex.Message.EscapeMarkup()}[/]");
-                }
-                return defaultList;
+            if (!File.Exists(UploadFilesListPath)) {
+                AnsiConsole.MarkupLine($"[yellow]Warn: '{UploadFilesListPath}' not found. Using defaults.[/]");
+                return new List<string> { "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", "config.json", "data.txt", "query.txt", "wallet.txt", "settings.yaml", "mnemonics.txt" };
             }
             try {
-                return File.ReadAllLines(configFilePath).Select(l => l.Trim()).Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#")).ToList();
+                return File.ReadAllLines(UploadFilesListPath).Select(l => l.Trim()).Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#")).ToList();
             } catch (Exception ex) {
-                AnsiConsole.MarkupLine($"[red]Error reading '{configFilePath}': {ex.Message.EscapeMarkup()}. Using defaults.[/]");
-                return defaultList;
+                AnsiConsole.MarkupLine($"[red]Error reading '{UploadFilesListPath}': {ex.Message.EscapeMarkup()}. Using defaults.[/]");
+                return new List<string> { "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", "config.json", "data.txt", "query.txt", "wallet.txt", "settings.yaml", "mnemonics.txt" };
             }
         }
 
-        // === FUNGSI LAMA (Menu 5): Sekarang jadi wrapper ===
         public static async Task RunMigration(CancellationToken cancellationToken = default)
         {
-            var defaultList = new List<string> { 
-                "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", 
-                "config.json", "data.txt", "query.txt", "wallet.txt", 
-                "settings.yaml", "mnemonics.txt" 
-            };
-            
-            await RunFileSyncEngine(
-                operationName: "Migrasi Kredensial", 
-                fileListFileName: "upload_files.txt", // <-- Config File List
-                defaultFileList: defaultList, 
-                fileListHelpText: "Isi dengan nama file KREDENSIAL (misal: pk.txt)",
-                cancellationToken: cancellationToken
-            );
-        }
-
-        // === FUNGSI BARU (Menu 7): Wrapper baru ===
-        public static async Task RunCustomScriptSync(CancellationToken cancellationToken = default)
-        {
-            var defaultList = new List<string>(); // Kosong, user wajib isi
-            
-            await RunFileSyncEngine(
-                operationName: "Sinkronisasi Skrip", 
-                fileListFileName: "sync_files.txt", // <-- Config File List (BARU)
-                defaultFileList: defaultList, 
-                fileListHelpText: "Isi dengan nama file SKRIP (misal: index.js)",
-                cancellationToken: cancellationToken
-            );
-        }
-
-        // === INI "MESIN" UTAMANYA ===
-        // Dia otomatis pake localpath.txt, tapi file list-nya dinamis
-        private static async Task RunFileSyncEngine(
-            string operationName, 
-            string fileListFileName, 
-            List<string> defaultFileList, 
-            string fileListHelpText,
-            CancellationToken cancellationToken)
-        {
             AnsiConsole.Clear();
-            AnsiConsole.Write(new FigletText(operationName).Color(Color.Orange1));
-            AnsiConsole.MarkupLine($"[bold]Menyalin file dari '[yellow]{fileListFileName}[/]' (sumber: '[yellow]localpath.txt[/]') ke /bots/.[/]");
+            AnsiConsole.Write(new FigletText("Migrator").Color(Color.Orange1));
+            AnsiConsole.MarkupLine("[bold]Memindahkan file kredensial LOKAL ke struktur repo.[/]");
             
-            // 1. Sumber path SELALU localpath.txt
-            var oldRootPaths = GetOldPaths(); 
+            var oldRootPaths = GetOldPaths();
             if (oldRootPaths == null || !oldRootPaths.Any())
             {
-                AnsiConsole.MarkupLine($"[red]✗ Tidak ada path root sumber yang valid. Isi 'config/localpath.txt' terlebih dahulu.[/]");
+                AnsiConsole.MarkupLine($"[red]✗ Tidak ada path root lama yang valid. Isi 'config/localpath.txt' terlebih dahulu.[/]");
                 return;
             }
             
@@ -156,20 +104,19 @@ namespace Orchestrator.Services
                 return;
             }
 
-            // 2. Sumber file list DINAMIS (sesuai argumen)
-            var filesToLookFor = LoadFileList(fileListFileName, defaultFileList, fileListHelpText);
+            var filesToLookFor = LoadUploadFileList();
             if (!filesToLookFor.Any())
             {
-                AnsiConsole.MarkupLine($"[yellow]! Tidak ada file terdaftar di 'config/{fileListFileName}'. Proses dilewati.[/]");
+                AnsiConsole.MarkupLine("[yellow]! Tidak ada file kredensial terdaftar di 'upload_files.txt'.[/]");
                 return;
             }
 
             AnsiConsole.MarkupLine($"[dim]Akan memindai {config.BotsAndTools.Count} bot untuk {filesToLookFor.Count} jenis file...[/]");
             AnsiConsole.MarkupLine($"[dim]Mencari di {oldRootPaths.Count} path root...[/]");
             AnsiConsole.MarkupLine("[yellow]PERINGATAN: File yang ada di tujuan (repo /bots/...) AKAN DITIMPA![/]");
-            if (!AnsiConsole.Confirm($"\n[bold orange1]Lanjutkan {operationName}?[/]", false))
+            if (!AnsiConsole.Confirm("\n[bold orange1]Lanjutkan migrasi?[/]", false))
             {
-                AnsiConsole.MarkupLine($"[yellow]{operationName} dibatalkan.[/]");
+                AnsiConsole.MarkupLine("[yellow]Migrasi dibatalkan.[/]");
                 return;
             }
 
@@ -182,7 +129,7 @@ namespace Orchestrator.Services
                 .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
                 .StartAsync(async ctx =>
                 {
-                    var task = ctx.AddTask("[green]Memproses...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count });
+                    var task = ctx.AddTask("[green]Memigrasi...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count });
 
                     foreach (var bot in config.BotsAndTools)
                     {
@@ -199,7 +146,6 @@ namespace Orchestrator.Services
                         var oldBotName = bot.Path.Split('/', '\\').Last();
                         string? foundOldBotDir = null;
 
-                        // Ini adalah logic folder-matching spesifik yang lu mau
                         foreach (var rootPath in oldRootPaths)
                         {
                             string potentialPath = Path.Combine(rootPath, oldBotName);
@@ -249,12 +195,12 @@ namespace Orchestrator.Services
                     }
                 });
             
-            AnsiConsole.MarkupLine($"\n[bold green]✅ {operationName} Selesai.[/]");
+            AnsiConsole.MarkupLine($"\n[bold green]✅ Migrasi Selesai.[/]");
             AnsiConsole.MarkupLine($"[dim]   Bot ditemukan & diproses: {botsProcessed} (Dilewati: {botsSkipped})[/]");
             AnsiConsole.MarkupLine($"[dim]   File disalin: {filesCopied}[/]");
             AnsiConsole.MarkupLine($"[dim]   File gagal: {filesSkipped}[/]");
-            AnsiConsole.MarkupLine($"[yellow]PENTING: Jika 'Bot diproses' masih 0, pastikan nama folder di sumber SAMA PERSIS dengan nama folder di 'path' bots_config.json.[/]");
-            AnsiConsole.MarkupLine($"[red]File Anda sekarang ada di folder /bots/ di dalam repo ini. Folder ini sudah di-ignore oleh .gitignore.[/]");
+            AnsiConsole.MarkupLine($"[yellow]PENTING: Jika 'Bot diproses' masih 0, pastikan nama folder di D:\\SC... SAMA PERSIS dengan nama folder di 'path' bots_config.json.[/]");
+            AnsiConsole.MarkupLine($"[red]Kredensial Anda sekarang ada di folder /bots/ di dalam repo ini. Folder ini sudah di-ignore oleh .gitignore.[/]");
         }
     }
 }
