@@ -21,10 +21,11 @@ namespace Orchestrator.TUI
                 AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
                 AnsiConsole.MarkupLine("[dim]Local Control, Remote Execution[/]");
 
+                // === PERBAIKAN: Tambah Menu 7 ===
                 var selection = AnsiConsole.Prompt(
                     new SelectionPrompt<string>()
                         .Title("\n[bold white]MAIN MENU[/]")
-                        .PageSize(8) 
+                        .PageSize(9) // <-- Naikkan jadi 9
                         .WrapAround(true)
                         .AddChoices(new[] {
                             "1. Start/Manage Codespace Runner (Continuous Loop)",
@@ -33,8 +34,10 @@ namespace Orchestrator.TUI
                             "4. Attach to Bot Session (Remote Tmux)",
                             "5. Migrasi Kredensial Lokal (Jalankan 1x)",
                             "6. Open Remote Shell (Codespace)",
+                            "7. Sinkronisasi Skrip Kustom (Lokal)", // <-- MENU BARU
                             "0. Exit"
                         }));
+                // === AKHIR PERBAIKAN ===
 
                 var choice = selection[0].ToString();
 
@@ -46,11 +49,9 @@ namespace Orchestrator.TUI
                 try {
                     switch (choice) {
                         case "1":
-                            // === INI PERBAIKANNYA ===
-                            AnsiConsole.MarkupLine(string.Empty); // <-- FIX: Kasih string kosong
+                            AnsiConsole.MarkupLine(string.Empty); 
                             bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
                             TokenManager.SetProxyUsage(useProxy);
-                            // === AKHIR PERBAIKAN ===
 
                             await TuiLoop.RunOrchestratorLoopAsync(cancellationToken);
                             if (cancellationToken.IsCancellationRequested) return; 
@@ -62,6 +63,11 @@ namespace Orchestrator.TUI
                             await MigrateService.RunMigration(linkedCtsMenu.Token); 
                             Program.Pause("Tekan Enter...", linkedCtsMenu.Token); break; 
                         case "6": await ShowRemoteShellAsync(linkedCtsMenu.Token); break; 
+                        // === PERBAIKAN: Tambah Case 7 ===
+                        case "7":
+                            await MigrateService.RunCustomScriptSync(linkedCtsMenu.Token); 
+                            Program.Pause("Tekan Enter...", linkedCtsMenu.Token); break;
+                        // === AKHIR PERBAIKAN ===
                         case "0":
                             AnsiConsole.MarkupLine("Exiting...");
                             Program.TriggerFullShutdown(); 
