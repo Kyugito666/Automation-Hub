@@ -50,10 +50,15 @@ namespace Orchestrator.TUI
                             bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
                             TokenManager.SetProxyUsage(useProxy);
 
-                            // === PERBAIKAN: Ganti 'cancellationToken' -> 'linkedCtsMenu.Token' ===
-                            // Ini membuat Menu 1 bisa dibatalkan dengan Ctrl+C (interaktif)
-                            // tanpa mematikan seluruh aplikasi.
+                            // Panggil loop dengan token interaktif
                             await TuiLoop.RunOrchestratorLoopAsync(linkedCtsMenu.Token);
+                            
+                            // Jika loop berhenti (karena Ctrl+C), kita PING USER untuk Enter
+                            if (linkedCtsMenu.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                            {
+                                AnsiConsole.MarkupLine("\n[yellow]Loop dihentikan (Ctrl+C). Codespace dibiarkan berjalan.[/]");
+                                Program.Pause("Tekan Enter untuk kembali ke menu...", CancellationToken.None); 
+                            }
                             
                             if (cancellationToken.IsCancellationRequested) return; 
                             break; 
