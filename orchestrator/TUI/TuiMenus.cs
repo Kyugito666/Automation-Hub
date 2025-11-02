@@ -321,7 +321,10 @@ namespace Orchestrator.TUI
              // Kita harus parsing ulang path dari `Name (Path)`
              var pathStart = selectedChoice.LastIndexOf('(');
              var pathEnd = selectedChoice.LastIndexOf(')');
-             if (pathStart == -1 || pathEnd == -1 || pathEnd < pathEnd)
+             
+             // === PERBAIKAN: Logic parsing (pathEnd < pathEnd -> pathEnd < pathStart) ===
+             if (pathStart == -1 || pathEnd == -1 || pathEnd < pathStart)
+             // === AKHIR PERBAIKAN ===
              {
                  AnsiConsole.MarkupLine("[red]Error parsing pilihan.[/]");
                  Program.Pause("Tekan Enter...", linkedCancellationToken);
@@ -333,7 +336,9 @@ namespace Orchestrator.TUI
              // Tapi nama yang ditampilkan (sebelum path) harus di-unescape jika kita ingin menampilkannya.
              var displayName = selectedChoice.Substring(0, pathStart).Trim();
              
-             if (AnsiConsole.Confirm($"[red]Anda yakin ingin menghapus script setup untuk {displayName} ({botPath.EscapeMarkup()})?[/]", false))
+             // === PERBAIKAN (Malformed Markup): Escape 'displayName' di sini ===
+             if (AnsiConsole.Confirm($"[red]Anda yakin ingin menghapus script setup untuk {displayName.EscapeMarkup()} ({botPath.EscapeMarkup()})?[/]", false))
+             // === AKHIR PERBAIKAN ===
              {
                  // Un-escape tidak diperlukan, karena nama file di disk tidak mengandung escape char
                  ExpectManager.DeleteExpectScript(botPath);
