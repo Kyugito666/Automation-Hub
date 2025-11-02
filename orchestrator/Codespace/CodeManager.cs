@@ -60,8 +60,6 @@ namespace Orchestrator.Codespace
                     AnsiConsole.MarkupLine($"[green]Found:[/] [blue]{codespace.Name.EscapeMarkup()}[/] [dim]({codespace.State.EscapeMarkup()})[/]");
                     cancellationToken.ThrowIfCancellationRequested();
                     
-                    // === PERBAIKAN: Logic 'Outdated' dinonaktifkan ===
-                    // Membiarkan auto-start.sh (git pull) menangani update
                     /* if (repoLastCommit.HasValue && !string.IsNullOrEmpty(codespace.CreatedAt)) {
                         if (DateTime.TryParse(codespace.CreatedAt, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var csCreated)) {
                             if (repoLastCommit.Value > csCreated) { 
@@ -76,49 +74,49 @@ namespace Orchestrator.Codespace
                     }
                     */
                     AnsiConsole.MarkupLine("[dim]Skipping 'Outdated' check. Letting remote 'git pull' handle updates...[/]");
-                    // === AKHIR PERBAIKAN ===
                     
                     cancellationToken.ThrowIfCancellationRequested();
                     switch (codespace.State) {
+                        // === PERBAIKAN: Gabungkan 'Available' dan 'Stopped' ===
+                        // Keduanya harus langsung coba SSH.
                         case "Available":
-                            AnsiConsole.MarkupLine("[cyan]State: Available. Verifying SSH & Uploading...[/]");
+                        case "Stopped":
+                        case "Shutdown":
+                            if(codespace.State != "Available") {
+                                AnsiConsole.MarkupLine($"[cyan]State: {codespace.State}. Attempting SSH (which will trigger start)...[/]");
+                            } else {
+                                AnsiConsole.MarkupLine("[cyan]State: Available. Verifying SSH & Uploading...[/]");
+                            }
+
+                            // 1. Panggil SSH (ini akan auto-start jika stopped)
+                            //    'WaitForSshReadyWithRetry' udah manggil 'gh codespace ssh ...'
                             if (!await CodeHealth.WaitForSshReadyWithRetry(token, codespace.Name, cancellationToken, useFastPolling: false)) { 
                                 AnsiConsole.MarkupLine($"[red]SSH failed for {codespace.Name.EscapeMarkup()}. Deleting...[/]"); 
                                 await CodeActions.DeleteCodespace(token, codespace.Name); 
                                 codespace = null; 
                                 break; 
                             }
+                            
+                            // 2. Upload file (setelah SSH siap)
                             await CodeUpload.UploadCredentialsToCodespace(token, codespace.Name, cancellationToken);
                             
-                            // === PERBAIKAN: Ganti Polling jadi Streaming ===
+                            // 3. Jalankan skrip (setelah file di-upload)
                             AnsiConsole.MarkupLine("[cyan]Triggering startup & streaming logs...[/]");
-                            // Kita panggil fungsi streaming yang baru
                             if (await CodeActions.RunStartupScriptAndStreamLogs(token, codespace.Name, cancellationToken)) { 
                                 AnsiConsole.MarkupLine("[green]✓ Health OK (script success). Ready.[/]"); 
                                 stopwatch.Stop(); 
                                 return codespace.Name; 
                             }
                             else { 
+                                // Jika skrip gagal (misal ProxySync fail), codespace tetap dihapus
                                 var lastState = await CodeActions.GetCodespaceState(token, codespace.Name); 
                                 AnsiConsole.MarkupLine($"[red]Health failed (script error) & state '{lastState?.EscapeMarkup() ?? "Unknown"}'. Deleting...[/]"); 
                                 await CodeActions.DeleteCodespace(token, codespace.Name); 
                                 codespace = null; 
                                 break; 
                             }
-                            // === AKHIR PERBAIKAN ===
+                        // === AKHIR PERBAIKAN ===
 
-                        case "Stopped": case "Shutdown":
-                            AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Starting...[/]"); 
-                            await CodeActions.StartCodespace(token, codespace.Name); 
-                            if (!await CodeHealth.WaitForState(token, codespace.Name, "Available", TimeSpan.FromMinutes(4), cancellationToken, useFastPolling: false)) { 
-                                AnsiConsole.MarkupLine("[red]Failed start. Deleting...[/]"); 
-                                await CodeActions.DeleteCodespace(token, codespace.Name); 
-                                codespace = null; 
-                                break; 
-                            }
-                            AnsiConsole.MarkupLine("[green]Started. Re-checking...[/]"); 
-                            await Task.Delay(STATE_POLL_INTERVAL_SLOW_SEC * 1000, cancellationToken); 
-                            continue;
                         case "Starting": case "Queued": case "Rebuilding": case "Creating":
                             AnsiConsole.MarkupLine($"[yellow]State: {codespace.State}. Waiting {STATE_POLL_INTERVAL_SLOW_SEC}s...[/]"); 
                             await Task.Delay(STATE_POLL_INTERVAL_SLOW_SEC * 1000, cancellationToken); 
