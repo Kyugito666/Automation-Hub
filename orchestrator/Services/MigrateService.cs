@@ -2,7 +2,9 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Spectre.Console;
-using Orchestrator.Core; // <-- PERBAIKAN: Ditambahkan
+using Orchestrator.Core; 
+using System.Collections.Generic; // <-- Tambahkan
+using System; // <-- Tambahkan
 
 namespace Orchestrator.Services 
 {
@@ -11,7 +13,7 @@ namespace Orchestrator.Services
         private static readonly string ProjectRoot = GetProjectRoot();
         private static readonly string ConfigRoot = Path.Combine(ProjectRoot, "config");
         private static readonly string OldPathFile = Path.Combine(ConfigRoot, "localpath.txt");
-        private static readonly string UploadFilesListPath = Path.Combine(ConfigRoot, "upload_files.txt");
+        // Hapus UploadFilesListPath, kita buat dinamis
 
         private static string GetProjectRoot()
         {
@@ -68,25 +70,68 @@ namespace Orchestrator.Services
             }
         }
 
-        private static List<string> LoadUploadFileList()
+        // === PERBAIKAN: Helper generik untuk baca file list ===
+        private static List<string> LoadFileList(string fileName, List<string> defaultList)
         {
-            if (!File.Exists(UploadFilesListPath)) {
-                AnsiConsole.MarkupLine($"[yellow]Warn: '{UploadFilesListPath}' not found. Using defaults.[/]");
-                return new List<string> { "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", "config.json", "data.txt", "query.txt", "wallet.txt", "settings.yaml", "mnemonics.txt" };
+            string configFilePath = Path.Combine(ConfigRoot, fileName);
+            
+            if (!File.Exists(configFilePath)) {
+                AnsiConsole.MarkupLine($"[yellow]Warn: '{configFilePath}' tidak ditemukan.[/]");
+                // Coba buat filenya jika belum ada
+                try 
+                {
+                    File.WriteAllText(configFilePath, $"# Isi dengan nama file yang akan disinkronkan (satu per baris)\n# Contoh:\n# index.js\n# main.py\n");
+                    AnsiConsole.MarkupLine($"[green]✓ File '{configFilePath}' baru saja dibuatkan. Silakan isi.[/]");
+                } 
+                catch (Exception ex) 
+                {
+                    AnsiConsole.MarkupLine($"[red]Gagal buat file '{configFilePath}': {ex.Message.EscapeMarkup()}[/]");
+                }
+                return defaultList;
             }
             try {
-                return File.ReadAllLines(UploadFilesListPath).Select(l => l.Trim()).Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#")).ToList();
+                return File.ReadAllLines(configFilePath).Select(l => l.Trim()).Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith("#")).ToList();
             } catch (Exception ex) {
-                AnsiConsole.MarkupLine($"[red]Error reading '{UploadFilesListPath}': {ex.Message.EscapeMarkup()}. Using defaults.[/]");
-                return new List<string> { "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", "config.json", "data.txt", "query.txt", "wallet.txt", "settings.yaml", "mnemonics.txt" };
+                AnsiConsole.MarkupLine($"[red]Error reading '{configFilePath}': {ex.Message.EscapeMarkup()}. Using defaults.[/]");
+                return defaultList;
             }
         }
 
+        // === FUNGSI BARU: Wrapper untuk Menu 5 (Kredensial) ===
         public static async Task RunMigration(CancellationToken cancellationToken = default)
         {
+            var defaultList = new List<string> { 
+                "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", 
+                "config.json", "data.txt", "query.txt", "wallet.txt", 
+                "settings.yaml", "mnemonics.txt" 
+            };
+            await RunFileSync(
+                "Migrasi Kredensial", 
+                "upload_files.txt", // Tetap pakai file lama
+                defaultList, 
+                cancellationToken
+            );
+        }
+
+        // === FUNGSI BARU: Wrapper untuk Menu 7 (Skrip Kustom) ===
+        public static async Task RunCustomScriptSync(CancellationToken cancellationToken = default)
+        {
+            // Daftar default-nya kosong, kita mau user yang isi manual
+            var defaultList = new List<string>(); 
+            await RunFileSync(
+                "Sinkronisasi Skrip", 
+                "sync_files.txt", // Pakai file config BARU
+                defaultList, 
+                cancellationToken
+            );
+        }
+
+        // === PERBAIKAN: Ini adalah "Mesin" utamanya, digeneralisasi dari RunMigration ===
+        private static async Task RunFileSync(string operationName, string configFileName, List<string> defaultList, CancellationToken cancellationToken)
+        {
             AnsiConsole.Clear();
-            AnsiConsole.Write(new FigletText("Migrator").Color(Color.Orange1));
-            AnsiConsole.MarkupLine("[bold]Memindahkan file kredensial LOKAL ke struktur repo.[/]");
+            AnsiConsole.Write(new FigletText(operationName).Color(Color.Orange1));
+            AnsiConsole.MarkupLine($"[bold]Memindahkan file LOKAL (dari '{configFileName}') ke struktur repo.[/]");
             
             var oldRootPaths = GetOldPaths();
             if (oldRootPaths == null || !oldRootPaths.Any())
@@ -102,19 +147,19 @@ namespace Orchestrator.Services
                 return;
             }
 
-            var filesToLookFor = LoadUploadFileList();
+            var filesToLookFor = LoadFileList(configFileName, defaultList);
             if (!filesToLookFor.Any())
             {
-                AnsiConsole.MarkupLine("[yellow]! Tidak ada file kredensial terdaftar di 'upload_files.txt'.[/]");
+                AnsiConsole.MarkupLine($"[yellow]! Tidak ada file terdaftar di '{configFileName}'. Proses dilewati.[/]");
                 return;
             }
 
             AnsiConsole.MarkupLine($"[dim]Akan memindai {config.BotsAndTools.Count} bot untuk {filesToLookFor.Count} jenis file...[/]");
             AnsiConsole.MarkupLine($"[dim]Mencari di {oldRootPaths.Count} path root...[/]");
             AnsiConsole.MarkupLine("[yellow]PERINGATAN: File yang ada di tujuan (repo /bots/...) AKAN DITIMPA![/]");
-            if (!AnsiConsole.Confirm("\n[bold orange1]Lanjutkan migrasi?[/]", false))
+            if (!AnsiConsole.Confirm($"\n[bold orange1]Lanjutkan {operationName}?[/]", false))
             {
-                AnsiConsole.MarkupLine("[yellow]Migrasi dibatalkan.[/]");
+                AnsiConsole.MarkupLine($"[yellow]{operationName} dibatalkan.[/]");
                 return;
             }
 
@@ -127,7 +172,7 @@ namespace Orchestrator.Services
                 .Columns(new ProgressColumn[] { new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new SpinnerColumn() })
                 .StartAsync(async ctx =>
                 {
-                    var task = ctx.AddTask("[green]Memigrasi...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count });
+                    var task = ctx.AddTask("[green]Memproses...[/]", new ProgressTaskSettings { MaxValue = config.BotsAndTools.Count });
 
                     foreach (var bot in config.BotsAndTools)
                     {
@@ -193,12 +238,12 @@ namespace Orchestrator.Services
                     }
                 });
             
-            AnsiConsole.MarkupLine($"\n[bold green]✅ Migrasi Selesai.[/]");
+            AnsiConsole.MarkupLine($"\n[bold green]✅ {operationName} Selesai.[/]");
             AnsiConsole.MarkupLine($"[dim]   Bot ditemukan & diproses: {botsProcessed} (Dilewati: {botsSkipped})[/]");
             AnsiConsole.MarkupLine($"[dim]   File disalin: {filesCopied}[/]");
             AnsiConsole.MarkupLine($"[dim]   File gagal: {filesSkipped}[/]");
             AnsiConsole.MarkupLine($"[yellow]PENTING: Jika 'Bot diproses' masih 0, pastikan nama folder di D:\\SC... SAMA PERSIS dengan nama folder di 'path' bots_config.json.[/]");
-            AnsiConsole.MarkupLine($"[red]Kredensial Anda sekarang ada di folder /bots/ di dalam repo ini. Folder ini sudah di-ignore oleh .gitignore.[/]");
+            AnsiConsole.MarkupLine($"[red]File Anda sekarang ada di folder /bots/ di dalam repo ini. Folder ini sudah di-ignore oleh .gitignore.[/]");
         }
     }
 }
