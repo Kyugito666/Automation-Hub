@@ -155,63 +155,7 @@ namespace Orchestrator.TUI
             escapedSessions.Insert(0, backOption);
             // === AKHIR PERBAIKAN ===
             
+            // Variabel diganti namanya jadi 'selectedBotEscaped' biar jelas
             var selectedBotEscaped = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title($"Attach to session (in [green]{activeCodespace.EscapeMarkup()}[/]):")
-                    .PageSize(15)
-                    .AddChoices(escapedSessions) // <-- Pake list yang udah di-escape
-                );
-
-            if (selectedBotEscaped == backOption || linkedCancellationToken.IsCancellationRequested) return;
-
-            // Kita harus 'Unescape' lagi nama bot-nya pas kirim ke tmux
-            // 'RemoveMarkup' adalah kebalikan dari 'Escape'
-            string originalBotName = selectedBotEscaped.RemoveMarkup();
-
-            AnsiConsole.MarkupLine($"\n[cyan]Attaching to tmux window [yellow]{selectedBotEscaped.EscapeMarkup()}[/]...[/]");
-            AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B, D[/] to detach)[/]");
-            AnsiConsole.MarkupLine("[red](Ctrl+C inside attach will detach you)[/]");
-
-            try {
-                string tmuxSessionName = "automation_hub_bots"; 
-                string escapedBotNameForTmux = originalBotName.Replace("\"", "\\\"");
-
-                string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotNameForTmux}\"";
-                
-                // Panggil ShellUtil dengan useProxy: true (default)
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: true);
-                
-                AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
-            }
-            catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Attach session cancelled (likely Ctrl+C).[/]"); }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
-        }
-        // --- AKHIR FUNGSI YANG DIPERBAIKI ---
-
-        // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) ---
-        private static async Task ShowRemoteShellAsync(CancellationToken linkedCancellationToken)
-        {
-            if (linkedCancellationToken.IsCancellationRequested) return;
-            AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Shell").Color(Color.Magenta1));
-            var currentToken = TokenManager.GetCurrentToken(); var state = TokenManager.GetState(); var activeCodespace = state.ActiveCodespaceName;
-
-            if (string.IsNullOrEmpty(activeCodespace)) { AnsiConsole.MarkupLine("[red]No active codespace recorded.[/]"); Program.Pause("Press Enter...", linkedCancellationToken); return; }
-
-            AnsiConsole.MarkupLine($"[cyan]Opening interactive shell in [green]{activeCodespace.EscapeMarkup()}[/]...[/]");
-            AnsiConsole.MarkupLine("[dim](Type [bold]exit[/] or [bold]Ctrl+D[/] to close)[/]");
-            AnsiConsole.MarkupLine("[red](Ctrl+C inside shell will likely close it)[/]");
-
-            try {
-                string args = $"codespace ssh --codespace \"{activeCodespace}\"";
-                
-                // Panggil ShellUtil dengan useProxy: true (default)
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: true);
-                
-                AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
-            }
-            catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Remote shell session cancelled (likely Ctrl+C).[/]"); }
-            catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Remote shell error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
-        }
-        // --- AKHIR PERBAIKAN ---
-    }
-}
+                    .Title($"Attach to session (in [green]{activeCodesc
