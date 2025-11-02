@@ -60,7 +60,9 @@ namespace Orchestrator.Codespace
                     AnsiConsole.MarkupLine($"[green]Found:[/] [blue]{codespace.Name.EscapeMarkup()}[/] [dim]({codespace.State.EscapeMarkup()})[/]");
                     cancellationToken.ThrowIfCancellationRequested();
                     
-                    if (repoLastCommit.HasValue && !string.IsNullOrEmpty(codespace.CreatedAt)) {
+                    // === PERBAIKAN: Logic 'Outdated' dinonaktifkan ===
+                    // Membiarkan auto-start.sh (git pull) menangani update
+                    /* if (repoLastCommit.HasValue && !string.IsNullOrEmpty(codespace.CreatedAt)) {
                         if (DateTime.TryParse(codespace.CreatedAt, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var csCreated)) {
                             if (repoLastCommit.Value > csCreated) { 
                                 AnsiConsole.MarkupLine($"[yellow]⚠ Outdated CS. Deleting...[/]"); 
@@ -72,6 +74,9 @@ namespace Orchestrator.Codespace
                             }
                         } else AnsiConsole.MarkupLine($"[yellow]Warn: Could not parse CS date '{codespace.CreatedAt.EscapeMarkup()}'[/]");
                     }
+                    */
+                    AnsiConsole.MarkupLine("[dim]Skipping 'Outdated' check. Letting remote 'git pull' handle updates...[/]");
+                    // === AKHIR PERBAIKAN ===
                     
                     cancellationToken.ThrowIfCancellationRequested();
                     switch (codespace.State) {
@@ -205,8 +210,8 @@ namespace Orchestrator.Codespace
                 AnsiConsole.MarkupLine("[yellow]Create cancelled.[/]"); 
                 if (!string.IsNullOrWhiteSpace(newName)) { 
                     AnsiConsole.MarkupLine($"[yellow]Cleaning up {newName.EscapeMarkup()}...[/]"); 
-                    try { await CodeActions.StopCodespace(token, newName); } catch { } 
-                    try { await CodeActions.DeleteCodespace(token, newName); } catch { } 
+                    try { await CodeManager.StopCodespace(token, newName); } catch { } 
+                    try { await CodeManager.DeleteCodespace(token, newName); } catch { } 
                 } 
                 throw; 
             } 
@@ -216,7 +221,7 @@ namespace Orchestrator.Codespace
                 AnsiConsole.WriteException(ex); 
                 if (!string.IsNullOrWhiteSpace(newName)) { 
                     AnsiConsole.MarkupLine($"[yellow]Deleting failed CS {newName.EscapeMarkup()}...[/]"); 
-                    try { await CodeActions.DeleteCodespace(token, newName); } catch { } 
+                    try { await CodeManager.DeleteCodespace(token, newName); } catch { } 
                 } 
                 string info = ""; 
                 if (ex.Message.Contains("quota")) info = " (Quota?)"; 
