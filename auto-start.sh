@@ -69,7 +69,7 @@ if [ "$IS_FIRST_RUN" = true ]; then
     fi
     echo "   ✓ ProxySync (Full Auto) completed. success_proxy.txt updated."
 else
-    # --- BLOK INI YANG JALAN PAS RESUME ---
+    # --- BLOK INI YANG DIUBAH (SESUAI MAU LU) ---
     echo "   [Restart] Running IP Authorization ONLY..."
     python3 "$WORKDIR/proxysync/main.py" --ip-auth-only
     if [ $? -ne 0 ]; then
@@ -103,7 +103,9 @@ if tmux has-session -t automation_hub_bots 2>/dev/null; then
         exit 0
     else
         echo "   🔄 First run detected but tmux exists. Killing old session..."
+        # === PERBAIKAN: Bungkam error kosmetik ===
         tmux kill-session -t automation_hub_bots 2>/dev/null || true
+        # === AKHIR PERBAIKAN ===
     fi
 fi
 
