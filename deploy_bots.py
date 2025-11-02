@@ -223,7 +223,8 @@ def install_dependencies(bot_path: Path, bot_type: str):
         print(f"    [Deps] 🟡 Unknown bot type '{bot_type}'. Skipping dependency check.")
         return True
 
-def get_run_command(bot_path: Path, bot_type: str):
+# === PERBAIKAN: Tambahkan argumen 'entrypoint' ===
+def get_run_command(bot_path: Path, bot_type: str, entrypoint: str = None):
     """Menentukan perintah untuk menjalankan bot."""
     if bot_type == "python":
         venv_path = get_active_venv_path(bot_path)
@@ -238,6 +239,15 @@ def get_run_command(bot_path: Path, bot_type: str):
         else:
              print(f"    [Run] 🟡 No active venv found. Using global '{python_exe}'.")
         
+        # === PERBAIKAN: Cek entrypoint kustom DULU ===
+        if entrypoint:
+            if (bot_path / entrypoint).exists():
+                print(f"    [Run] 🟢 Found custom entry point from config: {entrypoint}")
+                return f"\"{python_exe}\"", entrypoint
+            else:
+                print(f"    [Run] 🔴 Custom entry point '{entrypoint}' not found. Falling back...")
+        # === AKHIR PERBAIKAN ===
+        
         for entry in ["run.py", "main.py", "bot.py", "app.py"]:
             if (bot_path / entry).exists():
                 print(f"    [Run] 🟢 Found entry point: {entry}")
@@ -246,6 +256,15 @@ def get_run_command(bot_path: Path, bot_type: str):
         return None, None
 
     elif bot_type == "javascript":
+        # === PERBAIKAN: Cek entrypoint kustom DULU ===
+        if entrypoint:
+            if (bot_path / entrypoint).exists():
+                print(f"    [Run] 🟢 Found custom entry point from config: {entrypoint}")
+                return "node", entrypoint
+            else:
+                print(f"    [Run] 🔴 Custom entry point '{entrypoint}' not found. Falling back...")
+        # === AKHIR PERBAIKAN ===
+        
         pkg_file = bot_path / "package.json"
         if pkg_file.exists():
             try:
@@ -381,6 +400,9 @@ def main():
     for entry in bots_and_tools:
         name = entry.get("name"); path_str = entry.get("path"); repo_url = entry.get("repo_url")
         enabled = entry.get("enabled", False); bot_type = entry.get("type")
+        # === PERBAIKAN: Baca field 'entrypoint' ===
+        entrypoint = entry.get("entrypoint") 
+        # === AKHIR PERBAIKAN ===
 
         if not all([name, path_str, repo_url, bot_type]):
             print(f"\n--- 🟡 Skipping Invalid Entry ---\n  Data: {entry}"); skip_count += 1; continue
@@ -397,7 +419,10 @@ def main():
         if not sync_bot_repo(name, bot_path, repo_url): fail_count += 1; continue
         if not install_dependencies(bot_path, bot_type): fail_count += 1; continue
         
-        executor, args = get_run_command(bot_path, bot_type)
+        # === PERBAIKAN: Kirim 'entrypoint' ke get_run_command ===
+        executor, args = get_run_command(bot_path, bot_type, entrypoint)
+        # === AKHIR PERBAIKAN ===
+        
         if not executor: print(f"  🔴 Cannot run '{name}'. Skipping launch."); fail_count += 1; continue
             
         if launch_in_tmux(name, bot_path, executor, args): success_count += 1
