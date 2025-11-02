@@ -15,10 +15,7 @@ LOG_FILE="$WORKDIR/startup.log"
 HEALTH_CHECK_DONE="/tmp/auto_start_done"
 HEALTH_CHECK_FAIL_PROXY="/tmp/auto_start_failed_proxysync"
 HEALTH_CHECK_FAIL_DEPLOY="/tmp/auto_start_failed_deploy"
-
-# === PERBAIKAN: Pindahkan flag dari /tmp ke $WORKDIR ===
 FIRST_RUN_FLAG="$WORKDIR/.auto_start_first_run"
-# === AKHIR PERBAIKAN ===
 
 exec > >(tee -a "$LOG_FILE") 2>&1
 
