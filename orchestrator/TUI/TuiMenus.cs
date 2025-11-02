@@ -50,12 +50,8 @@ namespace Orchestrator.TUI
                             bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
                             TokenManager.SetProxyUsage(useProxy);
 
-                            // === PERBAIKAN: Ganti 'cancellationToken' -> 'linkedCtsMenu.Token' ===
-                            // Ini membuat Menu 1 bisa dibatalkan dengan Ctrl+C (interaktif)
-                            // tanpa mematikan seluruh aplikasi.
                             await TuiLoop.RunOrchestratorLoopAsync(linkedCtsMenu.Token);
                             
-                            // Jika loop berhenti (karena Ctrl+C), kita PING USER untuk Enter
                             if (linkedCtsMenu.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                             {
                                 AnsiConsole.MarkupLine("\n[yellow]Loop dihentikan (Ctrl+C). Codespace dibiarkan berjalan.[/]");
@@ -128,12 +124,8 @@ namespace Orchestrator.TUI
          private static async Task ShowLocalProxyMenuAsync(CancellationToken linkedCancellationToken) {
              while (!linkedCancellationToken.IsCancellationRequested) {
                  
-                 // === PERBAIKAN (CS1998): Tambahkan Yield() untuk menjamin method ini async ===
-                 // Ini memaksa method berpindah konteks dan memuaskan compiler
-                 // bahwa ini adalah method async, meskipun user memilih "0. Back".
                  await Task.Yield();
-                 // === AKHIR PERBAIKAN ===
-                 
+
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Proxy").Color(Color.Green));
                  var selection = AnsiConsole.Prompt( new SelectionPrompt<string>()
                          .Title("\n[bold white]LOCAL PROXY MGMT[/]").PageSize(10).WrapAround(true)
@@ -174,21 +166,16 @@ namespace Orchestrator.TUI
              {
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup UI").Color(Color.Fuchsia));
                  
-                 // === PERBAIKAN (CS1061): Helper untuk menggantikan .Truncate() ===
-                 // (Pindahkan helper ini ke atas jika belum ada)
                  static string TruncateString(string value, int maxLength)
                  {
                      if (string.IsNullOrEmpty(value)) return value;
                      return value.Length <= maxLength ? value : value.Substring(0, maxLength) + "...";
                  }
-                 // === AKHIR PERBAIKAN ===
-
 
                  // === PERBAIKAN (Malformed Markup): Escape b.Name ===
                  var choices = targetBots
                      .Select(b => $"{b.Name.EscapeMarkup()} (Status: [{(b.Recorded ? "green" : "red")}]{(b.Recorded ? "Recorded" : "NONE")}[/])").ToList();
-                 // === AKHIR PERBAIKAN ===
-                 
+
                  choices.Insert(0, "<< Back");
                  choices.Insert(1, "--- MANUAL ACTIONS ---");
                  choices.Insert(2, "[yellow]Delete Setup Script[/]");
@@ -204,32 +191,26 @@ namespace Orchestrator.TUI
 
                  if (selectedChoice == "[yellow]Delete Setup Script[/]")
                  {
-                      // === PERBAIKAN (CS1998): Hapus 'await' ===
                       ShowDeleteExpectScriptMenuAsync(targetBots.Select(b => b.Path).ToList(), linkedCancellationToken);
-                      // === AKHIR PERBAIKAN ===
-                      
+
                       // Refresh status setelah delete
                       targetBots = config.BotsAndTools.Where(b => b.Enabled && b.IsBot).Select(b => new { Name = b.Name, Path = b.Path, Recorded = ExpectManager.CheckExpectScriptExists(b.Path) }).ToList();
                       continue;
                  }
 
                  // Ambil bot yang dipilih
-                 // === PERBAIKAN: Handle selectedChoice yang sudah di-escape ===
-                 // Kita cari bot yang namanya (setelah di-escape) cocok dengan awal selectedChoice
                  var selectedBot = targetBots.FirstOrDefault(b => selectedChoice.StartsWith(b.Name.EscapeMarkup()));
                  if (selectedBot == null)
                  {
-                     // Fallback/Error (seharusnya tidak terjadi jika choices di-generate dari targetBots)
                      AnsiConsole.MarkupLine("[red]Error: Bot yang dipilih tidak ditemukan (post-escape).[/]");
                      Program.Pause("Tekan Enter...", linkedCancellationToken);
                      continue;
                  }
-                 // === AKHIR PERBAIKAN ===
-                 
+
                  // --- MULAI REKAM/EDIT ---
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Record").Color(Color.Fuchsia));
                  AnsiConsole.MarkupLine($"\n[cyan]SETUP SCRIPT UNTUK {selectedBot.Name.EscapeMarkup()}[/]");
-                 
+
                  var existingScript = ExpectManager.LoadExpectScript(selectedBot.Path);
                  if (existingScript != null)
                  {
@@ -240,7 +221,7 @@ namespace Orchestrator.TUI
                  AnsiConsole.MarkupLine("\n[bold]Mode Perekaman Dimulai (Expect Script).[/bold]");
                  AnsiConsole.MarkupLine("[dim]Masukkan [bold]PROMPT[/] yang diharapkan (Output bot) dan [bold]SEND[/] (Input user).[/dim]");
                  AnsiConsole.MarkupLine("[red]Tekan Enter (kosong) di PROMPT untuk mengakhiri rekaman.[/red]");
-                 
+
                  var newScript = new List<ExpectStep>();
                  int step = 1;
                  
@@ -270,38 +251,30 @@ namespace Orchestrator.TUI
              }
         }
         
-        // === PERBAIKAN: Pindahkan helper Truncate ke dalam ShowRecordMenuAsync atau buat jadi static helper ===
-        // (Kita pindahkan ke dalam ShowRecordMenuAsync di atas)
-        
         private static void DisplayExpectScript(List<ExpectStep> script, Func<string, int, string> truncator)
         {
              var table = new Table().Title("[bold yellow]Existing Setup Script[/]").Expand();
              table.AddColumn("[cyan]Step[/]");
              table.AddColumn("[cyan]EXPECT (Prompt)[/]");
              table.AddColumn("[cyan]SEND (Input)[/]");
-             
+
              for(int i = 0; i < script.Count; i++)
              {
                  table.AddRow(
                      (i+1).ToString(),
-                     // === PERBAIKAN (CS1061) ===
                      truncator(script[i].Expect.EscapeMarkup(), 50),
-                     // === PERBAIKAN (CS1061) ===
                      truncator(script[i].Send.EscapeMarkup(), 50)
                  );
              }
              AnsiConsole.Write(table);
         }
         
-        // === PERBAIKAN (CS1998): Ganti 'async Task' -> 'void' ===
         private static void ShowDeleteExpectScriptMenuAsync(List<string> botPaths, CancellationToken linkedCancellationToken)
-        // === AKHIR PERBAIKAN ===
         {
              var choices = botPaths
                 .Where(p => ExpectManager.CheckExpectScriptExists(p))
                 .Select(p => {
                     var name = p.Split(new char[] { '/', '\\' }).Last();
-                    // === PERBAIKAN: Escape nama bot jika mengandung markup ===
                     return $"{name.EscapeMarkup()} ({p.EscapeMarkup()})";
                 }).ToList();
              
@@ -317,36 +290,24 @@ namespace Orchestrator.TUI
 
              if (selectedChoice == "<< Back") return;
              
-             // === PERBAIKAN: Ambil path dari string yang mungkin sudah di-escape ===
-             // Kita harus parsing ulang path dari `Name (Path)`
              var pathStart = selectedChoice.LastIndexOf('(');
              var pathEnd = selectedChoice.LastIndexOf(')');
              
-             // === PERBAIKAN: Logic parsing (pathEnd < pathEnd -> pathEnd < pathStart) ===
              if (pathStart == -1 || pathEnd == -1 || pathEnd < pathStart)
-             // === AKHIR PERBAIKAN ===
              {
                  AnsiConsole.MarkupLine("[red]Error parsing pilihan.[/]");
                  Program.Pause("Tekan Enter...", linkedCancellationToken);
                  return;
              }
              var botPath = selectedChoice.Substring(pathStart + 1, pathEnd - pathStart - 1);
-             // Karena botPath di-escape saat display, kita tidak perlu un-escape
-             // karena kita cuma butuh string-nya untuk lookup file.
-             // Tapi nama yang ditampilkan (sebelum path) harus di-unescape jika kita ingin menampilkannya.
              var displayName = selectedChoice.Substring(0, pathStart).Trim();
-             
-             // === PERBAIKAN (Malformed Markup): Escape 'displayName' di sini ===
+
              if (AnsiConsole.Confirm($"[red]Anda yakin ingin menghapus script setup untuk {displayName.EscapeMarkup()} ({botPath.EscapeMarkup()})?[/]", false))
-             // === AKHIR PERBAIKAN ===
              {
-                 // Un-escape tidak diperlukan, karena nama file di disk tidak mengandung escape char
                  ExpectManager.DeleteExpectScript(botPath);
              }
              Program.Pause("Tekan Enter...", linkedCancellationToken);
         }
-        // === AKHIR FUNGSI BARU ===
-
 
         // --- INI FUNGSI YANG DIPERBAIKI (ATTACH/SETUP UTAMA) ---
         private static async Task ShowAttachMenuAsync(CancellationToken linkedCancellationToken) {
@@ -423,7 +384,6 @@ namespace Orchestrator.TUI
 
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotNameForTmux}\"";
                 
-                // === PERBAIKAN (CS0103): 'linkedCtsMenu' -> 'linkedCancellationToken' ===
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
