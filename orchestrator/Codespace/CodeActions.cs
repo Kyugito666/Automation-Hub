@@ -89,13 +89,12 @@ namespace Orchestrator.Codespace
             string repo = token.Repo; 
             string scriptPath = $"/workspaces/{repo}/auto-start.sh";
             AnsiConsole.Markup("[dim]Executing command in background (nohup)... [/]");
-            // Perintah yang ingin dieksekusi di remote
-            string remoteCommand = $"set -o pipefail; bash \"{scriptPath.Replace("\"", "\\\"")}\" | tee /tmp/startup.log";
             
-            // PERBAIKAN: Bungkus seluruh remoteCommand dengan tanda kutip ("...") 
-            // Tanda kutip ini di-escape (\") agar bisa masuk ke string C#
-            // Ini mencegah cmd.exe lokal menginterpretasi pipe '|'
-            string args = $"codespace ssh -c \"{codespaceName}\" -- \"{remoteCommand.Replace("\"", "\\\"")}\"";
+            // === PERBAIKAN: Bungkus perintah remote dengan kutip ===
+            string command = $"nohup bash \"{scriptPath.Replace("\"", "\\\"")}\" > /tmp/startup.log 2>&1 &";
+            string args = $"codespace ssh -c \"{codespaceName}\" -- \"{command.Replace("\"", "\\\"")}\"";
+            // === AKHIR PERBAIKAN ===
+            
             try { 
                 await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
@@ -113,8 +112,12 @@ namespace Orchestrator.Codespace
             string repo = token.Repo; 
             string scriptPath = $"/workspaces/{repo}/auto-start.sh";
             
+            // === PERBAIKAN: Bungkus seluruh perintah remote dengan kutip ===
+            // 1. Definisikan perintah remote
             string command = $"set -o pipefail; bash \"{scriptPath.Replace("\"", "\\\"")}\" | tee /tmp/startup.log";
-            string args = $"codespace ssh -c \"{codespaceName}\" -- {command}";
+            // 2. Bungkus SELURUH perintah itu dengan kutip untuk gh, dan escape kutip di dalamnya
+            string args = $"codespace ssh -c \"{codespaceName}\" -- \"{command.Replace("\"", "\\\"")}\"";
+            // === AKHIR PERBAIKAN ===
 
             bool scriptSuccess = false; 
             try 
