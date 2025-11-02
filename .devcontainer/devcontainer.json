@@ -19,9 +19,10 @@
   // Ini menjamin tmux & dependensi proxysync siap SEBELUM auto-start.sh jalan
   "postCreateCommand": "sudo apt-get update -qq && sudo apt-get install -y tmux jq && python3 -m pip install --user --no-cache-dir --upgrade -r ${containerWorkspaceFolder}/proxysync/requirements.txt",
 
-  // === PERBAIKAN: postAttach HANYA manggil auto-start ===
-  // Ini jalan setelah postCreate selesai dan SSH ready
-  "postAttachCommand": "bash ${containerWorkspaceFolder}/auto-start.sh",
+  // === PERBAIKAN: HAPUS postAttachCommand ===
+  // Kita tidak mau codespace otomatis menjalankan skrip.
+  // Kita mau TUI (Orchestrator) yang panggil skrip SETELAH upload file.
+  // "postAttachCommand": "bash ${containerWorkspaceFolder}/auto-start.sh",
 
   "remoteUser": "vscode"
 }
