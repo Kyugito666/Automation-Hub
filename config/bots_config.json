@@ -63,7 +63,7 @@
       "path": "bots/privatekey/gopherfaucetbot-nte",
       "repo_url": "https://github.com/VinzSenzoo/GopherFaucetBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "Intuition-Testnet-Bot",
@@ -154,7 +154,7 @@
       "path": "bots/privatekey/pharosv2autobot-nte",
       "repo_url": "https://github.com/VinzSenzoo/PharosV2AutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "RedactAutoBot-NTE",
@@ -182,7 +182,7 @@
       "path": "bots/privatekey/neuraautobot-nte",
       "repo_url": "https://github.com/VinzSenzoo/NeuraAutoBot-NTE.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "AsterAutoBot-NTE",
