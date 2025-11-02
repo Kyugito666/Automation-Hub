@@ -49,16 +49,14 @@ namespace Orchestrator.TUI
                 try {
                     switch (choice) {
                         case "1":
+                            // === INI BLOK YANG BENAR (BEBAS DARI ERROR PASTE) ===
                             AnsiConsole.MarkupLine(string.Empty); 
                             bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
                             TokenManager.SetProxyUsage(useProxy);
-
-                            await TuiLoop.RunOrsiap, bos. Perbaikan tadi (mematikan cek 'Outdated') harusnya menyelesaikan masalah itu. TUI lu nggak akan lagi hapus-hapus codespace cuma karena ada commit baru.
-
-Biarin `auto-start.sh` yang urus `git pull` di dalem.
-chestratorLoopAsync(cancellationToken);
+                            await TuiLoop.RunOrchestratorLoopAsync(cancellationToken);
                             if (cancellationToken.IsCancellationRequested) return; 
                             break; 
+                            // === AKHIR BLOK YANG BENAR ===
                         case "2": await ShowSetupMenuAsync(linkedCtsMenu.Token); break; 
                         case "3": await ShowLocalMenuAsync(linkedCtsMenu.Token); break; 
                         case "4": await ShowAttachMenuAsync(linkedCtsMenu.Token); break; 
