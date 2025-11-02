@@ -56,7 +56,8 @@
       "path": "bots/privatekey/gopherautobot-nte",
       "repo_url": "https://github.com/VinzSenzoo/GopherAutoBot-NTE.git",
       "enabled": true,
-      "type": "javascript"
+      "type": "javascript",
+      "entrypoint": "index2.js"
     },
     {
       "name": "GopherFaucetBot-NTE",
