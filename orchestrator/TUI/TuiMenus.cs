@@ -53,7 +53,10 @@ namespace Orchestrator.TUI
                             bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
                             TokenManager.SetProxyUsage(useProxy);
 
-                            await TuiLoop.RunOrchestratorLoopAsync(cancellationToken);
+                            await TuiLoop.RunOrsiap, bos. Perbaikan tadi (mematikan cek 'Outdated') harusnya menyelesaikan masalah itu. TUI lu nggak akan lagi hapus-hapus codespace cuma karena ada commit baru.
+
+Biarin `auto-start.sh` yang urus `git pull` di dalem.
+chestratorLoopAsync(cancellationToken);
                             if (cancellationToken.IsCancellationRequested) return; 
                             break; 
                         case "2": await ShowSetupMenuAsync(linkedCtsMenu.Token); break; 
