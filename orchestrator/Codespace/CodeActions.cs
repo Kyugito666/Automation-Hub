@@ -115,38 +115,25 @@ namespace Orchestrator.Codespace
             string command = $"set -o pipefail; bash \"{scriptPath.Replace("\"", "\\\"")}\" | tee /tmp/startup.log";
             string args = $"codespace ssh -c \"{codespaceName}\" -- \"{command.Replace("\"", "\\\"")}\"";
 
-            bool scriptSuccess = false; 
+            bool scriptSuccess = true; 
             try 
             {
-                // --- PERBAIKAN LOGIC HEALTH CHECK ---
-                // 'scriptSuccess' defaultnya true. Kita hanya cari error fatal (ProxySync).
-                // Kegagalan deploy bot (5/33) BUKAN error fatal.
-                scriptSuccess = true; 
-                
                 Func<string, bool> logCallback = (line) => {
                     // === PERBAIKAN: Escape [REMOTE] jadi [[REMOTE]] ===
                     AnsiConsole.MarkupLine($"[grey]   [[REMOTE]] {line.EscapeMarkup()}[/]");
                     // === AKHIR PERBAIKAN ===
                     
-                    // HANYA ProxySync error yang dianggap fatal
                     if(line.Contains("ERROR: ProxySync failed")) {
                         AnsiConsole.MarkupLine("[red]   [[FATAL DETECTED: ProxySync failed]]");
                         scriptSuccess = false; 
                     }
-                    // Kita tidak lagi menganggap "ERROR: Bot deployment failed" sebagai error fatal
-                    
                     return false; 
                 };
 
-                // (stdout kini tidak dipakai untuk cek logic)
-                await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken, logCallback);
+                string stdout = await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken);
                 
-                // Cek logic 'if' setelah run DIHAPUS
-
                 AnsiConsole.MarkupLine($"[green]✓ Remote script finished.[/]");
-                // Kembalikan status 'scriptSuccess' yang hanya bisa di-set 'false' oleh ProxySync fail
                 return scriptSuccess;
-                // --- AKHIR PERBAIKAN LOGIC ---
             }
             catch (OperationCanceledException) {
                 AnsiConsole.MarkupLine("\n[yellow]Log streaming cancelled by user.[/]");
@@ -156,16 +143,11 @@ namespace Orchestrator.Codespace
                 AnsiConsole.MarkupLine($"\n[red]✗ Remote script FAILED (Exit Code != 0).[/]"); 
                 AnsiConsole.MarkupLine($"[dim]   Error: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
                 
-                // --- PERBAIKAN: Jika error-nya BUKAN karena ProxySync, anggap sukses ---
-                // Jika exit 1 tapi BUKAN karena ProxySync (yang sudah dicek callback),
-                // itu berarti karena 'deploy_bots.py' (yang sudah kita fix, tapi just in case)
-                // atau error lain yang tidak fatal.
-                if (scriptSuccess) // Jika 'scriptSuccess' masih true (karena ProxySync tidak fail)
+                if (scriptSuccess) 
                 {
                     AnsiConsole.MarkupLine("[yellow]   ...Interpreting non-zero exit as PARTIAL SUCCESS (Bot Deploy Failures).[/]");
-                    return true; // Anggap Sukses
+                    return true; 
                 }
-                // --- AKHIR PERBAIKAN ---
                 
                 return false; 
             }
@@ -249,7 +231,13 @@ namespace Orchestrator.Codespace
         internal static async Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName)
         {
             AnsiConsole.MarkupLine($"[dim]Fetching tmux sessions...[/]");
-            string args = $"codespace ssh -c \"{codespaceName}\" -- tmux list-windows -t automation_hub_bots -F \"#{{window_name}}\"";
+            
+            // === PERBAIKAN: Quoting untuk remote shell ===
+            // 1. Bungkus seluruh perintah remote (tmux ...) dengan "..."
+            // 2. Bungkus format string tmux (-F ...) dengan '...'
+            string args = $"codespace ssh -c \"{codespaceName}\" -- \"tmux list-windows -t automation_hub_bots -F '#{{window_name}}'\"";
+            // === AKHIR PERBAIKAN ===
+            
             try {
                 string result = await GhService.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS);
                 return result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(s => s != "dashboard" && s != "bash").OrderBy(s => s).ToList(); 
