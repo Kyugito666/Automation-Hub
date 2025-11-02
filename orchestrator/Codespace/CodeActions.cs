@@ -65,7 +65,9 @@ namespace Orchestrator.Codespace
         {
             AnsiConsole.Markup($"[dim]Attempting start/revive codespace '{codespaceName.EscapeMarkup()}'... [/]");
             try { 
-                string args = $"codespace revive \"{codespaceName}\""; 
+                // === PERBAIKAN: 'revive' diganti 'start -c' ===
+                string args = $"codespace start -c \"{codespaceName}\""; 
+                // === AKHIR PERBAIKAN ===
                 await GhService.RunGhCommand(token, args, START_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
@@ -128,9 +130,7 @@ namespace Orchestrator.Codespace
                     return false; 
                 };
 
-                // === PERBAIKAN: Masukkan 'logCallback' yang hilang ===
                 string stdout = await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken, logCallback);
-                // === AKHIR PERBAIKAN ===
                 
                 AnsiConsole.MarkupLine($"[green]✓ Remote script finished.[/]");
                 return scriptSuccess;
