@@ -65,8 +65,8 @@ namespace Orchestrator.Codespace
         {
             AnsiConsole.Markup($"[dim]Attempting start/revive codespace '{codespaceName.EscapeMarkup()}'... [/]");
             try { 
-                // === PERBAIKAN: 'revive' diganti 'start -c' ===
-                string args = $"codespace start -c \"{codespaceName}\""; 
+                // === PERBAIKAN: Hapus flag '-c' ===
+                string args = $"codespace start \"{codespaceName}\""; 
                 // === AKHIR PERBAIKAN ===
                 await GhService.RunGhCommand(token, args, START_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
