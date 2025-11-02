@@ -48,7 +48,7 @@ else
 fi
 # === AKHIR PERBAIKAN ===
 
-# === PERBAIKAN: Logic ProxySync Cerdas ===
+# === PERBAIKAN: Logic ProxySync Cerdas (Sesuai Request) ===
 echo "[2/3] Running ProxySync..."
 if ! command -v python3 &> /dev/null; then
     echo "   ❌ ERROR: python3 command not found!"
@@ -66,6 +66,7 @@ if [ "$IS_FIRST_RUN" = true ]; then
     fi
     echo "   ✓ ProxySync (Full Auto) completed. success_proxy.txt updated."
 else
+    # --- BLOK INI YANG DIUBAH ---
     echo "   [Restart] Running IP Authorization ONLY..."
     python3 "$WORKDIR/proxysync/main.py" --ip-auth-only
     if [ $? -ne 0 ]; then
@@ -75,6 +76,16 @@ else
         exit 1
     fi
     echo "   ✓ ProxySync (IP Auth Only) completed."
+    
+    echo "   [Restart] Running Test & Save (re-validate existing proxies)..."
+    python3 "$WORKDIR/proxysync/main.py" --test-and-save-only
+    if [ $? -ne 0 ]; then
+        echo "   ⚠️  WARNING: ProxySync (Test & Save) failed. May use stale proxies."
+        # Ini BUKAN error fatal, biarkan deployer tetep jalan pake proxy lama
+    else
+        echo "   ✓ ProxySync (Test & Save) completed. success_proxy.txt updated."
+    fi
+    # --- AKHIR BLOK UBAHAN ---
 fi
 # === AKHIR PERBAIKAN ===
 
