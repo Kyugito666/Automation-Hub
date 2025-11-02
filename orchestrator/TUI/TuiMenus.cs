@@ -107,7 +107,7 @@ namespace Orchestrator.TUI
                          case "3": await CollabService.AcceptInvitations(linkedCancellationToken); break;
                          case "4": await Task.Run(() => TokenManager.ShowStatus(), linkedCancellationToken); break; 
                      }
-                     Program.Pause("Press Enter...", linkedCancellationToken); 
+                     Program.Pause("Tekan Enter...", linkedCancellationToken); 
                  } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Setup operation cancelled.[/]"); return; } 
                  catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); } 
             }
@@ -129,7 +129,7 @@ namespace Orchestrator.TUI
             }
         }
 
-        // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) ---
+        // --- INI FUNGSI YANG DIPERBAIKI ---
         private static async Task ShowAttachMenuAsync(CancellationToken linkedCancellationToken) {
             if (linkedCancellationToken.IsCancellationRequested) return; 
 
@@ -150,31 +150,33 @@ namespace Orchestrator.TUI
             // === PERBAIKAN: Escape Markup ===
             // Kita escape nama bot, TAPI JANGAN escape "[ << Back ]"
             var backOption = "[ << Back ]";
-            var escapedSessions = sessions.Select(s => s.EscapeMarkup()).ToList();
+            // 'Markup.Escape' adalah cara aman untuk 'membersihkan' string dari tag '[...]'
+            var escapedSessions = sessions.Select(s => Markup.Escape(s)).ToList(); 
             escapedSessions.Insert(0, backOption);
             // === AKHIR PERBAIKAN ===
             
-            var selectedBot = AnsiConsole.Prompt(
+            var selectedBotEscaped = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title($"Attach to session (in [green]{activeCodespace.EscapeMarkup()}[/]):")
                     .PageSize(15)
                     .AddChoices(escapedSessions) // <-- Pake list yang udah di-escape
                 );
 
-            if (selectedBot == backOption || linkedCancellationToken.IsCancellationRequested) return;
+            if (selectedBotEscaped == backOption || linkedCancellationToken.IsCancellationRequested) return;
 
-            AnsiConsole.MarkupLine($"\n[cyan]Attaching to tmux window [yellow]{selectedBot.EscapeMarkup()}[/]...[/]");
+            // Kita harus 'Unescape' lagi nama bot-nya pas kirim ke tmux
+            // 'RemoveMarkup' adalah kebalikan dari 'Escape'
+            string originalBotName = selectedBotEscaped.RemoveMarkup();
+
+            AnsiConsole.MarkupLine($"\n[cyan]Attaching to tmux window [yellow]{selectedBotEscaped.EscapeMarkup()}[/]...[/]");
             AnsiConsole.MarkupLine("[dim](Use [bold]Ctrl+B, D[/] to detach)[/]");
             AnsiConsole.MarkupLine("[red](Ctrl+C inside attach will detach you)[/]");
 
             try {
                 string tmuxSessionName = "automation_hub_bots"; 
-                // === PERBAIKAN: Kita harus 'Unescape' lagi nama bot-nya pas kirim ke tmux ===
-                string originalBotName = selectedBot.RemoveMarkup();
-                string escapedBotName = originalBotName.Replace("\"", "\\\"");
-                // === AKHIR PERBAIKAN ===
+                string escapedBotNameForTmux = originalBotName.Replace("\"", "\\\"");
 
-                string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
+                string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotNameForTmux}\"";
                 
                 // Panggil ShellUtil dengan useProxy: true (default)
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: true);
@@ -184,7 +186,7 @@ namespace Orchestrator.TUI
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Attach session cancelled (likely Ctrl+C).[/]"); }
             catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
         }
-        // --- AKHIR PERBAIKAN ---
+        // --- AKHIR FUNGSI YANG DIPERBAIKI ---
 
         // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) ---
         private static async Task ShowRemoteShellAsync(CancellationToken linkedCancellationToken)
