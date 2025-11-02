@@ -120,7 +120,11 @@ namespace Orchestrator.Util
             }
             catch (Exception ex) {
                 AnsiConsole.MarkupLine("\n[yellow]"+ new string('═', 60) +"[/]");
+                
+                // === PERBAIKAN (LOG 1 & 3): WAJIB ESCAPE EX.MESSAGE ===
                 AnsiConsole.MarkupLine($"[red]✗ Error running full interactive process: {ex.Message.EscapeMarkup()}[/]");
+                // === AKHIR PERBAIKAN ===
+                
                 try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
                  throw; 
             }
