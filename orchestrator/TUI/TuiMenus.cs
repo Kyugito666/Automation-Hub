@@ -102,7 +102,7 @@ namespace Orchestrator.TUI
             AnsiConsole.MarkupLine("[yellow]Exiting Menu loop due to main cancellation.[/]");
         } 
 
-        // ... (ShowSetupMenuAsync dan ShowLocalProxyMenuAsync (sebelumnya ShowLocalMenuAsync) tidak berubah) ...
+        // ... (ShowSetupMenuAsync tidak berubah) ...
          private static async Task ShowSetupMenuAsync(CancellationToken linkedCancellationToken) {
             while (!linkedCancellationToken.IsCancellationRequested) {
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup").Color(Color.Yellow));
@@ -124,8 +124,16 @@ namespace Orchestrator.TUI
             }
          }
 
+        // === PERBAIKAN (CS1998): Method 'ShowLocalProxyMenuAsync' (line 144) ===
          private static async Task ShowLocalProxyMenuAsync(CancellationToken linkedCancellationToken) {
              while (!linkedCancellationToken.IsCancellationRequested) {
+                 
+                 // === PERBAIKAN (CS1998): Tambahkan Yield() untuk menjamin method ini async ===
+                 // Ini memaksa method berpindah konteks dan memuaskan compiler
+                 // bahwa ini adalah method async, meskipun user memilih "0. Back".
+                 await Task.Yield();
+                 // === AKHIR PERBAIKAN ===
+                 
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Proxy").Color(Color.Green));
                  var selection = AnsiConsole.Prompt( new SelectionPrompt<string>()
                          .Title("\n[bold white]LOCAL PROXY MGMT[/]").PageSize(10).WrapAround(true)
@@ -139,6 +147,7 @@ namespace Orchestrator.TUI
                  catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); } 
             }
          }
+        // === AKHIR PERBAIKAN ===
 
         // === FUNGSI BARU: Menu Setup Interaktif (Recording) ===
         private static async Task ShowRecordMenuAsync(CancellationToken linkedCancellationToken)
@@ -312,7 +321,7 @@ namespace Orchestrator.TUI
              // Kita harus parsing ulang path dari `Name (Path)`
              var pathStart = selectedChoice.LastIndexOf('(');
              var pathEnd = selectedChoice.LastIndexOf(')');
-             if (pathStart == -1 || pathEnd == -1 || pathEnd < pathStart)
+             if (pathStart == -1 || pathEnd == -1 || pathEnd < pathEnd)
              {
                  AnsiConsole.MarkupLine("[red]Error parsing pilihan.[/]");
                  Program.Pause("Tekan Enter...", linkedCancellationToken);
