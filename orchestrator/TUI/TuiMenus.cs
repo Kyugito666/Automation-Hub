@@ -180,8 +180,8 @@ namespace Orchestrator.TUI
 
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotNameForTmux}\"";
                 
-                // Panggil ShellUtil dengan useProxy: true (default)
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: true);
+                // === PERBAIKAN: Paksa useProxy: false untuk SSH ===
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, **useProxy: false**);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
             }
@@ -190,7 +190,7 @@ namespace Orchestrator.TUI
         }
         // --- AKHIR FUNGSI YANG DIPERBAIKI ---
 
-        // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) ---
+        // --- PERBAIKAN: (SSH Call -> HARUS Pake Proxy) -> DIUBAH JADI NO PROXY ---
         private static async Task ShowRemoteShellAsync(CancellationToken linkedCancellationToken)
         {
             if (linkedCancellationToken.IsCancellationRequested) return;
@@ -206,8 +206,8 @@ namespace Orchestrator.TUI
             try {
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
                 
-                // Panggil ShellUtil dengan useProxy: true (default)
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: true);
+                // === PERBAIKAN: Paksa useProxy: false untuk SSH ===
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, **useProxy: false**);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
             }
