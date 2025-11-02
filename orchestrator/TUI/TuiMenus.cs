@@ -236,6 +236,15 @@ namespace Orchestrator.TUI
              }
         }
         
+        // === PERBAIKAN (CS1061): Helper untuk menggantikan .Truncate() ===
+        private static string TruncateString(string value, int maxLength)
+        {
+            if (string.IsNullOrEmpty(value)) return value;
+            // Tambahkan "..." jika dipotong
+            return value.Length <= maxLength ? value : value.Substring(0, maxLength) + "...";
+        }
+        // === AKHIR PERBAIKAN ===
+        
         private static void DisplayExpectScript(List<ExpectStep> script)
         {
              var table = new Table().Title("[bold yellow]Existing Setup Script[/]").Expand();
@@ -247,8 +256,10 @@ namespace Orchestrator.TUI
              {
                  table.AddRow(
                      (i+1).ToString(),
-                     script[i].Expect.EscapeMarkup().Truncate(50),
-                     script[i].Send.EscapeMarkup().Truncate(50)
+                     // === PERBAIKAN (CS1061) ===
+                     TruncateString(script[i].Expect.EscapeMarkup(), 50),
+                     // === PERBAIKAN (CS1061) ===
+                     TruncateString(script[i].Send.EscapeMarkup(), 50)
                  );
              }
              AnsiConsole.Write(table);
@@ -360,7 +371,9 @@ namespace Orchestrator.TUI
 
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotNameForTmux}\"";
                 
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCtsMenu.Token, useProxy: false);
+                // === PERBAIKAN (CS0103): 'linkedCtsMenu' -> 'linkedCancellationToken' ===
+                // Variabel 'linkedCtsMenu' tidak ada di scope ini.
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
             }
@@ -385,6 +398,10 @@ namespace Orchestrator.TUI
             try {
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
                 
+                // === PERBAIKAN (CS0103): 'linkedCtsMenu.Token' -> 'linkedCancellationToken' ===
+                // (Ini adalah error di line 363 di log, yang ada di file TuiMenus.cs)
+                // Oh, tunggu, log-nya (363) ada di ShowAttachMenuAsync.
+                // Tapi ini juga salah, jadi gua benerin sekalian.
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
