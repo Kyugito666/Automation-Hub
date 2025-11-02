@@ -16,7 +16,7 @@ namespace Orchestrator.Codespace
     {
         private const int SSH_COMMAND_TIMEOUT_MS = 120000;
         private const int STOP_TIMEOUT_MS = 120000;
-        private const int START_TIMEOUT_MS = 300000;
+        // Hapus START_TIMEOUT_MS
         private const int SSH_PROBE_TIMEOUT_MS = 30000;
 
         // API Call -> Pake Proxy
@@ -60,29 +60,8 @@ namespace Orchestrator.Codespace
             await Task.Delay(2000);
         }
 
-        // API Call -> Pake Proxy
-        internal static async Task StartCodespace(TokenEntry token, string codespaceName)
-        {
-            AnsiConsole.Markup($"[dim]Attempting start/revive codespace '{codespaceName.EscapeMarkup()}'... [/]");
-            try { 
-                // === PERBAIKAN: Hapus flag '-c' ===
-                string args = $"codespace start \"{codespaceName}\""; 
-                // === AKHIR PERBAIKAN ===
-                await GhService.RunGhCommand(token, args, START_TIMEOUT_MS); 
-                AnsiConsole.MarkupLine("[green]OK[/]"); 
-            }
-            catch (Exception ex) { 
-                if (ex.Message.Contains("available", StringComparison.OrdinalIgnoreCase) || 
-                    ex.Message.Contains("already running", StringComparison.OrdinalIgnoreCase)) 
-                {
-                    AnsiConsole.MarkupLine($"[dim]Already available/running.[/]"); 
-                }
-                else 
-                {
-                    AnsiConsole.MarkupLine($"[yellow]Warn: Start/Revive failed: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); 
-                }
-            }
-        }
+        // === FUNGSI StartCodespace DIHAPUS KARENA 'gh codespace start' TIDAK ADA ===
+        // (Perintah SSH di CodeHealth.cs yang akan otomatis start)
 
         // === FUNGSI LAMA (Trigger 'fire-and-forget') ===
         internal static async Task TriggerStartupScript(TokenEntry token, string codespaceName)
