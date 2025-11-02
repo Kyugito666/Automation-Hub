@@ -58,6 +58,9 @@ namespace Orchestrator.Util
             } catch (OperationCanceledException) {
                 AnsiConsole.MarkupLine("[yellow]Interactive operation cancelled.[/]");
                 try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
+                
+                // === PERBAIKAN: Lempar lagi biar TUI tahu ===
+                throw;
             } catch (Exception ex) {
                 AnsiConsole.MarkupLine($"[red]Error running interactive process: {ex.Message.EscapeMarkup()}[/]");
                 try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
@@ -111,6 +114,9 @@ namespace Orchestrator.Util
             catch (OperationCanceledException) {
                  AnsiConsole.MarkupLine("[yellow]Interactive session cancelled.[/]");
                  try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
+                 
+                 // === PERBAIKAN: Lempar lagi biar TUI tahu ===
+                 throw;
             }
             catch (Exception ex) {
                 AnsiConsole.MarkupLine("\n[yellow]"+ new string('═', 60) +"[/]");
