@@ -46,11 +46,9 @@ namespace Orchestrator.TUI
                 try {
                     switch (choice) {
                         case "1":
-                            // === INI BLOK YANG BENAR (BEBAS DARI ERROR PASTE) ===
-                            AnsiConsole.MarkupLine(string.Empty); // <-- FIX: Kasih string kosong
+                            AnsiConsole.MarkupLine(string.Empty); 
                             bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
                             TokenManager.SetProxyUsage(useProxy);
-                            // === AKHIR PERBAIKAN ===
 
                             await TuiLoop.RunOrchestratorLoopAsync(cancellationToken);
                             if (cancellationToken.IsCancellationRequested) return; 
@@ -148,9 +146,20 @@ namespace Orchestrator.TUI
             catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error fetching tmux sessions: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); return; }
 
             if (!sessions.Any()) { AnsiConsole.MarkupLine("[yellow]No running bot sessions found in tmux.[/]"); Program.Pause("Press Enter...", linkedCancellationToken); return; }
-            var backOption = "[ << Back ]"; sessions.Insert(0, backOption);
-
-            var selectedBot = AnsiConsole.Prompt(new SelectionPrompt<string>().Title($"Attach to session (in [green]{activeCodespace.EscapeMarkup()}[/]):").PageSize(15).AddChoices(sessions));
+            
+            // === PERBAIKAN: Escape Markup ===
+            // Kita escape nama bot, TAPI JANGAN escape "[ << Back ]"
+            var backOption = "[ << Back ]";
+            var escapedSessions = sessions.Select(s => s.EscapeMarkup()).ToList();
+            escapedSessions.Insert(0, backOption);
+            // === AKHIR PERBAIKAN ===
+            
+            var selectedBot = AnsiConsole.Prompt(
+                new SelectionPrompt<string>()
+                    .Title($"Attach to session (in [green]{activeCodespace.EscapeMarkup()}[/]):")
+                    .PageSize(15)
+                    .AddChoices(escapedSessions) // <-- Pake list yang udah di-escape
+                );
 
             if (selectedBot == backOption || linkedCancellationToken.IsCancellationRequested) return;
 
@@ -159,7 +168,12 @@ namespace Orchestrator.TUI
             AnsiConsole.MarkupLine("[red](Ctrl+C inside attach will detach you)[/]");
 
             try {
-                string tmuxSessionName = "automation_hub_bots"; string escapedBotName = selectedBot.Replace("\"", "\\\"");
+                string tmuxSessionName = "automation_hub_bots"; 
+                // === PERBAIKAN: Kita harus 'Unescape' lagi nama bot-nya pas kirim ke tmux ===
+                string originalBotName = selectedBot.RemoveMarkup();
+                string escapedBotName = originalBotName.Replace("\"", "\\\"");
+                // === AKHIR PERBAIKAN ===
+
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotName}\"";
                 
                 // Panggil ShellUtil dengan useProxy: true (default)
