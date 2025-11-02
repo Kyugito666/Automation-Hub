@@ -15,7 +15,10 @@ LOG_FILE="$WORKDIR/startup.log"
 HEALTH_CHECK_DONE="/tmp/auto_start_done"
 HEALTH_CHECK_FAIL_PROXY="/tmp/auto_start_failed_proxysync"
 HEALTH_CHECK_FAIL_DEPLOY="/tmp/auto_start_failed_deploy"
-FIRST_RUN_FLAG="/tmp/auto_start_first_run"
+
+# === PERBAIKAN: Pindahkan flag dari /tmp ke $WORKDIR ===
+FIRST_RUN_FLAG="$WORKDIR/.auto_start_first_run"
+# === AKHIR PERBAIKAN ===
 
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -31,11 +34,11 @@ rm -f "$HEALTH_CHECK_DONE" "$HEALTH_CHECK_FAIL_PROXY" "$HEALTH_CHECK_FAIL_DEPLOY
 echo "Cleaned up previous status flags."
 
 if [ ! -f "$FIRST_RUN_FLAG" ]; then
-    echo "[FIRST RUN] Full setup will be performed."
+    echo "[FIRST RUN] Full setup will be performed. (Flag file not found)"
     IS_FIRST_RUN=true
     touch "$FIRST_RUN_FLAG"
 else
-    echo "[SUBSEQUENT RUN] Fast mode - skip if already running."
+    echo "[SUBSEQUENT RUN] Fast mode - skip if already running. (Flag file found)"
     IS_FIRST_RUN=false
 fi
 
@@ -66,7 +69,7 @@ if [ "$IS_FIRST_RUN" = true ]; then
     fi
     echo "   ✓ ProxySync (Full Auto) completed. success_proxy.txt updated."
 else
-    # --- BLOK INI YANG DIUBAH ---
+    # --- BLOK INI YANG JALAN PAS RESUME ---
     echo "   [Restart] Running IP Authorization ONLY..."
     python3 "$WORKDIR/proxysync/main.py" --ip-auth-only
     if [ $? -ne 0 ]; then
