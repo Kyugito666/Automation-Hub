@@ -19,6 +19,7 @@ import shutil # Import shutil untuk hapus folder saat sync gagal
 SCRIPT_DIR = Path(__file__).parent.resolve()
 WORKDIR = SCRIPT_DIR # Asumsi skrip ini ada di root project
 CONFIG_DIR = WORKDIR / "config"
+SETUP_TOOLS_DIR = WORKDIR / "setup_tools" # <--- FOLDER BARU
 PROXYSYNC_DIR = WORKDIR / "proxysync" # Path ke folder proxysync
 
 CONFIG_FILE = CONFIG_DIR / "bots_config.json"
@@ -408,7 +409,7 @@ def main():
             print(f"\n--- 🟡 Skipping Invalid Entry ---\n  Data: {entry}"); skip_count += 1; continue
             
         if name == "ProxySync-Tool": 
-            print(f"\n--- ⏭️ Skipping: {name} (Handled by auto-start.sh) ---"); skip_count += 1; continue
+            print(f"\n--- ⏭️  Skipping: {name} (Handled by auto-start.sh) ---"); skip_count += 1; continue
 
         if not enabled: print(f"\n--- 🔵 Skipping Disabled: {name} ---"); skip_count += 1; continue
             
@@ -420,10 +421,23 @@ def main():
         if not install_dependencies(bot_path, bot_type): fail_count += 1; continue
         
         # === PERBAIKAN: Kirim 'entrypoint' ke get_run_command ===
-        executor, args = get_run_command(bot_path, bot_type, entrypoint)
-        # === AKHIR PERBAIKAN ===
+        executor_base, args_base = get_run_command(bot_path, bot_type, entrypoint)
         
-        if not executor: print(f"  🔴 Cannot run '{name}'. Skipping launch."); fail_count += 1; continue
+        if not executor_base: print(f"  🔴 Cannot run '{name}'. Skipping launch."); fail_count += 1; continue
+            
+        # Perintah eksekusi BOT ASLI
+        full_bot_command = f"{executor_base} {args_base}"
+        
+        # Cek apakah ada script replay (autostart.json)
+        autostart_config = bot_path / "autostart.json"
+        if autostart_config.exists():
+            # Jika ada, ganti perintah eksekusi dengan EXPECT RUNNER
+            print(f"    [Run] 🤖 Found autostart.json. Running via Expect Replay...")
+            executor = f"python3"
+            args = f"{SETUP_TOOLS_DIR / 'expect_runner.py'} \"{bot_path}\" {full_bot_command}"
+        else:
+            executor, args = executor_base, args_base
+        # === AKHIR PERBAIKAN ===
             
         if launch_in_tmux(name, bot_path, executor, args): success_count += 1
         else: fail_count += 1
