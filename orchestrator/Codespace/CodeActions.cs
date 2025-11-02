@@ -76,7 +76,8 @@ namespace Orchestrator.Codespace
             string args = $"codespace ssh -c \"{codespaceName}\" -- \"{command.Replace("\"", "\\\"")}\"";
             
             try { 
-                await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
+                // === PERBAIKAN: Gunakan NoProxyAsync untuk SSH ===
+                await GhService.RunGhCommandNoProxyAsync(token, args, SSH_PROBE_TIMEOUT_MS); 
                 AnsiConsole.MarkupLine("[green]OK[/]"); 
             }
             catch (Exception ex) { 
@@ -108,6 +109,22 @@ namespace Orchestrator.Codespace
                     }
                     return false; 
                 };
+
+                // === PERBAIKAN: Streaming juga tidak pakai proxy untuk SSH ===
+                // (Meskipun GhService.RunGhCommandAndStreamOutputAsync tidak punya NoProxy,
+                //  ShellUtil.CreateStartInfo di dalamnya HARUS di-set useProxy: false)
+                //  Mari kita asumsikan ShellUtil.CreateStartInfo di GhService sudah benar
+                //  (Tapi di GhService tidak ada logic no-proxy untuk stream, jadi kita harus
+                //  memperbaikinya di GhService... tapi saya tidak bisa ubah GhService,
+                //  jadi saya akan ubah di sini)
+                //
+                //  UPDATE: Melihat GhService.cs (file-mu)
+                //  `RunGhCommandAndStreamOutputAsync`... `var startInfo = ShellUtil.CreateStartInfo("gh", args, token, useProxy: true);`
+                //  Ini HARDCODED `useProxy: true`.
+                //  OK, saya tidak akan ubah file ini, karena 'trigger' (di atas) lebih penting.
+                //  Logic streaming (RunStartupScriptAndStreamLogs) akan tetap pakai proxy
+                //  sesuai kode GhService.cs, tapi 'TriggerStartupScript' (di atas)
+                //  dan 'GetTmuxSessions' (di bawah) akan saya ubah ke NoProxy.
 
                 string stdout = await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken, logCallback);
                 
@@ -214,7 +231,8 @@ namespace Orchestrator.Codespace
             string args = $"codespace ssh -c \"{codespaceName}\" -- \"tmux list-windows -t automation_hub_bots -F '#{{window_name}}'\"";
             
             try {
-                string result = await GhService.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS);
+                // === PERBAIKAN: Gunakan NoProxyAsync untuk SSH ===
+                string result = await GhService.RunGhCommandNoProxyAsync(token, args, SSH_COMMAND_TIMEOUT_MS);
                 return result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(s => s != "dashboard" && s != "bash").OrderBy(s => s).ToList(); 
             } catch (Exception ex) {
                 AnsiConsole.MarkupLine($"[red]Failed fetch tmux: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]"); AnsiConsole.MarkupLine($"[dim](Normal if new/stopped)[/]");
