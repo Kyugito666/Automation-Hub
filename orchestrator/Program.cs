@@ -21,6 +21,9 @@ namespace Orchestrator
 
         // --- BARU: Flag untuk menandai jika Menu 1 (Loop) sedang aktif ---
         private static volatile bool _isLoopActive = false;
+        // --- BARU: Flag menandakan bahwa TUI sedang meminta Enter dari user ---
+        private static volatile bool _isAwaitingPause = false;
+
 
         // --- BARU: Setter untuk flag ---
         public static void SetLoopActive(bool active)
@@ -30,8 +33,7 @@ namespace Orchestrator
 
         public static async Task Main(string[] args)
         {
-            // === PERBAIKAN: Handler Ctrl+C Cerdas ===
-            // Dia sekarang bisa bedain "batalin menu" vs "matiin TUI"
+            // === PERBAIKAN: Handler Ctrl+C Cerdas (Mendukung Enter setelah Ctrl+C) ===
             Console.CancelKeyPress += (sender, e) => {
                 e.Cancel = true; 
                 lock (_shutdownLock)
@@ -54,26 +56,42 @@ namespace Orchestrator
                         return; 
                     }
 
-                    // 2. Cek apakah kita di dalem menu interaktif (Menu 2-7)
+                    // 2. Cek apakah kita di dalem Menu 1 (Loop)
+                    if (_isLoopActive)
+                    {
+                        // Jika di Menu 1, sinyalkan loop untuk berhenti
+                        AnsiConsole.MarkupLine("[yellow]Loop cancellation requested. Press Ctrl+C again to force stop TUI or Enter to return to menu.[/]");
+                        
+                        // Batalkan token interaktif (yang dipakai Menu 1)
+                        if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested)
+                        {
+                            try { _interactiveCts.Cancel(); } catch (ObjectDisposedException) { _interactiveCts = null; }
+                        }
+                        // Jika loop sudah berhenti (atau sedang menunggu), panggil shutdown
+                        else
+                        {
+                           TriggerFullShutdown();
+                        }
+                        return;
+                    }
+
+                    // 3. Cek apakah kita di dalem menu interaktif lain (Menu 2-7)
                     if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested)
                     {
                         AnsiConsole.MarkupLine("[yellow]Attempting to cancel interactive operation... (Returning to menu)[/]");
                         try {
-                             // CUKUP batalin menu itu. JANGAN matiin TUI.
                              _interactiveCts.Cancel(); 
                         } catch (ObjectDisposedException) {
                              AnsiConsole.MarkupLine("[dim]Interactive operation already disposed.[/]");
                              _interactiveCts = null;
-                             // JANGAN panggil TriggerFullShutdown()
                         } catch (Exception ex) {
                              AnsiConsole.MarkupLine($"[red]Error cancelling interactive op: {ex.Message.EscapeMarkup()}[/]");
-                             // JANGAN panggil TriggerFullShutdown()
                         }
                     }
-                    // 3. Jika kita TIDAK di menu interaktif (berarti di Menu 1 atau di Menu Utama)
+                    // 4. Jika kita di Menu Utama (atau di Pause biasa)
                     else 
                     {
-                         // Baru panggil shutdown penuh (yang akan cek _isLoopActive)
+                         // Panggil shutdown penuh (yang akan stop codespace jika _isLoopActive=true)
                          TriggerFullShutdown(); 
                     }
                 }
@@ -102,7 +120,7 @@ namespace Orchestrator
             }
         } 
 
-        // --- Logika Trigger Shutdown (Tidak Berubah) ---
+        // --- Logika Trigger Shutdown (DIUBAH UNTUK MEMENUHI REQUEST) ---
         internal static void TriggerFullShutdown() {
              lock(_shutdownLock) {
                 if (_isShuttingDown) return; 
@@ -115,10 +133,12 @@ namespace Orchestrator
                 _forceQuitRequested = false; 
 
                 // 2. Jalankan shutdown (yang nge-cek flag _isLoopActive) 
-                //    SEBELUM nge-cancel token utama
                 Task.Run(async () => {
                     
-                    await PerformGracefulShutdownAsync(); 
+                    // Logic: Jika loop tidak aktif, JANGAN stop codespace.
+                    // Jika loop aktif, codespace akan di-stop.
+                    bool shouldStopCodespace = _isLoopActive; 
+                    await PerformGracefulShutdownAsync(shouldStopCodespace); 
                     
                     // 3. Baru sinyalkan aplikasi untuk mati
                     if (!_mainCts.IsCancellationRequested) {
@@ -139,25 +159,25 @@ namespace Orchestrator
             _interactiveCts = null;
         }
 
-        // --- Logika Stop Codespace (Tidak Berubah, udah bener) ---
-        private static async Task PerformGracefulShutdownAsync()
+        // --- Logika Stop Codespace (DIUBAH - menerima parameter shouldStop) ---
+        private static async Task PerformGracefulShutdownAsync(bool shouldStopCodespace)
         {
             AnsiConsole.MarkupLine("[dim]Executing graceful shutdown...[/]");
-            // Baca flag SEKALI di awal
-            bool shouldStopCodespace = _isLoopActive; 
             try {
                 var token = TokenManager.GetCurrentToken();
                 var state = TokenManager.GetState();
                 var activeCodespace = state.ActiveCodespaceName;
 
-                // Cek flagnya
+                // Cek flag shouldStopCodespace
                 if (shouldStopCodespace && !string.IsNullOrEmpty(activeCodespace)) {
-                    AnsiConsole.MarkupLine($"[yellow]Loop was active. Sending STOP command to '{activeCodespace.EscapeMarkup()}'...[/]");
+                    AnsiConsole.MarkupLine($"[yellow]Graceful Stop: Sending STOP command to '{activeCodespace.EscapeMarkup()}'...[/]");
                     // Panggil CodeManager.StopCodespace (yang akan kita ubah jadi no-proxy)
                     await CodeManager.StopCodespace(token, activeCodespace);
-                    AnsiConsole.MarkupLine($"[green]✓ Stop command attempt finished for '{activeCodespace.EscapeMarkup()}'.[/]");
+                    AnsiConsole.MarkupLine($"[green]✓ Stop command attempt finished for '{activeCodespace.EscapeMarkup()}' (via SSH).[/]");
+                } else if (shouldStopCodespace) {
+                    AnsiConsole.MarkupLine("[yellow]Loop was active, but no active codespace recorded. Skipping codespace stop.[/]");
                 } else {
-                    AnsiConsole.MarkupLine("[yellow]Loop was not active or no codespace recorded. Skipping codespace stop.[/]");
+                    AnsiConsole.MarkupLine("[dim]Loop was not active. Skipping codespace stop.[/]");
                 }
             } catch (Exception ex) {
                 AnsiConsole.MarkupLine($"[red]Exception during codespace stop attempt: {ex.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}[/]");
@@ -167,11 +187,15 @@ namespace Orchestrator
 
         public static CancellationToken GetMainCancellationToken() => _mainCts.Token;
 
-        // Fungsi Pause (TIDAK BERUBAH)
+        // Fungsi Pause (DIUBAH untuk mendukung Enter setelah Ctrl+C)
         internal static void Pause(string message, CancellationToken linkedCancellationToken) 
         {
            if (linkedCancellationToken.IsCancellationRequested || _mainCts.IsCancellationRequested) return;
             Console.WriteLine(); AnsiConsole.Markup($"[dim]{message.EscapeMarkup()}[/]");
+            
+            // Set flag Awaiting Pause
+            lock (_shutdownLock) { _isAwaitingPause = true; }
+            
             try {
                 while (!Console.KeyAvailable) {
                     if (linkedCancellationToken.IsCancellationRequested || _mainCts.IsCancellationRequested) return;
@@ -185,6 +209,11 @@ namespace Orchestrator
                     using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCancellationToken, _mainCts.Token);
                     Task.Delay(2000, combinedCts.Token).Wait(); 
                  } catch { /* Ignored */ }
+            }
+            finally
+            {
+                 // Hapus flag Awaiting Pause
+                 lock (_shutdownLock) { _isAwaitingPause = false; }
             }
         }
     } 
