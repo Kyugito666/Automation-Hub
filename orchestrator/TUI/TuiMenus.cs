@@ -195,7 +195,10 @@ namespace Orchestrator.TUI
 
                  if (selectedChoice == "[yellow]Delete Setup Script[/]")
                  {
-                      await ShowDeleteExpectScriptMenuAsync(targetBots.Select(b => b.Path).ToList(), linkedCancellationToken);
+                      // === PERBAIKAN (CS1998): Hapus 'await' ===
+                      ShowDeleteExpectScriptMenuAsync(targetBots.Select(b => b.Path).ToList(), linkedCancellationToken);
+                      // === AKHIR PERBAIKAN ===
+                      
                       // Refresh status setelah delete
                       targetBots = config.BotsAndTools.Where(b => b.Enabled && b.IsBot).Select(b => new { Name = b.Name, Path = b.Path, Recorded = ExpectManager.CheckExpectScriptExists(b.Path) }).ToList();
                       continue;
@@ -281,7 +284,9 @@ namespace Orchestrator.TUI
              AnsiConsole.Write(table);
         }
         
-        private static async Task ShowDeleteExpectScriptMenuAsync(List<string> botPaths, CancellationToken linkedCancellationToken)
+        // === PERBAIKAN (CS1998): Ganti 'async Task' -> 'void' ===
+        private static void ShowDeleteExpectScriptMenuAsync(List<string> botPaths, CancellationToken linkedCancellationToken)
+        // === AKHIR PERBAIKAN ===
         {
              var choices = botPaths
                 .Where(p => ExpectManager.CheckExpectScriptExists(p))
