@@ -76,7 +76,8 @@ namespace Orchestrator.Codespace
                         cancellationToken.ThrowIfCancellationRequested(); 
                         try {
                             string args = $"codespace ssh -c \"{codespaceName}\" -- echo ready"; 
-                            string res = await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
+                            // === PERBAIKAN: Gunakan NoProxyAsync untuk SSH ===
+                            string res = await GhService.RunGhCommandNoProxyAsync(token, args, SSH_PROBE_TIMEOUT_MS); 
                             cancellationToken.ThrowIfCancellationRequested();
                             
                             if (res != null && res.Contains("ready")) { 
