@@ -90,10 +90,9 @@ namespace Orchestrator.Codespace
             string scriptPath = $"/workspaces/{repo}/auto-start.sh";
             AnsiConsole.Markup("[dim]Executing command in background (nohup)... [/]");
             
-            // === PERBAIKAN: Bungkus perintah remote dengan kutip ===
+            // Bungkus perintah remote dengan kutip
             string command = $"nohup bash \"{scriptPath.Replace("\"", "\\\"")}\" > /tmp/startup.log 2>&1 &";
             string args = $"codespace ssh -c \"{codespaceName}\" -- \"{command.Replace("\"", "\\\"")}\"";
-            // === AKHIR PERBAIKAN ===
             
             try { 
                 await GhService.RunGhCommand(token, args, SSH_PROBE_TIMEOUT_MS); 
@@ -112,18 +111,17 @@ namespace Orchestrator.Codespace
             string repo = token.Repo; 
             string scriptPath = $"/workspaces/{repo}/auto-start.sh";
             
-            // === PERBAIKAN: Bungkus seluruh perintah remote dengan kutip ===
-            // 1. Definisikan perintah remote
+            // Bungkus seluruh perintah remote dengan kutip
             string command = $"set -o pipefail; bash \"{scriptPath.Replace("\"", "\\\"")}\" | tee /tmp/startup.log";
-            // 2. Bungkus SELURUH perintah itu dengan kutip untuk gh, dan escape kutip di dalamnya
             string args = $"codespace ssh -c \"{codespaceName}\" -- \"{command.Replace("\"", "\\\"")}\"";
-            // === AKHIR PERBAIKAN ===
 
             bool scriptSuccess = false; 
             try 
             {
                 Func<string, bool> logCallback = (line) => {
-                    AnsiConsole.MarkupLine($"[grey]   [REMOTE] {line.EscapeMarkup()}[/]");
+                    // === PERBAIKAN: Escape [REMOTE] jadi [[REMOTE]] ===
+                    AnsiConsole.MarkupLine($"[grey]   [[REMOTE]] {line.EscapeMarkup()}[/]");
+                    // === AKHIR PERBAIKAN ===
                     
                     if(line.Contains("DEPLOYMENT SUMMARY")) {
                         scriptSuccess = true; 
