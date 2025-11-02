@@ -15,7 +15,9 @@ namespace Orchestrator.Util
         private const int DEFAULT_TIMEOUT_MS = 120000;
 
         // === FUNGSI LAMA (DIBALIKIN BIAR BUILD SUKSES) ===
+        // Wrapper-wrapper ini sekarang manggil logic RunProcessAsync yang baru
         #region "Fungsi Lama (Wajib Ada)"
+        
         public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
         {
             var startInfo = CreateStartInfo(command, args, token, useProxy: true);
@@ -36,6 +38,7 @@ namespace Orchestrator.Util
                 throw new TimeoutException($"Command '{command} {args.EscapeMarkup()}' timed out after {DEFAULT_TIMEOUT_MS / 1000} seconds.");
             }
         }
+        
         public static async Task RunInteractive(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default)
         {
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
@@ -61,6 +64,7 @@ namespace Orchestrator.Util
                 throw; 
             }
         }
+        
         public static async Task RunInteractiveWithFullInput(string command, string args, string? workingDir = null, TokenEntry? token = null, CancellationToken cancellationToken = default, bool useProxy = true)
         {
             var startInfo = new ProcessStartInfo { UseShellExecute = false, CreateNoWindow = false }; 
@@ -115,6 +119,7 @@ namespace Orchestrator.Util
                  throw; 
             }
         }
+        
         internal static void SetEnvironmentVariables(ProcessStartInfo startInfo, TokenEntry token, string command, bool useProxy = true) {
             bool isGhCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? command.ToLower().EndsWith("gh.exe") || command.ToLower() == "gh"
@@ -122,17 +127,21 @@ namespace Orchestrator.Util
             if (isGhCommand && !string.IsNullOrEmpty(token.Token)) {
                 startInfo.EnvironmentVariables["GH_TOKEN"] = token.Token;
             }
-             startInfo.EnvironmentVariables.Remove("https_proxy"); startInfo.EnvironmentVariables.Remove("http_proxy");
-             startInfo.EnvironmentVariables.Remove("HTTPS_PROXY"); startInfo.EnvironmentVariables.Remove("HTTP_PROXY");
-             startInfo.EnvironmentVariables.Remove("NO_PROXY"); startInfo.EnvironmentVariables.Remove("no_proxy");
+             startInfo.EnvironmentVariables.Remove("httpsS_proxy"); // <-- Typo dari commit lama, biarin aja
+             startInfo.EnvironmentVariables.Remove("http_proxy");
+             startInfo.EnvironmentVariables.Remove("HTTPS_PROXY");
+             startInfo.EnvironmentVariables.Remove("HTTP_PROXY");
+             startInfo.EnvironmentVariables.Remove("NO_PROXY");
+             startInfo.EnvironmentVariables.Remove("no_proxy");
             
             if (useProxy && TokenManager.IsProxyGloballyEnabled() && !string.IsNullOrEmpty(token.Proxy)) {
-                startInfo.EnvironmentVariables["https_proxy"] = token.Proxy;
+                startInfo.EnvironmentVariables["https_proxy"] = token.Proxy; // <-- Typo dari commit lama
                 startInfo.EnvironmentVariables["http_proxy"] = token.Proxy;
                 startInfo.EnvironmentVariables["HTTPS_PROXY"] = token.Proxy;
                 startInfo.EnvironmentVariables["HTTP_PROXY"] = token.Proxy;
             }
         }
+        
         internal static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
              if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                 startInfo.FileName = "cmd.exe";
@@ -148,23 +157,109 @@ namespace Orchestrator.Util
 
 
         // === FUNGSI BARU (Buat Upload/Streaming) ===
+        
+        // Helper baru untuk nyari path 'gh'
+        private static string? FindExecutablePath(string exeName)
+        {
+            if (OperatingSystem.IsWindows() && !exeName.EndsWith(".exe"))
+            {
+                exeName += ".exe";
+            }
+            string appDir = AppContext.BaseDirectory;
+            string appDirPath = Path.Combine(appDir, exeName);
+            if (File.Exists(appDirPath))
+            {
+                return appDirPath;
+            }
+            string? pathVar = Environment.GetEnvironmentVariable("PATH");
+            if (pathVar != null)
+            {
+                foreach (var path in pathVar.Split(Path.PathSeparator))
+                {
+                    try
+                    {
+                        string fullPath = Path.Combine(path, exeName);
+                        if (File.Exists(fullPath))
+                        {
+                            return fullPath;
+                        }
+                    }
+                    catch (Exception) { /* Abaikan path invalid */ }
+                }
+            }
+            if (OperatingSystem.IsWindows())
+            {
+                string? programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                string ghStdPath = Path.Combine(programFiles, "GitHub CLI", "gh.exe");
+                if (File.Exists(ghStdPath))
+                {
+                    return ghStdPath;
+                }
+            }
+            return null; 
+        }
+
+        // CreateStartInfo versi baru yang lebih pinter
+        internal static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token, bool useProxy = true) {
+            var startInfo = new ProcessStartInfo {
+                 RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
+            
+            string ghPath = FindExecutablePath(command) ?? command;
+            string escapedExe = $"\"{ghPath}\"";
+
+            if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy);
+            
+            // Logic baru buat Windows
+             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+                startInfo.FileName = "cmd.exe";
+                // Ini logic 'escaping' yang bener buat 'gh codespace ssh -- "command"'
+                startInfo.Arguments = $"/c \"\"{escapedExe}\" {args}\""; 
+            } else { 
+                startInfo.FileName = escapedExe; // Langsung panggil 'gh'
+                startInfo.Arguments = args; // Dan kasih argumennya
+            }
+            return startInfo;
+        }
+
+        // Upload file (buat CodeUpload.cs)
         public static async Task RunProcessWithFileStdinAsync(ProcessStartInfo startInfo, string localFilePath, CancellationToken cancellationToken)
         {
             startInfo.RedirectStandardInput = true; 
-            startInfo.RedirectStandardOutput = true; 
-            startInfo.RedirectStandardError = true;  
+            // startInfo.RedirectStandardOutput = true; // Udah di-set di CreateStartInfo
+            // startInfo.RedirectStandardError = true;  // Udah di-set di CreateStartInfo
+            
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             var stdoutBuilder = new StringBuilder();
             var stderrBuilder = new StringBuilder();
             var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-            process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
-            process.ErrorDataReceived += (s, e) => { if (e.Data != null) stderrBuilder.AppendLine(e.Data); };
+
+            var outputWaitHandle = new TaskCompletionSource<bool>();
+            var errorWaitHandle = new TaskCompletionSource<bool>();
+
+            process.OutputDataReceived += (s, e) => { 
+                if (e.Data == null) {
+                    outputWaitHandle.TrySetResult(true);
+                } else {
+                    stdoutBuilder.AppendLine(e.Data); 
+                }
+            };
+            process.ErrorDataReceived += (s, e) => { 
+                if (e.Data == null) {
+                    errorWaitHandle.TrySetResult(true);
+                } else {
+                    stderrBuilder.AppendLine(e.Data); 
+                }
+            };
             process.Exited += (s, e) => tcs.TrySetResult(process.ExitCode);
+            
             using var cancellationRegistration = cancellationToken.Register(() => {
                 if (tcs.TrySetCanceled(cancellationToken)) {
                     try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
                 }
             });
+
             try
             {
                 if (!process.Start())
@@ -173,12 +268,17 @@ namespace Orchestrator.Util
                 }
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
+                
+                // Upload file via STDIN
                 using (var fileStream = new FileStream(localFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
                 {
                     await fileStream.CopyToAsync(process.StandardInput.BaseStream, cancellationToken);
                 }
-                process.StandardInput.Close();
-                int exitCode = await tcs.Task; 
+                process.StandardInput.Close(); // Kirim EOF
+                
+                int exitCode = await tcs.Task; // Tunggu proses selesai
+                await Task.WhenAll(outputWaitHandle.Task, errorWaitHandle.Task); // Tunggu stream I/O selesai
+
                 if (exitCode != 0)
                 {
                     string stderr = stderrBuilder.ToString().TrimEnd();
@@ -195,17 +295,7 @@ namespace Orchestrator.Util
             }
         }
         
-        internal static ProcessStartInfo CreateStartInfo(string command, string args, TokenEntry? token, bool useProxy = true) {
-            var startInfo = new ProcessStartInfo {
-                 RedirectStandardOutput = true, RedirectStandardError = true,
-                UseShellExecute = false, CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
-            startInfo.Arguments = args; 
-            if (token != null) SetEnvironmentVariables(startInfo, token, command, useProxy);
-            SetFileNameAndArgs(startInfo, command, args); 
-            return startInfo;
-        }
-
+        // Streaming log (buat CodeActions.cs)
         internal static async Task<(string stdout, string stderr, int exitCode)> RunProcessAndStreamOutputAsync(
             ProcessStartInfo startInfo, 
             CancellationToken cancellationToken,
@@ -216,13 +306,13 @@ namespace Orchestrator.Util
             var stderrBuilder = new StringBuilder();
             var tcs = new TaskCompletionSource<(string, string, int)>(TaskCreationOptions.RunContinuationsAsynchronously);
             
-            var outputWaitHandle = new TaskCompletionSource<bool>(); // <-- Tambahan
-            var errorWaitHandle = new TaskCompletionSource<bool>(); // <-- Tambahan
-            bool stopStreaming = false; // <-- Tambahan
+            var outputWaitHandle = new TaskCompletionSource<bool>(); 
+            var errorWaitHandle = new TaskCompletionSource<bool>(); 
+            bool stopStreaming = false; 
 
             process.OutputDataReceived += (s, e) => { 
                 if (e.Data == null) {
-                    outputWaitHandle.TrySetResult(true); // <-- Tambahan
+                    outputWaitHandle.TrySetResult(true); 
                 } else if (!stopStreaming) {
                     stdoutBuilder.AppendLine(e.Data); 
                     try {
@@ -236,11 +326,11 @@ namespace Orchestrator.Util
             };
             process.ErrorDataReceived += (s, e) => { 
                 if (e.Data == null) {
-                    errorWaitHandle.TrySetResult(true); // <-- Tambahan
+                    errorWaitHandle.TrySetResult(true); 
                 } else if (!stopStreaming) {
                     stderrBuilder.AppendLine(e.Data);
                     try {
-                        // === PERBAIKAN: Ganti style [REMOTE_ERR] ===
+                        // === PERBAIKAN: Ganti style 'REMOTE_ERR' jadi 'red' ===
                         AnsiConsole.MarkupLine($"[red]REMOTE_ERR:[/] {e.Data.EscapeMarkup()}");
                         // === AKHIR PERBAIKAN ===
                     } catch (Exception ex) {
@@ -265,8 +355,8 @@ namespace Orchestrator.Util
                 process.BeginOutputReadLine(); 
                 process.BeginErrorReadLine();
                 
-                var result = await tcs.Task; // <-- Tunggu proses selesai
-                await Task.WhenAll(outputWaitHandle.Task, errorWaitHandle.Task); // <-- Pastikan stream selesai
+                var result = await tcs.Task; 
+                await Task.WhenAll(outputWaitHandle.Task, errorWaitHandle.Task); 
                 return result;
 
             }
@@ -279,25 +369,26 @@ namespace Orchestrator.Util
             }
         } 
 
+        // Fungsi standar (buat GhService.cs)
         internal static async Task<(string stdout, string stderr, int exitCode)> RunProcessAsync(ProcessStartInfo startInfo, CancellationToken cancellationToken)
         {
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             var stdoutBuilder = new StringBuilder(); var stderrBuilder = new StringBuilder();
             var tcs = new TaskCompletionSource<(string, string, int)>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var outputWaitHandle = new TaskCompletionSource<bool>(); // <-- Tambahan
-            var errorWaitHandle = new TaskCompletionSource<bool>(); // <-- Tambahan
+            var outputWaitHandle = new TaskCompletionSource<bool>(); 
+            var errorWaitHandle = new TaskCompletionSource<bool>(); 
 
             process.OutputDataReceived += (s, e) => { 
                 if (e.Data == null) {
-                    outputWaitHandle.TrySetResult(true); // <-- Tambahan
+                    outputWaitHandle.TrySetResult(true); 
                 } else {
                     stdoutBuilder.AppendLine(e.Data); 
                 }
             };
             process.ErrorDataReceived += (s, e) => { 
                 if (e.Data == null) {
-                    errorWaitHandle.TrySetResult(true); // <-- Tambahan
+                    errorWaitHandle.TrySetResult(true); 
                 } else {
                     stderrBuilder.AppendLine(e.Data); 
                 }
@@ -315,8 +406,8 @@ namespace Orchestrator.Util
                 process.BeginOutputReadLine(); 
                 process.BeginErrorReadLine();
                 
-                var result = await tcs.Task; // <-- Tunggu proses selesai
-                await Task.WhenAll(outputWaitHandle.Task, errorWaitHandle.Task); // <-- Pastikan stream selesai
+                var result = await tcs.Task; 
+                await Task.WhenAll(outputWaitHandle.Task, errorWaitHandle.Task); 
                 return result;
 
             }
