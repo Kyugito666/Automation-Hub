@@ -37,7 +37,9 @@ namespace Orchestrator.Codespace
             var defaultList = new List<string> { "pk.txt", "privatekey.txt", "token.txt", "tokens.txt", ".env", "config.json", "data.txt", "query.txt", "wallet.txt", "settings.yaml", "mnemonics.txt" };
             
             if (!File.Exists(UploadFilesListPath)) {
-                AnsiConsole.MarkupLine($"[yellow]Warn: '{UploadFilesListPath}' (dari commit {Program.AppCommitHash}) not found. Using defaults.[/]");
+                // === PERBAIKAN: Hapus referensi ke AppCommitHash ===
+                AnsiConsole.MarkupLine($"[yellow]Warn: '{UploadFilesListPath}' not found. Using defaults.[/]");
+                // === AKHIR PERBAIKAN ===
                 return defaultList;
             }
             try {
@@ -184,9 +186,7 @@ namespace Orchestrator.Codespace
                         // STEP 2: ProxySync Configs (HANYA YANG RAHASIA)
                         task.Description = "[cyan]Uploading Secret Configs...";
                         
-                        // === PERBAIKAN: Hapus paths.txt dan github_tokens.txt ===
                         var proxySyncConfigFiles = new List<string> { "apikeys.txt", "apilist.txt" };
-                        // === AKHIR PERBAIKAN ===
                         
                         string remoteProxySyncConfigDir = $"{remoteWorkspacePath}/config".Replace('\\', '/');
                         
