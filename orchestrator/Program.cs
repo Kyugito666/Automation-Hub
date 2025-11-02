@@ -30,12 +30,15 @@ namespace Orchestrator
 
         public static async Task Main(string[] args)
         {
-            // Handler Ctrl+C (TIDAK BERUBAH)
+            // === PERBAIKAN: Handler Ctrl+C Cerdas ===
+            // Dia sekarang bisa bedain "batalin menu" vs "matiin TUI"
             Console.CancelKeyPress += (sender, e) => {
                 e.Cancel = true; 
                 lock (_shutdownLock)
                 {
                     AnsiConsole.MarkupLine("\n[yellow]Ctrl+C detected...[/]");
+                    
+                    // 1. Cek spam Ctrl+C (buat force quit)
                     if (_isShuttingDown) 
                     {
                         if (_forceQuitRequested) {
@@ -50,26 +53,32 @@ namespace Orchestrator
                         });
                         return; 
                     }
+
+                    // 2. Cek apakah kita di dalem menu interaktif (Menu 2-7)
                     if (_interactiveCts != null && !_interactiveCts.IsCancellationRequested)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Attempting to cancel interactive operation...[/]");
+                        AnsiConsole.MarkupLine("[yellow]Attempting to cancel interactive operation... (Returning to menu)[/]");
                         try {
+                             // CUKUP batalin menu itu. JANGAN matiin TUI.
                              _interactiveCts.Cancel(); 
                         } catch (ObjectDisposedException) {
                              AnsiConsole.MarkupLine("[dim]Interactive operation already disposed.[/]");
                              _interactiveCts = null;
-                             TriggerFullShutdown(); 
+                             // JANGAN panggil TriggerFullShutdown()
                         } catch (Exception ex) {
                              AnsiConsole.MarkupLine($"[red]Error cancelling interactive op: {ex.Message.EscapeMarkup()}[/]");
-                             TriggerFullShutdown(); 
+                             // JANGAN panggil TriggerFullShutdown()
                         }
                     }
+                    // 3. Jika kita TIDAK di menu interaktif (berarti di Menu 1 atau di Menu Utama)
                     else 
                     {
+                         // Baru panggil shutdown penuh (yang akan cek _isLoopActive)
                          TriggerFullShutdown(); 
                     }
                 }
             }; 
+            // === AKHIR PERBAIKAN ===
 
             try {
                 TokenManager.Initialize(); 
@@ -93,7 +102,7 @@ namespace Orchestrator
             }
         } 
 
-        // --- PERUBAHAN: Logika Trigger Shutdown ---
+        // --- Logika Trigger Shutdown (Tidak Berubah) ---
         internal static void TriggerFullShutdown() {
              lock(_shutdownLock) {
                 if (_isShuttingDown) return; 
@@ -130,7 +139,7 @@ namespace Orchestrator
             _interactiveCts = null;
         }
 
-        // --- PERUBAHAN: Logika Stop Codespace ---
+        // --- Logika Stop Codespace (Tidak Berubah, udah bener) ---
         private static async Task PerformGracefulShutdownAsync()
         {
             AnsiConsole.MarkupLine("[dim]Executing graceful shutdown...[/]");
