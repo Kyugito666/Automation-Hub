@@ -49,7 +49,7 @@
       "path": "bots/privatekey/galkite-autointeraction",
       "repo_url": "https://github.com/Svz1404/Galkite-AutoInteraction.git",
       "enabled": true,
-      "type": "python"
+      "type": "javascript"
     },
     {
       "name": "GopherAutoBot-NTE",
