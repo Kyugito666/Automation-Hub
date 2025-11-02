@@ -119,9 +119,7 @@ namespace Orchestrator.Codespace
             try 
             {
                 Func<string, bool> logCallback = (line) => {
-                    // === PERBAIKAN: Escape [REMOTE] jadi [[REMOTE]] ===
                     AnsiConsole.MarkupLine($"[grey]   [[REMOTE]] {line.EscapeMarkup()}[/]");
-                    // === AKHIR PERBAIKAN ===
                     
                     if(line.Contains("ERROR: ProxySync failed")) {
                         AnsiConsole.MarkupLine("[red]   [[FATAL DETECTED: ProxySync failed]]");
@@ -130,7 +128,9 @@ namespace Orchestrator.Codespace
                     return false; 
                 };
 
-                string stdout = await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken);
+                // === PERBAIKAN: Masukkan 'logCallback' yang hilang ===
+                string stdout = await GhService.RunGhCommandAndStreamOutputAsync(token, args, cancellationToken, logCallback);
+                // === AKHIR PERBAIKAN ===
                 
                 AnsiConsole.MarkupLine($"[green]✓ Remote script finished.[/]");
                 return scriptSuccess;
@@ -232,11 +232,7 @@ namespace Orchestrator.Codespace
         {
             AnsiConsole.MarkupLine($"[dim]Fetching tmux sessions...[/]");
             
-            // === PERBAIKAN: Quoting untuk remote shell ===
-            // 1. Bungkus seluruh perintah remote (tmux ...) dengan "..."
-            // 2. Bungkus format string tmux (-F ...) dengan '...'
             string args = $"codespace ssh -c \"{codespaceName}\" -- \"tmux list-windows -t automation_hub_bots -F '#{{window_name}}'\"";
-            // === AKHIR PERBAIKAN ===
             
             try {
                 string result = await GhService.RunGhCommand(token, args, SSH_COMMAND_TIMEOUT_MS);
