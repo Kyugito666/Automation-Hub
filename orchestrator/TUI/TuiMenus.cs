@@ -165,8 +165,20 @@ namespace Orchestrator.TUI
              {
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup UI").Color(Color.Fuchsia));
                  
+                 // === PERBAIKAN (CS1061): Helper untuk menggantikan .Truncate() ===
+                 // (Pindahkan helper ini ke atas jika belum ada)
+                 static string TruncateString(string value, int maxLength)
+                 {
+                     if (string.IsNullOrEmpty(value)) return value;
+                     return value.Length <= maxLength ? value : value.Substring(0, maxLength) + "...";
+                 }
+                 // === AKHIR PERBAIKAN ===
+
+
+                 // === PERBAIKAN (Malformed Markup): Escape b.Name ===
                  var choices = targetBots
-                     .Select(b => $"{b.Name} (Status: [{(b.Recorded ? "green" : "red")}]{(b.Recorded ? "Recorded" : "NONE")}[/])").ToList();
+                     .Select(b => $"{b.Name.EscapeMarkup()} (Status: [{(b.Recorded ? "green" : "red")}]{(b.Recorded ? "Recorded" : "NONE")}[/])").ToList();
+                 // === AKHIR PERBAIKAN ===
                  
                  choices.Insert(0, "<< Back");
                  choices.Insert(1, "--- MANUAL ACTIONS ---");
@@ -190,7 +202,17 @@ namespace Orchestrator.TUI
                  }
 
                  // Ambil bot yang dipilih
-                 var selectedBot = targetBots.First(b => selectedChoice.StartsWith(b.Name));
+                 // === PERBAIKAN: Handle selectedChoice yang sudah di-escape ===
+                 // Kita cari bot yang namanya (setelah di-escape) cocok dengan awal selectedChoice
+                 var selectedBot = targetBots.FirstOrDefault(b => selectedChoice.StartsWith(b.Name.EscapeMarkup()));
+                 if (selectedBot == null)
+                 {
+                     // Fallback/Error (seharusnya tidak terjadi jika choices di-generate dari targetBots)
+                     AnsiConsole.MarkupLine("[red]Error: Bot yang dipilih tidak ditemukan (post-escape).[/]");
+                     Program.Pause("Tekan Enter...", linkedCancellationToken);
+                     continue;
+                 }
+                 // === AKHIR PERBAIKAN ===
                  
                  // --- MULAI REKAM/EDIT ---
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Record").Color(Color.Fuchsia));
@@ -200,7 +222,7 @@ namespace Orchestrator.TUI
                  if (existingScript != null)
                  {
                       AnsiConsole.MarkupLine("[yellow]Script lama ditemukan. Masukkan input baru untuk menimpanya.[/]");
-                      DisplayExpectScript(existingScript);
+                      DisplayExpectScript(existingScript, TruncateString); // Kirim helper Truncate
                  }
                  
                  AnsiConsole.MarkupLine("\n[bold]Mode Perekaman Dimulai (Expect Script).[/bold]");
@@ -236,16 +258,10 @@ namespace Orchestrator.TUI
              }
         }
         
-        // === PERBAIKAN (CS1061): Helper untuk menggantikan .Truncate() ===
-        private static string TruncateString(string value, int maxLength)
-        {
-            if (string.IsNullOrEmpty(value)) return value;
-            // Tambahkan "..." jika dipotong
-            return value.Length <= maxLength ? value : value.Substring(0, maxLength) + "...";
-        }
-        // === AKHIR PERBAIKAN ===
+        // === PERBAIKAN: Pindahkan helper Truncate ke dalam ShowRecordMenuAsync atau buat jadi static helper ===
+        // (Kita pindahkan ke dalam ShowRecordMenuAsync di atas)
         
-        private static void DisplayExpectScript(List<ExpectStep> script)
+        private static void DisplayExpectScript(List<ExpectStep> script, Func<string, int, string> truncator)
         {
              var table = new Table().Title("[bold yellow]Existing Setup Script[/]").Expand();
              table.AddColumn("[cyan]Step[/]");
@@ -257,9 +273,9 @@ namespace Orchestrator.TUI
                  table.AddRow(
                      (i+1).ToString(),
                      // === PERBAIKAN (CS1061) ===
-                     TruncateString(script[i].Expect.EscapeMarkup(), 50),
+                     truncator(script[i].Expect.EscapeMarkup(), 50),
                      // === PERBAIKAN (CS1061) ===
-                     TruncateString(script[i].Send.EscapeMarkup(), 50)
+                     truncator(script[i].Send.EscapeMarkup(), 50)
                  );
              }
              AnsiConsole.Write(table);
@@ -271,7 +287,8 @@ namespace Orchestrator.TUI
                 .Where(p => ExpectManager.CheckExpectScriptExists(p))
                 .Select(p => {
                     var name = p.Split(new char[] { '/', '\\' }).Last();
-                    return $"{name} ({p})";
+                    // === PERBAIKAN: Escape nama bot jika mengandung markup ===
+                    return $"{name.EscapeMarkup()} ({p.EscapeMarkup()})";
                 }).ToList();
              
              if (!choices.Any()) { AnsiConsole.MarkupLine("[yellow]Tidak ada script expect yang bisa dihapus.[/]"); Program.Pause("Press Enter...", linkedCancellationToken); return; }
@@ -286,9 +303,25 @@ namespace Orchestrator.TUI
 
              if (selectedChoice == "<< Back") return;
              
-             var botPath = selectedChoice.Split('(').Last().TrimEnd(')');
-             if (AnsiConsole.Confirm($"[red]Anda yakin ingin menghapus script setup untuk {botPath.EscapeMarkup()}?[/]", false))
+             // === PERBAIKAN: Ambil path dari string yang mungkin sudah di-escape ===
+             // Kita harus parsing ulang path dari `Name (Path)`
+             var pathStart = selectedChoice.LastIndexOf('(');
+             var pathEnd = selectedChoice.LastIndexOf(')');
+             if (pathStart == -1 || pathEnd == -1 || pathEnd < pathStart)
              {
+                 AnsiConsole.MarkupLine("[red]Error parsing pilihan.[/]");
+                 Program.Pause("Tekan Enter...", linkedCancellationToken);
+                 return;
+             }
+             var botPath = selectedChoice.Substring(pathStart + 1, pathEnd - pathStart - 1);
+             // Karena botPath di-escape saat display, kita tidak perlu un-escape
+             // karena kita cuma butuh string-nya untuk lookup file.
+             // Tapi nama yang ditampilkan (sebelum path) harus di-unescape jika kita ingin menampilkannya.
+             var displayName = selectedChoice.Substring(0, pathStart).Trim();
+             
+             if (AnsiConsole.Confirm($"[red]Anda yakin ingin menghapus script setup untuk {displayName} ({botPath.EscapeMarkup()})?[/]", false))
+             {
+                 // Un-escape tidak diperlukan, karena nama file di disk tidak mengandung escape char
                  ExpectManager.DeleteExpectScript(botPath);
              }
              Program.Pause("Tekan Enter...", linkedCancellationToken);
@@ -353,7 +386,7 @@ namespace Orchestrator.TUI
                     .AddChoices(choices) 
                     .UseConverter(s => {
                         if (s == backOption) return $"[green]{s.EscapeMarkup()}[/]";
-                        return s.EscapeMarkup();
+                        return s.EscapeMarkup(); // Ini sudah benar, sub-menu 1 (Attach) aman.
                     })
                 );
 
@@ -372,7 +405,6 @@ namespace Orchestrator.TUI
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotNameForTmux}\"";
                 
                 // === PERBAIKAN (CS0103): 'linkedCtsMenu' -> 'linkedCancellationToken' ===
-                // Variabel 'linkedCtsMenu' tidak ada di scope ini.
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
@@ -398,10 +430,6 @@ namespace Orchestrator.TUI
             try {
                 string args = $"codespace ssh --codespace \"{activeCodespace}\"";
                 
-                // === PERBAIKAN (CS0103): 'linkedCtsMenu.Token' -> 'linkedCancellationToken' ===
-                // (Ini adalah error di line 363 di log, yang ada di file TuiMenus.cs)
-                // Oh, tunggu, log-nya (363) ada di ShowAttachMenuAsync.
-                // Tapi ini juga salah, jadi gua benerin sekalian.
                 await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Remote shell closed.[/]");
