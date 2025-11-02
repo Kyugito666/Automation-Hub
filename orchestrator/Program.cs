@@ -91,6 +91,13 @@ namespace Orchestrator
                     // 4. Jika kita di Menu Utama (atau di Pause biasa)
                     else 
                     {
+                         // === PERBAIKAN (CS0414): Baca flag _isAwaitingPause ===
+                         if (_isAwaitingPause)
+                         {
+                             AnsiConsole.MarkupLine("[dim](Acknowledging Ctrl+C during pause...)[/]");
+                         }
+                         // === AKHIR PERBAIKAN ===
+                        
                          // Panggil shutdown penuh (yang akan stop codespace jika _isLoopActive=true)
                          TriggerFullShutdown(); 
                     }
