@@ -89,15 +89,58 @@ namespace Orchestrator.Codespace
             }
         }
         
-        public static async Task<List<string>> GetTmuxSessions(TokenEntry token, string codespaceName)
+        public static async Task StartAllEnabledBotsAsync(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
         {
-            var (stdout, stderr, exitCode) = await CodeActions.RunCommandAsync(token, codespaceName, "tmux list-windows -F \"#{window_name}\"", CancellationToken.None, useProxy: false);
-            if (exitCode != 0)
+            var config = Core.BotConfig.Load();
+            if (config == null)
             {
-                if (stderr.Contains("no server running")) return new List<string>(); 
-                throw new Exception($"Failed to list tmux sessions (Exit Code: {exitCode}): {stderr}");
+                AnsiConsole.MarkupLine("[red]✗ Gagal memuat config/bots_config.json saat StartAllEnabledBotsAsync.[/]");
+                return;
             }
-            return stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+
+            AnsiConsole.MarkupLine("[cyan]=> Memulai proses 'Start All Bots' (via Wrapper.py) di remote tmux...[/]");
+            
+            var enabledBots = config.BotsAndTools.Where(b => b.Enabled && b.IsBot).ToList();
+            if (!enabledBots.Any())
+            {
+                AnsiConsole.MarkupLine("[yellow]Tidak ada bot aktif (IsBot=true) yang perlu dijalankan.[/]");
+                return;
+            }
+
+            string tmuxSessionName = "automation_hub_bots";
+            string wrapperScriptPath = "/workspaces/Automation-Hub/setup_tools/wrapper.py";
+
+            foreach (var bot in enabledBots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                AnsiConsole.Markup($"[dim]  -> Menyiapkan [yellow]{bot.Name.EscapeMarkup()}[/]... [/]");
+
+                string botRemotePath = $"/workspaces/Automation-Hub/{bot.Path}";
+                string command = $"cd \"{botRemotePath}\" && python3 {wrapperScriptPath} \"{bot.Name}\"";
+
+                try
+                {
+                    await StartTmuxSessionAsync(
+                        token, 
+                        codespaceName, 
+                        tmuxSessionName, 
+                        bot.Name, 
+                        command,
+                        cancellationToken
+                    );
+                    
+                    AnsiConsole.MarkupLine($"[green] ✓[/]");
+                    await Task.Delay(500, cancellationToken); 
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLine($"[red] ✗ Gagal start bot [yellow]{bot.Name.EscapeMarkup()}[/]: {ex.Message.EscapeMarkup()}[/]");
+                }
+            }
+            
+            AnsiConsole.MarkupLine("[green]=> [bold]Selesai memberi perintah start ke semua bot.[/][/]");
+            AnsiConsole.MarkupLine("[dim]Sesi Tmux 'automation_hub_bots' sekarang berjalan di remote.[/]");
         }
 
         public static void StopCodespace(CancellationToken cancellationToken)
