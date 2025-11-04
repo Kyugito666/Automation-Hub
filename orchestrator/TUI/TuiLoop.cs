@@ -83,33 +83,22 @@ namespace Orchestrator.TUI
                         linkedCtsMenuToken.ThrowIfCancellationRequested();
 
                         await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 5/6: Uploading Bot Repos & Wrapper").SetStyle(Style.Parse("cyan bold"));
-                        panel.Content = "[cyan]Memulai proses upload direktori bot (termasuk kredensial file) & wrapper.py...[/]";
+                        panel.Header = new PanelHeader("Step 5/6: Uploading Bot Repos").SetStyle(Style.Parse("cyan bold"));
+                        panel.Content = "[cyan]Memulai proses upload direktori bot...[/]";
                         ctx.Refresh();
                         await CodeUpload.RunUploadsAsync(currentToken, activeCodespace, linkedCtsMenuToken);
-                        panel.Content = "[green]✓[/] Proses upload direktori bot & wrapper selesai.";
+                        panel.Content = "[green]✓[/] Proses upload direktori bot selesai.";
                         ctx.Refresh();
                         linkedCtsMenuToken.ThrowIfCancellationRequested();
 
                         await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 6/6: Starting Bots via Wrapper.py").SetStyle(Style.Parse("green bold"));
-                        panel.Padding = new Padding(2, 1);
-                        panel.Content = "Memerintahkan codespace untuk menjalankan semua bot aktif\nvia wrapper.py di tmux...";
+                        panel.Header = new PanelHeader("Step 6/6: Syncing Secrets").SetStyle(Style.Parse("cyan bold"));
+                        panel.Content = "[cyan]Mengambil dan mengatur secrets...[/]";
                         ctx.Refresh();
-
-                        try
-                        {
-                            await CodeManager.StartAllEnabledBotsAsync(currentToken, activeCodespace, linkedCtsMenuToken);
-                        }
-                        catch (OperationCanceledException) { throw; } 
-                        catch (Exception ex)
-                        {
-                            AnsiConsole.MarkupLine($"[red]Error saat auto-start bots: {ex.Message.EscapeMarkup()}[/]");
-                        }
-                        if (linkedCtsMenuToken.IsCancellationRequested) return;
-                        
-                        panel.Content = "[green]✓[/] Perintah start bot terkirim.";
+                        await SecretService.SetAllSecretsAsync(currentToken, activeCodespace, linkedCtsMenuToken);
+                        panel.Content = "[green]✓[/] Secrets berhasil disinkronkan.";
                         ctx.Refresh();
+                        linkedCtsMenuToken.ThrowIfCancellationRequested();
 
                         await Task.Delay(500, linkedCtsMenuToken);
                         panel.Header = new PanelHeader("✓ Loop Setup Selesai").SetStyle(Style.Parse("green bold"));
