@@ -39,7 +39,7 @@ namespace Orchestrator.Codespace
                     string localPath = bot.RepoUrl; 
                     string remotePath = $"/workspaces/Automation-Hub/{bot.Path}"; 
                     
-                    AnsiConsole.Markup($"[dim]  - Uploading [yellow]{bot.Name.EscapeMarkup()}[/] -> [blue]{remotePath.EscapeMarkup()}[/]... [/]");
+                    AnsiConsole.Markup($"[dim]  - Uploading [yellow]{bot.Name.EscapeMarkup()}[/] (termasuk file kredensial) -> [blue]{remotePath.EscapeMarkup()}[/]... [/]");
                     try
                     {
                         await UploadDirectoryAsync(token, codespaceName, localPath, remotePath, cancellationToken);
@@ -52,8 +52,51 @@ namespace Orchestrator.Codespace
                     }
                 }
             }
+
+            AnsiConsole.MarkupLine("[cyan]Meng-upload script wrapper PExpect...[/]");
+            try
+            {
+                await UploadWrapperScriptsAsync(token, codespaceName, cancellationToken);
+                AnsiConsole.MarkupLine("[green]✓ Wrapper script berhasil di-upload.[/]");
+            }
+            catch (OperationCanceledException) { AnsiConsole.MarkupLine($"[yellow]CANCELLED[/]"); throw; }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]✗ FATAL: Gagal upload wrapper script: {ex.Message.EscapeMarkup()}[/]");
+                throw; 
+            }
         }
         
+        private static async Task UploadWrapperScriptsAsync(TokenEntry token, string codespaceName, CancellationToken cancellationToken)
+        {
+            string localWrapperPath = @"D:\SC\myproject\tmux\wrapper.py";
+            string localConfigPath = @"D:\SC\myproject\tmux\bots_config.json";
+            
+            string remoteDir = "/workspaces/Automation-Hub/setup_tools";
+            string remoteWrapperPath = $"{remoteDir}/wrapper.py";
+            string remoteConfigPath = $"{remoteDir}/bots_config.json";
+
+            if (!File.Exists(localWrapperPath))
+            {
+                throw new FileNotFoundException($"File wrapper.py tidak ditemukan di: {localWrapperPath}", localWrapperPath);
+            }
+            if (!File.Exists(localConfigPath))
+            {
+                throw new FileNotFoundException($"File bots_config.json (milik wrapper) tidak ditemukan di: {localConfigPath}", localConfigPath);
+            }
+            
+            await CodeActions.RunCommandAsync(token, codespaceName, $"mkdir -p {remoteDir}", cancellationToken, useProxy: false);
+            
+            AnsiConsole.Markup($"[dim]    - Uploading [yellow]wrapper.py[/]... [/]");
+            await CodeActions.UploadFileAsync(token, codespaceName, localWrapperPath, remoteWrapperPath, cancellationToken, useProxy: false);
+            AnsiConsole.MarkupLine($"[green]✓[/]");
+
+            cancellationToken.ThrowIfCancellationRequested();
+            AnsiConsole.Markup($"[dim]    - Uploading [yellow]bots_config.json[/] (milik wrapper)... [/]");
+            await CodeActions.UploadFileAsync(token, codespaceName, localConfigPath, remoteConfigPath, cancellationToken, useProxy: false);
+            AnsiConsole.MarkupLine($"[green]✓[/]");
+        }
+
         private static async Task UploadDirectoryAsync(TokenEntry token, string codespaceName, string localPath, string remotePath, CancellationToken cancellationToken)
         {
             if (!Directory.Exists(localPath))
