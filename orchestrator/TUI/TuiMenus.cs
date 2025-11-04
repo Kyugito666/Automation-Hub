@@ -226,24 +226,6 @@ namespace Orchestrator.TUI
              }
         }
         
-        private static void DisplayExpectScript(List<ExpectStep> script)
-        {
-             var table = new Table().Title("[bold yellow]Existing Setup Script[/]").Expand();
-             table.AddColumn("[cyan]Step[/]");
-             table.AddColumn("[cyan]EXPECT (Prompt)[/]");
-             table.AddColumn("[cyan]SEND (Input)[/]");
-             
-             for(int i = 0; i < script.Count; i++)
-             {
-                 table.AddRow(
-                     (i+1).ToString(),
-                     script[i].Expect.EscapeMarkup().Truncate(50),
-                     script[i].Send.EscapeMarkup().Truncate(50)
-                 );
-             }
-             AnsiConsole.Write(table);
-        }
-        
         private static async Task ShowDeleteExpectScriptMenuAsync(List<string> botPaths, CancellationToken linkedCancellationToken)
         {
              var choices = botPaths
