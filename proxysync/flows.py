@@ -1,21 +1,25 @@
 import os
 import time
 import requests
-import ui
+import ui # Mengimpor semua fungsi UI dari file ui.py
+
+# Import dari modul lain
 import webshare
 import utils
 import tester
 
+# --- Konfigurasi Path (dibutuhkan untuk file I/O) ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..', 'config'))
 
-PROXYLIST_SOURCE_FILE = os.path.join(SCRIPT_DIR, "proxylist.txt")
-PROXY_SOURCE_FILE = os.path.join(SCRIPT_DIR, "proxy.txt")
-APILIST_SOURCE_FILE = os.path.join(CONFIG_DIR, "apilist.txt")
-WEBSHARE_APIKEYS_FILE = os.path.join(CONFIG_DIR, "apikeys.txt")
-FAIL_PROXY_FILE = os.path.join(SCRIPT_DIR, "fail_proxy.txt")
-SUCCESS_PROXY_FILE = os.path.join(SCRIPT_DIR, "success_proxy.txt")
+PROXYLIST_SOURCE_FILE = os.path.join(SCRIPT_DIR, "proxylist.txt") # Input format asli
+PROXY_SOURCE_FILE = os.path.join(SCRIPT_DIR, "proxy.txt")         # Input format http://
+APILIST_SOURCE_FILE = os.path.join(CONFIG_DIR, "apilist.txt")     # Daftar URL download
+WEBSHARE_APIKEYS_FILE = os.path.join(CONFIG_DIR, "apikeys.txt")   # API Keys Webshare
+FAIL_PROXY_FILE = os.path.join(SCRIPT_DIR, "fail_proxy.txt")       # Output proxy gagal
+SUCCESS_PROXY_FILE = os.path.join(SCRIPT_DIR, "success_proxy.txt") # Output proxy sukses
 
+# --- Konfigurasi Tes Proxy ---
 MAX_WORKERS = 10
 
 def download_proxies_from_api(is_auto=False, get_urls_only=False):
@@ -28,22 +32,20 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
     existing_api_urls = utils.load_apis_from_file(APILIST_SOURCE_FILE)
     ui.console.print(f"Memuat URL dari '{os.path.basename(APILIST_SOURCE_FILE)}': {len(existing_api_urls)} URL ditemukan.")
 
-    urls_to_process = set(existing_api_urls)
+    discovered_urls_from_keys = {}
+    urls_to_process = set(existing_api_urls) # Mulai dengan URL dari file
     newly_saved_count = 0
     discovery_failed = False
 
-    if get_urls_only or (not existing_api_urls):
-        if not existing_api_urls:
-            ui.console.print(f"\n[bold]'{os.path.basename(APILIST_SOURCE_FILE)}' kosong. Memulai discovery dari API Keys...[/bold]")
-        else:
-             ui.console.print(f"\n[bold]Mode 'Get URLs Only'. Tetap discover dari API Keys...[/bold]")
-        
+    if get_urls_only or is_auto:
+        ui.console.print(f"\n[bold]Mencoba discover URL baru dari '{os.path.basename(WEBSHARE_APIKEYS_FILE)}'...[/bold]")
         api_keys = utils.load_webshare_apikeys(WEBSHARE_APIKEYS_FILE)
         if not api_keys:
             ui.console.print(f"[yellow]'{os.path.basename(WEBSHARE_APIKEYS_FILE)}' kosong atau tidak ditemukan.[/yellow]")
             if is_auto: discovery_failed = True
         else:
             ui.console.print(f"Ditemukan {len(api_keys)} API Key untuk dicek.")
+            processed_keys_count = 0
             for api_key in api_keys:
                 account_email_info = "[grey]Mencoba mendapatkan email...[/]"
                 try:
@@ -63,25 +65,31 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
                             continue
                         download_url = webshare.get_webshare_download_url(session, plan_id)
                         if download_url:
+                            discovered_urls_from_keys[api_key] = download_url
+                            # Coba simpan SEKARANG, dan update urls_to_process JIKA berhasil disimpan
                             if utils.save_discovered_url(APILIST_SOURCE_FILE, download_url):
-                                 urls_to_process.add(download_url)
+                                 urls_to_process.add(download_url) # Tambahkan ke set yg akan di-download HANYA jika baru
                                  newly_saved_count += 1
-                            elif download_url in existing_api_urls:
+                            elif download_url in existing_api_urls: # Jika sudah ada, tetap tambahkan ke set download
                                  urls_to_process.add(download_url)
+
                         else:
                             ui.console.print("   -> [yellow]Gagal mendapatkan URL download untuk key ini. Dilewati.[/yellow]")
                             discovery_failed = True
                     except Exception as e:
                         ui.console.print(f"   -> [bold red]!!! TERJADI ERROR saat discover URL: {e}[/bold red]")
                         discovery_failed = True
-                time.sleep(1)
+                processed_keys_count += 1
+                if processed_keys_count < len(api_keys):
+                     time.sleep(1)
 
-            ui.console.print(f"\nSelesai discover URL dari API keys.")
+            ui.console.print(f"\nSelesai discover URL dari API keys. {len(discovered_urls_from_keys)} URL ditemukan.")
             if newly_saved_count > 0:
                  ui.console.print(f"[green]{newly_saved_count} URL baru disimpan ke '{os.path.basename(APILIST_SOURCE_FILE)}'.[/green]")
     
-    elif existing_api_urls and not get_urls_only:
-        ui.console.print(f"\n[green]URL dari '{os.path.basename(APILIST_SOURCE_FILE)}' akan digunakan langsung (skip discovery).[/green]")
+    elif not get_urls_only and not is_auto:
+        ui.console.print(f"\n[dim]Mode Unduh: Melewati discovery API Key.[/dim]")
+        ui.console.print(f"[dim]Hanya akan mengunduh dari URL di '{os.path.basename(APILIST_SOURCE_FILE)}'.[/dim]")
 
     if get_urls_only:
         ui.console.print("\n-------------------------------------------")
@@ -91,6 +99,7 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
         else:
              ui.console.print("[bold yellow]⚠️ Proses discover URL selesai, namun terjadi beberapa kegagalan.[/bold yellow]")
              return False
+
 
     if not urls_to_process:
         ui.console.print("\n[bold red]Tidak ada URL API (baik dari file atau hasil discovery baru) untuk mengunduh proxy.[/bold red]")
@@ -117,7 +126,7 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
         unique_proxies = sorted(list(set(all_downloaded_proxies)))
         duplicates_removed = len(all_downloaded_proxies) - len(unique_proxies)
         with open(PROXYLIST_SOURCE_FILE, "w") as f:
-            for proxy in unique_proxies: f.write (proxy + "\n")
+            for proxy in unique_proxies: f.write(proxy + "\n")
         ui.console.print(f"\n[bold green]✅ {len(unique_proxies)} proxy unik berhasil diunduh dan disimpan ke '{os.path.basename(PROXYLIST_SOURCE_FILE)}'[/bold green]")
         if duplicates_removed > 0: ui.console.print(f"[dim]   ({duplicates_removed} duplikat dihapus)[/dim]")
         return True
@@ -125,17 +134,20 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
         ui.console.print(f"\n[bold red]Gagal menulis hasil ke '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
         return False
 
+# === PERBAIKAN: Terima flag is_auto ===
 def run_automated_test_and_save(is_auto=False):
     ui.print_header()
     ui.console.print("[bold cyan]Mode Auto: Tes Akurat & Simpan Hasil...[/bold cyan]")
     
+    # === PERBAIKAN: Cuma load token kalo BUKAN auto ===
     if not is_auto:
         ui.console.print("[dim]   (Mode Manual/Lokal terdeteksi, memuat token GitHub...)[/dim]")
-        if not tester.load_github_token():
+        if not tester.load_github_token(): # Memanggil dari modul tester
             ui.console.print("[bold red]Tes proxy dibatalkan: Gagal memuat token GitHub.[/bold red]")
             return False
     else:
         ui.console.print("[dim]   (Mode Auto/Codespace terdeteksi, token GitHub dilewati. Tes ke ipify.org...)[/dim]")
+    # === AKHIR PERBAIKAN ===
         
     ui.console.print("-" * 40)
     ui.console.print("[bold cyan]Langkah 1: Memuat & Membersihkan Proxy Input...[/bold cyan]")
@@ -154,8 +166,10 @@ def run_automated_test_and_save(is_auto=False):
     else:
         ui.console.print("[bold cyan]Langkah 2: Menjalankan Tes Akurat via GitHub API...[/bold cyan]")
     
+    # === PERBAIKAN: Buat lambda untuk ngirim flag is_auto ke tester ===
     check_func_auto = lambda p: tester.check_proxy_final(p, is_auto=is_auto)
-    good_proxies = ui.run_concurrent_checks_display(proxies, check_func_auto, MAX_WORKERS, FAIL_PROXY_FILE)
+    good_proxies = ui.run_concurrent_checks_display(proxies, check_func_auto, MAX_WORKERS, FAIL_PROXY_FILE) # Memanggil dari modul tester
+    # === AKHIR PERBAIKAN ===
     
     if not good_proxies:
         ui.console.print("[bold red]Berhenti: Tidak ada proksi yang lolos tes.[/bold red]")
