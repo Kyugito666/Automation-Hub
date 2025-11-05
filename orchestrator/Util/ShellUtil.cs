@@ -16,6 +16,7 @@ namespace Orchestrator.Util
         private const int DEFAULT_TIMEOUT_MS = 120000;
 
         // === FUNGSI LAMA (DIBALIKIN BIAR BUILD SUKSES) ===
+        // Wrapper-wrapper ini sekarang manggil logic RunProcessAsync yang baru
         #region "Fungsi Lama (Wajib Ada)"
         
         public static async Task RunCommandAsync(string command, string args, string? workingDir = null, TokenEntry? token = null)
@@ -58,9 +59,6 @@ namespace Orchestrator.Util
             } catch (OperationCanceledException) {
                 AnsiConsole.MarkupLine("[yellow]Interactive operation cancelled.[/]");
                 try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
-                
-                // === PERBAIKAN: Lempar lagi biar TUI tahu ===
-                throw;
             } catch (Exception ex) {
                 AnsiConsole.MarkupLine($"[red]Error running interactive process: {ex.Message.EscapeMarkup()}[/]");
                 try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
@@ -114,17 +112,10 @@ namespace Orchestrator.Util
             catch (OperationCanceledException) {
                  AnsiConsole.MarkupLine("[yellow]Interactive session cancelled.[/]");
                  try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
-                 
-                 // === PERBAIKAN: Lempar lagi biar TUI tahu ===
-                 throw;
             }
             catch (Exception ex) {
                 AnsiConsole.MarkupLine("\n[yellow]"+ new string('═', 60) +"[/]");
-                
-                // === PERBAIKAN (LOG 1 & 3): WAJIB ESCAPE EX.MESSAGE ===
                 AnsiConsole.MarkupLine($"[red]✗ Error running full interactive process: {ex.Message.EscapeMarkup()}[/]");
-                // === AKHIR PERBAIKAN ===
-                
                 try { if (!process.HasExited) process.Kill(true); } catch { /* Ignored */ }
                  throw; 
             }
@@ -157,7 +148,9 @@ namespace Orchestrator.Util
         internal static void SetFileNameAndArgs(ProcessStartInfo startInfo, string command, string args) {
              if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
                 startInfo.FileName = "cmd.exe";
+                // === PERBAIKAN: Hapus kutip ganda "" di depan command ===
                 startInfo.Arguments = $"/c \"{command} {args}\"";
+                // === DULU: $"/c \"\"{command}\" {args}\"" === 
             } else { 
                 startInfo.FileName = "/bin/bash";
                 string escapedArgs = args.Replace("\"", "\\\""); 
