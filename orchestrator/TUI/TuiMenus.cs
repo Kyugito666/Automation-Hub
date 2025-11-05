@@ -6,12 +6,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using Orchestrator.Services; 
 using Orchestrator.Codespace; 
+using Orchestrator.Util; 
 using Orchestrator.Core; 
 
 namespace Orchestrator.TUI 
 {
     internal static class TuiMenus
     {
+        // ... (RunInteractiveMenuAsync tidak berubah) ...
         internal static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken) 
         {
             while (!cancellationToken.IsCancellationRequested) {
@@ -19,18 +21,18 @@ namespace Orchestrator.TUI
                 AnsiConsole.Write(new FigletText("Automation Hub").Centered().Color(Color.Cyan1));
                 AnsiConsole.MarkupLine("[dim]Local Control, Remote Execution[/]");
 
-                string proxyStatus = TokenManager.IsProxyGloballyEnabled() ? "[green]ON[/]" : "[red]OFF[/]";
-                
                 var selection = AnsiConsole.Prompt(
                     new SelectionPrompt<string>()
                         .Title("\n[bold white]MAIN MENU[/]")
                         .PageSize(8) 
                         .WrapAround(true)
                         .AddChoices(new[] {
-                            "1. Start/Manage Codespace Runner",
+                            "1. Start/Manage Codespace Runner (Continuous Loop)",
                             "2. Token & Collaborator Management",
                             "3. Proxy Management (Local TUI Proxy)",
-                            $"B. Toggle Global Proxy (Saat ini: {proxyStatus})",
+                            "4. Attach to Bot Session (Remote Tmux)",
+                            "5. Migrasi Kredensial Lokal (Jalankan 1x)",
+                            "6. Open Remote Shell (Codespace)",
                             "0. Exit"
                         }));
 
@@ -48,26 +50,16 @@ namespace Orchestrator.TUI
                             bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
                             TokenManager.SetProxyUsage(useProxy);
 
-                            Program.SetLoopActive(true);
-                            await TuiLoop.RunOrchestratorLoopAsync(linkedCtsMenu.Token);
-                            Program.SetLoopActive(false);
-                            
-                            if (linkedCtsMenu.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-                            {
-                                AnsiConsole.MarkupLine("\n[yellow]Loop dihentikan (Ctrl+C). Codespace dibiarkan berjalan.[/]");
-                                Program.Pause("Tekan Enter untuk kembali ke menu...", CancellationToken.None); 
-                            }
-                            
+                            await TuiLoop.RunOrchestratorLoopAsync(cancellationToken);
                             if (cancellationToken.IsCancellationRequested) return; 
                             break; 
                         case "2": await ShowSetupMenuAsync(linkedCtsMenu.Token); break; 
-                        case "3": await ShowLocalProxyMenuAsync(linkedCtsMenu.Token); break;
-                        case "B":
-                            bool currentStatus = TokenManager.IsProxyGloballyEnabled();
-                            TokenManager.SetProxyUsage(!currentStatus);
-                            AnsiConsole.MarkupLine($"[green]Global Proxy toggled to: {(!currentStatus ? "[green]ON[/]" : "[red]OFF[/]")}[/]");
-                            await Task.Delay(1500, linkedCtsMenu.Token);
-                            break;
+                        case "3": await ShowLocalMenuAsync(linkedCtsMenu.Token); break; 
+                        case "4": await ShowAttachMenuAsync(linkedCtsMenu.Token); break; 
+                        case "5": 
+                            await MigrateService.RunMigration(linkedCtsMenu.Token); 
+                            Program.Pause("Tekan Enter...", linkedCtsMenu.Token); break; 
+                        case "6": await ShowRemoteShellAsync(linkedCtsMenu.Token); break; 
                         case "0":
                             AnsiConsole.MarkupLine("Exiting...");
                             Program.TriggerFullShutdown(); 
@@ -80,7 +72,7 @@ namespace Orchestrator.TUI
                         return; 
                     } else if (interactiveCts?.IsCancellationRequested == true) { 
                         AnsiConsole.MarkupLine("\n[yellow]Menu operation cancelled by user (Ctrl+C).[/]");
-                        Program.Pause("Press Enter untuk kembali ke menu...", CancellationToken.None); 
+                        Program.Pause("Press Enter to return to menu...", CancellationToken.None); 
                     } else { 
                         AnsiConsole.MarkupLine("\n[yellow]Menu operation cancelled unexpectedly.[/]");
                         Program.Pause("Press Enter...", CancellationToken.None);
@@ -99,41 +91,4 @@ namespace Orchestrator.TUI
             AnsiConsole.MarkupLine("[yellow]Exiting Menu loop due to main cancellation.[/]");
         } 
 
-        private static async Task ShowSetupMenuAsync(CancellationToken linkedCancellationToken) {
-            while (!linkedCancellationToken.IsCancellationRequested) {
-                 AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup").Color(Color.Yellow));
-                 var selection = AnsiConsole.Prompt( new SelectionPrompt<string>()
-                         .Title("\n[bold white]TOKEN & COLLABORATOR[/]").PageSize(10).WrapAround(true)
-                         .AddChoices(new[] { "1. Validate Tokens", "2. Invite Collaborators", "3. Accept Invitations", "4. Show Status", "0. Back" }));
-                 var sel = selection[0].ToString(); if (sel == "0") return; 
-
-                 try {
-                     switch (sel) {
-                         case "1": await CollabService.ValidateAllTokens(linkedCancellationToken); break;
-                         case "2": await CollabService.InviteCollaborators(linkedCancellationToken); break;
-                         case "3": await CollabService.AcceptInvitations(linkedCancellationToken); break;
-                         case "4": await Task.Run(() => TokenManager.ShowStatus(), linkedCancellationToken); break; 
-                     }
-                     Program.Pause("Tekan Enter...", linkedCancellationToken); 
-                 } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Setup operation cancelled.[/]"); return; } 
-                 catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); } 
-            }
-         }
-
-         private static async Task ShowLocalProxyMenuAsync(CancellationToken linkedCancellationToken) {
-             while (!linkedCancellationToken.IsCancellationRequested) {
-                 AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Proxy").Color(Color.Green));
-                 var selection = AnsiConsole.Prompt( new SelectionPrompt<string>()
-                         .Title("\n[bold white]LOCAL PROXY MGMT[/]").PageSize(10).WrapAround(true)
-                         .AddChoices(new[] { "1. Run ProxySync (Interactive)", "0. Back" }));
-                 var sel = selection[0].ToString(); if (sel == "0") return;
-
-                 try {
-                    if (sel == "1") await ProxyService.DeployProxies(linkedCancellationToken); 
-                    Program.Pause("Tekan Enter...", linkedCancellationToken); 
-                 } catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]ProxySync operation cancelled.[/]"); return; } 
-                 catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); } 
-            }
-         }
-    }
-}
+        // ... (ShowSetupMenuAsync dan
