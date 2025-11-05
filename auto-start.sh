@@ -1,64 +1,106 @@
 #!/bin/bash
-# auto-start.sh (v7 - Wrapper/Orchestrator Mode)
+#
+# auto-start.sh (Smart Mode v6 - No Secret Extraction)
+# Secrets sudah di-upload via SSH, langsung available
+#
 
+# === PERBAIKAN: Tentukan WORKDIR secara dinamis ===
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 WORKDIR="$SCRIPT_DIR"
+# === AKHIR PERBAIKAN ===
+
 LOG_FILE="$WORKDIR/startup.log"
+HEALTH_CHECK_DONE="/tmp/auto_start_done"
+HEALTH_CHECK_FAIL_PROXY="/tmp/auto_start_failed_proxysync"
+HEALTH_CHECK_FAIL_DEPLOY="/tmp/auto_start_failed_deploy"
+FIRST_RUN_FLAG="/tmp/auto_start_first_run"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "========================================="
-echo "  AUTO START SCRIPT (Orchestrator v7)"
+echo "  AUTO START SCRIPT (Smart v6)"
 echo "  $(date)"
-echo "  WORKDIR: $WORKDIR"
+echo "  WORKDIR: $WORKDIR" # <-- Tambahan log biar jelas
 echo "========================================="
 
 cd "$WORKDIR" || { echo "FATAL: Cannot cd to $WORKDIR"; exit 1; }
 
-INSTALL_TYPE=$1
+rm -f "$HEALTH_CHECK_DONE" "$HEALTH_CHECK_FAIL_PROXY" "$HEALTH_CHECK_FAIL_DEPLOY"
+echo "Cleaned up previous status flags."
 
-if [ "$INSTALL_TYPE" == "--existing-install" ]; then
-    echo "[1/3] Self-update (git pull) for existing codespace..."
-    if [ -d ".git" ]; then
-        git pull || echo "   ⚠️  WARNING: git pull failed, continuing..."
-    else
-        echo "   ⚠️  WARNING: .git directory not found. Skipping git pull."
-    fi
-    
-    echo "[2/3] Running ProxySync (IP Auth Only)..."
-    python3 "$WORKDIR/proxysync/main.py" --ip-auth-only
-    if [ $? -ne 0 ]; then
-        echo "   ❌ ERROR: ProxySync (IP Auth Only) failed!"
-        exit 1
-    fi
-    
-    echo "[2/3] Running ProxySync (Test & Save Only)..."
-    python3 "$WORKDIR/proxysync/main.py" --test-and-save-only
+if [ ! -f "$FIRST_RUN_FLAG" ]; then
+    echo "[FIRST RUN] Full setup will be performed."
+    IS_FIRST_RUN=true
+    touch "$FIRST_RUN_FLAG"
+else
+    echo "[SUBSEQUENT RUN] Fast mode - skip if already running."
+    IS_FIRST_RUN=false
+fi
 
-elif [ "$INSTALL_TYPE" == "--new-install" ]; then
-    echo "[1/3] Skipping Self-update (New Codespace)."
-    
-    echo "[2/3] Running ProxySync (Full Auto Download/Test)..."
+echo "[1/3] Self-update (git pull)..."
+# === PERBAIKAN: Cek dulu apa ini repo git ===
+if [ -d ".git" ]; then
+    git pull || { echo "   ⚠️  WARNING: git pull failed, continuing with existing code..."; }
+else
+    echo "   ⚠️  WARNING: .git directory not found. Skipping git pull."
+fi
+# === AKHIR PERBAIKAN ===
+
+echo "[2/3] Running ProxySync (IP Auth, Download, Test)..."
+if ! command -v python3 &> /dev/null; then
+    echo "   ❌ ERROR: python3 command not found!"
+    touch "$HEALTH_CHECK_FAIL_DEPLOY"
+    exit 1
+fi
+
+if [ "$IS_FIRST_RUN" = false ] && [ -f "$WORKDIR/proxysync/success_proxy.txt" ] && [ -s "$WORKDIR/proxysync/success_proxy.txt" ]; then
+    echo "   ⏭️  SKIP: ProxySync already ran (success_proxy.txt exists)."
+else
+    # === PERBAIKAN: Gunakan $WORKDIR variabel ===
     python3 "$WORKDIR/proxysync/main.py" --full-auto
     if [ $? -ne 0 ]; then
-        echo "   ❌ ERROR: ProxySync (Full Auto) failed!"
-        exit 1
+        echo "   ❌ ERROR: ProxySync failed! Check $LOG_FILE for details."
+        touch "$HEALTH_CHECK_FAIL_PROXY"
+        exit 1 # Kalo ProxySync gagal, ini fatal, wajib exit 1
     fi
-    
-else
-    echo "FATAL: No install type specified (e.g., --new-install or --existing-install)."
-    exit 1
+    echo "   ✓ ProxySync completed. success_proxy.txt updated."
 fi
 
-echo "[3/3] Running Bot Deployer (Wrapper System)..."
+echo "[3/3] Running Bot Deployer (Smart Install)..."
+
+if tmux has-session -t automation_hub_bots 2>/dev/null; then
+    if [ "$IS_FIRST_RUN" = false ]; then
+        echo "   ⏭️  SKIP: Bots already running in tmux (session 'automation_hub_bots' exists)."
+        echo "   💡 Use 'tmux a -t automation_hub_bots' to attach or run deploy_bots.py manually to restart."
+        touch "$HEALTH_CHECK_DONE"
+        echo "Health check flag created: $HEALTH_CHECK_DONE (bots reused)"
+        exit 0 # Ini sukses, exit 0
+    else
+        echo "   🔄 First run detected but tmux exists. Killing old session..."
+        tmux kill-session -t automation_hub_bots 2>/dev/null || true
+    fi
+fi
+
+# === PERBAIKAN: Gunakan $WORKDIR variabel ===
 python3 "$WORKDIR/deploy_bots.py"
 if [ $? -ne 0 ]; then
-    echo "   ❌ ERROR: Bot deployment (deploy_bots.py) failed!"
-    exit 1
+    echo "   ❌ ERROR: Bot deployment failed! Check $LOG_FILE for details."
+    touch "$HEALTH_CHECK_FAIL_DEPLOY"
+    # === PERBAIKAN "SETRES": JANGAN exit 1 ===
+    # exit 1 # <-- MATIKAN INI. 5 bot gagal bukan error fatal.
 fi
+echo "   ✓ Bot deployment completed (atau sebagian gagal, lanjut...)."
+# === AKHIR PERBAIKAN ===
 
 echo "========================================="
 echo "  AUTO START SCRIPT COMPLETED (Success)"
-echo "  (TUI is now in idle mode)"
+echo "  Use Menu 4 (Attach) in TUI to monitor."
 echo "========================================="
+
+touch "$HEALTH_CHECK_DONE"
+
+# === PERBAIKAN "SETRES": Selalu exit 0 ===
+# Kalo udah sampe sini, TUI harus tau kalo skripnya SELESAI,
+# meskipun ada 5 bot gagal deploy.
 exit 0
+# === AKHIR PERBAIKAN ===
