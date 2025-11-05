@@ -13,6 +13,7 @@ namespace Orchestrator.TUI
 {
     internal static class TuiMenus
     {
+        // ... (RunInteractiveMenuAsync tidak berubah) ...
         internal static async Task RunInteractiveMenuAsync(CancellationToken cancellationToken) 
         {
             while (!cancellationToken.IsCancellationRequested) {
@@ -48,9 +49,13 @@ namespace Orchestrator.TUI
                             AnsiConsole.MarkupLine(string.Empty); 
                             bool useProxy = AnsiConsole.Confirm("[bold yellow]Gunakan Proxy[/] untuk loop ini? (Disarankan [green]Yes[/])", true);
                             TokenManager.SetProxyUsage(useProxy);
-                            
+
+                            // === PERBAIKAN: Ganti 'cancellationToken' -> 'linkedCtsMenu.Token' ===
+                            // Ini membuat Menu 1 bisa dibatalkan dengan Ctrl+C (interaktif)
+                            // tanpa mematikan seluruh aplikasi.
                             await TuiLoop.RunOrchestratorLoopAsync(linkedCtsMenu.Token);
                             
+                            // Jika loop berhenti (karena Ctrl+C), kita PING USER untuk Enter
                             if (linkedCtsMenu.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                             {
                                 AnsiConsole.MarkupLine("\n[yellow]Loop dihentikan (Ctrl+C). Codespace dibiarkan berjalan.[/]");
@@ -97,6 +102,7 @@ namespace Orchestrator.TUI
             AnsiConsole.MarkupLine("[yellow]Exiting Menu loop due to main cancellation.[/]");
         } 
 
+        // ... (ShowSetupMenuAsync dan ShowLocalProxyMenuAsync (sebelumnya ShowLocalMenuAsync) tidak berubah) ...
          private static async Task ShowSetupMenuAsync(CancellationToken linkedCancellationToken) {
             while (!linkedCancellationToken.IsCancellationRequested) {
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup").Color(Color.Yellow));
@@ -133,7 +139,8 @@ namespace Orchestrator.TUI
                  catch (Exception ex) { AnsiConsole.MarkupLine($"[red]Error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); } 
             }
          }
-        
+
+        // === FUNGSI BARU: Menu Setup Interaktif (Recording) ===
         private static async Task ShowRecordMenuAsync(CancellationToken linkedCancellationToken)
         {
              var config = Core.BotConfig.Load();
@@ -153,6 +160,7 @@ namespace Orchestrator.TUI
              
              if (!targetBots.Any()) { AnsiConsole.MarkupLine("[yellow]Tidak ada bot aktif yang terdaftar untuk di-setup.[/]"); Program.Pause("Press Enter...", linkedCancellationToken); return; }
 
+             // --- TAMPILKAN DAFTAR BOT ---
              while (!linkedCancellationToken.IsCancellationRequested)
              {
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Setup UI").Color(Color.Fuchsia));
@@ -176,13 +184,15 @@ namespace Orchestrator.TUI
                  if (selectedChoice == "[yellow]Delete Setup Script[/]")
                  {
                       await ShowDeleteExpectScriptMenuAsync(targetBots.Select(b => b.Path).ToList(), linkedCancellationToken);
-                      
+                      // Refresh status setelah delete
                       targetBots = config.BotsAndTools.Where(b => b.Enabled && b.IsBot).Select(b => new { Name = b.Name, Path = b.Path, Recorded = ExpectManager.CheckExpectScriptExists(b.Path) }).ToList();
                       continue;
                  }
 
+                 // Ambil bot yang dipilih
                  var selectedBot = targetBots.First(b => selectedChoice.StartsWith(b.Name));
                  
+                 // --- MULAI REKAM/EDIT ---
                  AnsiConsole.Clear(); AnsiConsole.Write(new FigletText("Record").Color(Color.Fuchsia));
                  AnsiConsole.MarkupLine($"\n[cyan]SETUP SCRIPT UNTUK {selectedBot.Name.EscapeMarkup()}[/]");
                  
@@ -272,7 +282,10 @@ namespace Orchestrator.TUI
              }
              Program.Pause("Tekan Enter...", linkedCancellationToken);
         }
+        // === AKHIR FUNGSI BARU ===
 
+
+        // --- INI FUNGSI YANG DIPERBAIKI (ATTACH/SETUP UTAMA) ---
         private static async Task ShowAttachMenuAsync(CancellationToken linkedCancellationToken) {
             if (linkedCancellationToken.IsCancellationRequested) return; 
 
@@ -301,6 +314,7 @@ namespace Orchestrator.TUI
                     return;
             }
 
+            // Lanjutkan ke logic Attach
             var currentToken = TokenManager.GetCurrentToken(); 
             var state = TokenManager.GetState(); 
             var activeCodespace = state.ActiveCodespaceName;
@@ -346,14 +360,16 @@ namespace Orchestrator.TUI
 
                 string args = $"codespace ssh --codespace \"{activeCodespace}\" -- tmux attach-session -t {tmuxSessionName} \\; select-window -t \"{escapedBotNameForTmux}\"";
                 
-                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCancellationToken, useProxy: false);
+                await ShellUtil.RunInteractiveWithFullInput("gh", args, null, currentToken, linkedCtsMenu.Token, useProxy: false);
                 
                 AnsiConsole.MarkupLine("\n[yellow]✓ Detached from tmux session.[/]");
             }
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Attach session cancelled (likely Ctrl+C/Exit).[/]"); }
             catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Attach error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
         }
+        // --- AKHIR FUNGSI YANG DIPERBAIKI ---
 
+        // --- INI FUNGSI YANG DIPERBAIKI ---
         private static async Task ShowRemoteShellAsync(CancellationToken linkedCancellationToken)
         {
             if (linkedCancellationToken.IsCancellationRequested) return;
@@ -376,5 +392,6 @@ namespace Orchestrator.TUI
             catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Remote shell session cancelled (likely Ctrl+C).[/]"); }
             catch (Exception ex) { AnsiConsole.MarkupLine($"\n[red]Remote shell error: {ex.Message.EscapeMarkup()}[/]"); Program.Pause("Press Enter...", CancellationToken.None); }
         }
+        // --- AKHIR FUNGSI YANG DIPERBAIKI ---
     }
 }
