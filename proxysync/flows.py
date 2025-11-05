@@ -32,8 +32,12 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
     newly_saved_count = 0
     discovery_failed = False
 
-    if not existing_api_urls:
-        ui.console.print(f"\n[bold]'{os.path.basename(APILIST_SOURCE_FILE)}' kosong. Memulai discovery dari API Keys...[/bold]")
+    if get_urls_only or (not existing_api_urls):
+        if not existing_api_urls:
+            ui.console.print(f"\n[bold]'{os.path.basename(APILIST_SOURCE_FILE)}' kosong. Memulai discovery dari API Keys...[/bold]")
+        else:
+             ui.console.print(f"\n[bold]Mode 'Get URLs Only'. Tetap discover dari API Keys...[/bold]")
+        
         api_keys = utils.load_webshare_apikeys(WEBSHARE_APIKEYS_FILE)
         if not api_keys:
             ui.console.print(f"[yellow]'{os.path.basename(WEBSHARE_APIKEYS_FILE)}' kosong atau tidak ditemukan.[/yellow]")
@@ -75,7 +79,8 @@ def download_proxies_from_api(is_auto=False, get_urls_only=False):
             ui.console.print(f"\nSelesai discover URL dari API keys.")
             if newly_saved_count > 0:
                  ui.console.print(f"[green]{newly_saved_count} URL baru disimpan ke '{os.path.basename(APILIST_SOURCE_FILE)}'.[/green]")
-    else:
+    
+    elif existing_api_urls and not get_urls_only:
         ui.console.print(f"\n[green]URL dari '{os.path.basename(APILIST_SOURCE_FILE)}' akan digunakan langsung (skip discovery).[/green]")
 
     if get_urls_only:
