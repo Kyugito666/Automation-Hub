@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using Orchestrator.Core;
 using Orchestrator.Codespace;
 using Orchestrator.Services;
-using Orchestrator.Util;
 
 namespace Orchestrator.TUI
 {
@@ -21,12 +20,14 @@ namespace Orchestrator.TUI
                 .Border(BoxBorder.Rounded)
                 .Expand();
 
+            bool isNewCodespace = false;
+
             await AnsiConsole.Live(panel)
                 .StartAsync(async ctx =>
                 {
                     try
                     {
-                        panel.Header = new PanelHeader("Step 1/6: Validating Token").SetStyle(Style.Parse("cyan bold"));
+                        panel.Header = new PanelHeader("Step 1/7: Validating Token").SetStyle(Style.Parse("cyan bold"));
                         ctx.Refresh();
                         var currentToken = TokenManager.GetCurrentToken();
                         if (currentToken == null)
@@ -38,19 +39,23 @@ namespace Orchestrator.TUI
                         ctx.Refresh();
 
                         await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 2/6: Checking 'gh' CLI").SetStyle(Style.Parse("cyan bold"));
+                        panel.Header = new PanelHeader("Step 2/7: Checking Billing").SetStyle(Style.Parse("cyan bold"));
+                        panel.Content = "[yellow]Checking billing info...[/]";
                         ctx.Refresh();
-                        if (!await GhService.CheckGhCliAsync(currentToken, linkedCtsMenuToken))
+                        
+                        var billingInfo = await BillingService.GetBillingInfo(currentToken);
+                        linkedCtsMenuToken.ThrowIfCancellationRequested();
+                        
+                        if (!billingInfo.IsQuotaOk)
                         {
-                            panel.Content = "[red]✗ 'gh' CLI error. Pastikan ter-install dan login.[/]";
+                            panel.Content = $"[red]✗ KUOTA HABIS. Cek billing manual.[/]\n[dim]Error: {billingInfo.Error?.EscapeMarkup() ?? "Unknown"}[/]";
                             return;
                         }
-                        panel.Content = "[green]✓ 'gh' CLI siap.[/]";
+                        panel.Content = $"[green]✓[/] Billing OK. Sisa ~{billingInfo.HoursRemaining:F1} jam.";
                         ctx.Refresh();
-                        linkedCtsMenuToken.ThrowIfCancellationRequested();
 
                         await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 3/6: Finding Active Codespace").SetStyle(Style.Parse("cyan bold"));
+                        panel.Header = new PanelHeader("Step 3/7: Finding Active Codespace").SetStyle(Style.Parse("cyan bold"));
                         panel.Content = "[yellow]Mencari codespace 'AutomationHubRunner' yang aktif...[/]";
                         ctx.Refresh();
                         string? activeCodespace = await CodeManager.FindActiveCodespaceAsync(currentToken, linkedCtsMenuToken);
@@ -65,9 +70,17 @@ namespace Orchestrator.TUI
                             ctx.Refresh();
                             activeCodespace = await CodeManager.CreateCodespaceAsync(currentToken, linkedCtsMenuToken);
                             
-                            panel.Content = $"[green]✓[/] Codespace baru [blue]{activeCodespace.EscapeMarkup()}[/] dibuat. Menunggu state 'Available'...";
+                            panel.Content = $"[green]✓[/] Codespace baru [blue]{activeCodespace.EscapeMarkup()}[/] dibuat. Menunggu SSH ready...";
                             ctx.Refresh();
-                            await CodeHealth.WaitForCodespaceAvailableAsync(currentToken, activeCodespace, linkedCtsMenuToken);
+                            await CodeHealth.WaitForSshReadyWithRetry(currentToken, activeCodespace, linkedCtsMenuToken, useFastPolling: false);
+                            isNewCodespace = true;
+                        }
+                        else
+                        {
+                            panel.Content = $"[green]✓[/] Codespace ditemukan: [blue]{activeCodespace.EscapeMarkup()}[/]. Menghidupkan via SSH...";
+                            ctx.Refresh();
+                            await CodeHealth.WaitForSshReadyWithRetry(currentToken, activeCodespace, linkedCtsMenuToken, useFastPolling: false);
+                            isNewCodespace = false;
                         }
                         
                         TokenManager.SetState(activeCodespace);
@@ -76,14 +89,7 @@ namespace Orchestrator.TUI
                         linkedCtsMenuToken.ThrowIfCancellationRequested();
 
                         await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 4/6: Codespace Health Check").SetStyle(Style.Parse("cyan bold"));
-                        await CodeHealth.RunHealthCheckAsync(currentToken, activeCodespace, linkedCtsMenuToken);
-                        panel.Content = "[green]✓[/] Health check lolos (git, tmux, python, node).";
-                        ctx.Refresh();
-                        linkedCtsMenuToken.ThrowIfCancellationRequested();
-
-                        await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 5/6: Uploading Bot Repos").SetStyle(Style.Parse("cyan bold"));
+                        panel.Header = new PanelHeader("Step 4/7: Uploading Bot Repos").SetStyle(Style.Parse("cyan bold"));
                         panel.Content = "[cyan]Memulai proses upload direktori bot...[/]";
                         ctx.Refresh();
                         await CodeUpload.RunUploadsAsync(currentToken, activeCodespace, linkedCtsMenuToken);
@@ -92,11 +98,28 @@ namespace Orchestrator.TUI
                         linkedCtsMenuToken.ThrowIfCancellationRequested();
 
                         await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 6/6: Syncing Secrets").SetStyle(Style.Parse("cyan bold"));
+                        panel.Header = new PanelHeader("Step 5/7: Syncing Secrets").SetStyle(Style.Parse("cyan bold"));
                         panel.Content = "[cyan]Mengambil dan mengatur secrets...[/]";
                         ctx.Refresh();
                         await SecretService.SetAllSecretsAsync(currentToken, activeCodespace, linkedCtsMenuToken);
                         panel.Content = "[green]✓[/] Secrets berhasil disinkronkan.";
+                        ctx.Refresh();
+                        linkedCtsMenuToken.ThrowIfCancellationRequested();
+
+                        await Task.Delay(250, linkedCtsMenuToken);
+                        panel.Header = new PanelHeader("Step 6/7: Triggering Remote Setup & Bot Launcher").SetStyle(Style.Parse("cyan bold"));
+                        panel.Content = "[cyan]Menjalankan auto-start.sh di codespace...[/]";
+                        ctx.Refresh();
+                        bool startupSuccess = await CodeActions.RunStartupScriptAndStreamLogs(currentToken, activeCodespace, isNewCodespace, linkedCtsMenuToken);
+                        
+                        if (startupSuccess)
+                        {
+                            panel.Content = "[green]✓[/] Startup script selesai.";
+                        }
+                        else
+                        {
+                            panel.Content = "[red]✗[/] Startup script failed. Check logs.";
+                        }
                         ctx.Refresh();
                         linkedCtsMenuToken.ThrowIfCancellationRequested();
 
