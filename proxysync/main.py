@@ -103,7 +103,7 @@ def main_interactive():
         elif choice == "3":
             operation_name = "Konversi Proxy"
             result = utils.convert_proxylist_to_http() # Panggil dari utils
-        elif choice == "4S":
+        elif choice == "4":
             operation_name = "Tes & Distribusi"
             run_full_process()
             result = True
