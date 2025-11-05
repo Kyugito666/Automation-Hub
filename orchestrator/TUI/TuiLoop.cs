@@ -2,153 +2,133 @@ using Spectre.Console;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Orchestrator.Core;
-using Orchestrator.Codespace;
-using Orchestrator.Services;
+using Orchestrator.Services; 
+using Orchestrator.Codespace; 
+using Orchestrator.Core; 
 
-namespace Orchestrator.TUI
+namespace Orchestrator.TUI 
 {
     internal static class TuiLoop
     {
-        private static DateTime _lastRun = DateTime.MinValue;
-        private static bool _firstRun = true;
+        private static bool _isAttemptingIpAuth = false;
 
-        internal static async Task RunOrchestratorLoopAsync(CancellationToken linkedCtsMenuToken)
+        // Sleep 3.5 jam
+        private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromMinutes((3 * 60) + 30); 
+        private static readonly TimeSpan ErrorRetryDelay = TimeSpan.FromMinutes(5);
+        private const int MAX_CONSECUTIVE_ERRORS = 3;
+
+        internal static async Task RunOrchestratorLoopAsync(CancellationToken cancellationToken) 
         {
-            var panel = new Panel(string.Empty)
-                .Header(new PanelHeader("Initializing...").SetStyle(Style.Parse("cyan bold")))
-                .Border(BoxBorder.Rounded)
-                .Expand();
+            AnsiConsole.Clear(); AnsiConsole.MarkupLine("[cyan]Starting Orchestrator Loop...[/]"); AnsiConsole.MarkupLine("[dim](Press Ctrl+C ONCE for graceful shutdown)[/]");
+            
+            Program.SetLoopActive(true); 
+            int consecutiveErrors = 0;
 
-            bool isNewCodespace = false;
+            try {
+                while (!cancellationToken.IsCancellationRequested) { 
+                    TokenEntry currentToken = TokenManager.GetCurrentToken(); TokenState currentState = TokenManager.GetState(); string? activeCodespace = currentState.ActiveCodespaceName;
+                    var username = currentToken.Username ?? "unknown";
+                    AnsiConsole.MarkupLine($"\n[cyan]Token #{currentState.CurrentIndex + 1}: @{username.EscapeMarkup()}[/]");
+                    try {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        AnsiConsole.MarkupLine("Checking billing...");
+                        var billingInfo = await BillingService.GetBillingInfo(currentToken); 
+                        cancellationToken.ThrowIfCancellationRequested();
+                        BillingService.DisplayBilling(billingInfo, currentToken.Username ?? "unknown");
 
-            await AnsiConsole.Live(panel)
-                .StartAsync(async ctx =>
-                {
-                    try
-                    {
-                        panel.Header = new PanelHeader("Step 1/7: Validating Token").SetStyle(Style.Parse("cyan bold"));
-                        ctx.Refresh();
-                        var currentToken = TokenManager.GetCurrentToken();
-                        if (currentToken == null)
-                        {
-                            panel.Content = "[red]✗ Token GitHub utama tidak valid. Jalankan Menu 2 (Setup).[/]";
-                            return;
+                        if (!billingInfo.IsQuotaOk) {
+                            if (billingInfo.Error == BillingService.PersistentProxyError && !_isAttemptingIpAuth) {
+                                AnsiConsole.MarkupLine("[magenta]Proxy error detected. Attempting recovery...[/]");
+                                _isAttemptingIpAuth = true;
+                                bool ipAuthSuccess = await ProxyService.RunIpAuthorizationOnlyAsync(cancellationToken); 
+                                _isAttemptingIpAuth = false; cancellationToken.ThrowIfCancellationRequested();
+                                if (ipAuthSuccess) {
+                                    AnsiConsole.MarkupLine("[green]IP Auth OK. Testing & Reloading...[/]");
+                                    await ProxyService.RunProxyTestAndSaveAsync(cancellationToken); cancellationToken.ThrowIfCancellationRequested(); 
+                                    
+                                    AnsiConsole.MarkupLine("[cyan]Reloading all configs (tokens + proxies)...[/]");
+                                    TokenManager.ReloadAllConfigs();
+                                    currentToken = TokenManager.GetCurrentToken();
+                                    
+                                    AnsiConsole.MarkupLine("[yellow]Retrying billing check with new proxy...[/]"); 
+                                    await Task.Delay(5000, cancellationToken); 
+                                    continue;
+                                } else AnsiConsole.MarkupLine("[red]IP Auth failed.[/]");
+                            } else if (_isAttemptingIpAuth) AnsiConsole.MarkupLine("[yellow]IP Auth in progress, skipping redundant attempt.[/]");
+
+                            AnsiConsole.MarkupLine("[yellow]Quota low/billing failed/recovery failed. Rotating token...[/]");
+                            if (!string.IsNullOrEmpty(activeCodespace)) { 
+                                AnsiConsole.MarkupLine($"[dim]Deleting {activeCodespace.EscapeMarkup()}...[/]"); 
+                                try { await CodeManager.DeleteCodespace(currentToken, activeCodespace); } catch {} 
+                            } 
+                            currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState);
+                            currentToken = TokenManager.SwitchToNextToken(); activeCodespace = null; consecutiveErrors = 0;
+                            AnsiConsole.MarkupLine($"[cyan]Switched to token: @{(currentToken.Username ?? "unknown").EscapeMarkup()}[/]");
+                            await Task.Delay(5000, cancellationToken); continue; 
                         }
-                        panel.Content = $"[green]✓[/] Token [blue]{currentToken.Username.EscapeMarkup()}[/] OK.";
-                        ctx.Refresh();
 
-                        await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 2/7: Checking Billing").SetStyle(Style.Parse("cyan bold"));
-                        panel.Content = "[yellow]Checking billing info...[/]";
-                        ctx.Refresh();
+                        cancellationToken.ThrowIfCancellationRequested(); AnsiConsole.MarkupLine("Ensuring codespace...");
+                        string ensuredCodespaceName;
+                        try { 
+                            // Ini sekarang manggil logic streaming yang baru
+                            ensuredCodespaceName = await CodeManager.EnsureHealthyCodespace(currentToken, $"{currentToken.Owner}/{currentToken.Repo}", cancellationToken); 
+                        } 
+                        catch (OperationCanceledException) { AnsiConsole.MarkupLine("\n[yellow]Codespace ensure cancelled.[/]"); throw; } 
+                        catch (Exception csEx) { AnsiConsole.MarkupLine($"\n[red]ERROR ENSURING CODESPACE[/]"); AnsiConsole.WriteException(csEx); consecutiveErrors++; AnsiConsole.MarkupLine($"\n[yellow]Errors: {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS}. Retrying after delay...[/]"); try { await Task.Delay(ErrorRetryDelay, cancellationToken); } catch (OperationCanceledException) { throw; } continue; } 
+
+                        cancellationToken.ThrowIfCancellationRequested();
+                        bool isNewOrRecreated = currentState.ActiveCodespaceName != ensuredCodespaceName;
+                        currentState.ActiveCodespaceName = ensuredCodespaceName; TokenManager.SaveState(currentState); activeCodespace = ensuredCodespaceName;
+                        if (isNewOrRecreated) AnsiConsole.MarkupLine($"[green]✓ New/Recreated: {activeCodespace.EscapeMarkup()}[/]"); else AnsiConsole.MarkupLine($"[green]✓ Reusing: {activeCodespace.EscapeMarkup()}[/]");
+                        consecutiveErrors = 0;
+
+                        AnsiConsole.MarkupLine($"\n[yellow]Sleeping for {KeepAliveInterval.TotalHours:F1} hours...[/]");
+                        try { await Task.Delay(KeepAliveInterval, cancellationToken); } catch (OperationCanceledException) { throw; }
+
+                        cancellationToken.ThrowIfCancellationRequested(); currentState = TokenManager.GetState(); activeCodespace = currentState.ActiveCodespaceName;
+                        if (string.IsNullOrEmpty(activeCodespace)) { AnsiConsole.MarkupLine("[yellow]No active codespace after sleep. Restarting cycle.[/]"); continue; }
                         
-                        var billingInfo = await BillingService.GetBillingInfo(currentToken);
-                        linkedCtsMenuToken.ThrowIfCancellationRequested();
-                        
-                        if (!billingInfo.IsQuotaOk)
-                        {
-                            panel.Content = $"[red]✗ KUOTA HABIS. Cek billing manual.[/]\n[dim]Error: {billingInfo.Error?.EscapeMarkup() ?? "Unknown"}[/]";
-                            return;
+                        // === PERBAIKAN: Ganti logic Keep-Alive ===
+                        // Kita nggak perlu 'CheckHealth' lagi. Kita cuma perlu 'Trigger'
+                        AnsiConsole.MarkupLine("\n[yellow]Performing Keep-Alive trigger...[/]");
+                        try { 
+                            // Kita panggil fungsi 'fire-and-forget' yang lama
+                            await CodeManager.TriggerStartupScript(currentToken, activeCodespace); 
+                            AnsiConsole.MarkupLine("[green]Keep-alive triggered.[/]"); 
+                        } 
+                        catch (Exception trigEx) { 
+                            // Kalo trigger gagal (koneksi putus), kita anggap codespace-nya mati
+                            AnsiConsole.MarkupLine($"[yellow]Keep-alive trigger failed: {trigEx.Message.Split('\n').FirstOrDefault()?.EscapeMarkup()}. Resetting state...[/]"); 
+                            currentState.ActiveCodespaceName = null; 
+                            TokenManager.SaveState(currentState); 
+                            continue; // Biar loop berikutnya bikin ulang
                         }
-                        panel.Content = $"[green]✓[/] Billing OK. Sisa ~{billingInfo.HoursRemaining:F1} jam.";
-                        ctx.Refresh();
-
-                        await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 3/7: Finding Active Codespace").SetStyle(Style.Parse("cyan bold"));
-                        panel.Content = "[yellow]Mencari codespace 'AutomationHubRunner' yang aktif...[/]";
-                        ctx.Refresh();
-                        string? activeCodespace = await CodeManager.FindActiveCodespaceAsync(currentToken, linkedCtsMenuToken);
-
-                        if (string.IsNullOrEmpty(activeCodespace))
-                        {
-                            panel.Content = "[yellow]Codespace aktif tidak ditemukan.[/]";
-                            ctx.Refresh();
-                            if (!AnsiConsole.Confirm("[bold yellow]Buat codespace baru?[/]", true)) return;
-                            
-                            panel.Content = "[cyan]Membuat codespace baru... (Bisa 2-3 menit)[/]";
-                            ctx.Refresh();
-                            activeCodespace = await CodeManager.CreateCodespaceAsync(currentToken, linkedCtsMenuToken);
-                            
-                            panel.Content = $"[green]✓[/] Codespace baru [blue]{activeCodespace.EscapeMarkup()}[/] dibuat. Menunggu SSH ready...";
-                            ctx.Refresh();
-                            await CodeHealth.WaitForSshReadyWithRetry(currentToken, activeCodespace, linkedCtsMenuToken, useFastPolling: false);
-                            isNewCodespace = true;
-                        }
-                        else
-                        {
-                            panel.Content = $"[green]✓[/] Codespace ditemukan: [blue]{activeCodespace.EscapeMarkup()}[/]. Menghidupkan via SSH...";
-                            ctx.Refresh();
-                            await CodeHealth.WaitForSshReadyWithRetry(currentToken, activeCodespace, linkedCtsMenuToken, useFastPolling: false);
-                            isNewCodespace = false;
-                        }
-                        
-                        TokenManager.SetState(activeCodespace);
-                        panel.Content = $"[green]✓[/] Menggunakan codespace: [blue]{activeCodespace.EscapeMarkup()}[/]";
-                        ctx.Refresh();
-                        linkedCtsMenuToken.ThrowIfCancellationRequested();
-
-                        await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 4/7: Uploading Bot Repos").SetStyle(Style.Parse("cyan bold"));
-                        panel.Content = "[cyan]Memulai proses upload direktori bot...[/]";
-                        ctx.Refresh();
-                        await CodeUpload.RunUploadsAsync(currentToken, activeCodespace, linkedCtsMenuToken);
-                        panel.Content = "[green]✓[/] Proses upload direktori bot selesai.";
-                        ctx.Refresh();
-                        linkedCtsMenuToken.ThrowIfCancellationRequested();
-
-                        await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 5/7: Syncing Secrets").SetStyle(Style.Parse("cyan bold"));
-                        panel.Content = "[cyan]Mengambil dan mengatur secrets...[/]";
-                        ctx.Refresh();
-                        await SecretService.SetAllSecretsAsync(currentToken, activeCodespace, linkedCtsMenuToken);
-                        panel.Content = "[green]✓[/] Secrets berhasil disinkronkan.";
-                        ctx.Refresh();
-                        linkedCtsMenuToken.ThrowIfCancellationRequested();
-
-                        await Task.Delay(250, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("Step 6/7: Triggering Remote Setup & Bot Launcher").SetStyle(Style.Parse("cyan bold"));
-                        panel.Content = "[cyan]Menjalankan auto-start.sh di codespace...[/]";
-                        ctx.Refresh();
-                        bool startupSuccess = await CodeActions.RunStartupScriptAndStreamLogs(currentToken, activeCodespace, isNewCodespace, linkedCtsMenuToken);
-                        
-                        if (startupSuccess)
-                        {
-                            panel.Content = "[green]✓[/] Startup script selesai.";
-                        }
-                        else
-                        {
-                            panel.Content = "[red]✗[/] Startup script failed. Check logs.";
-                        }
-                        ctx.Refresh();
-                        linkedCtsMenuToken.ThrowIfCancellationRequested();
-
-                        await Task.Delay(500, linkedCtsMenuToken);
-                        panel.Header = new PanelHeader("✓ Loop Setup Selesai").SetStyle(Style.Parse("green bold"));
-                        panel.Padding = new Padding(2, 1);
-                        panel.Content = $"[green]Setup untuk [blue]{activeCodespace.EscapeMarkup()}[/] selesai.[/]\nLoop akan masuk mode monitoring (idle).";
-                        ctx.Refresh();
-
-                        _lastRun = DateTime.Now;
-                        _firstRun = false;
+                        // === AKHIR PERBAIKAN ===
                     }
-                    catch (OperationCanceledException)
-                    {
-                        AnsiConsole.MarkupLine("\n[yellow]Operasi loop dibatalkan (Ctrl+C).[/]");
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { 
+                        AnsiConsole.MarkupLine("\n[yellow]Orchestrator loop cancellation requested.[/]"); 
+                        break; // Keluar dari while loop
+                    } 
+                    catch (Exception ex) { 
+                        consecutiveErrors++; AnsiConsole.MarkupLine("\n[bold red]UNEXPECTED LOOP ERROR[/]"); AnsiConsole.WriteException(ex);
+                        if (cancellationToken.IsCancellationRequested) break; 
+                        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                            AnsiConsole.MarkupLine($"\n[bold red]CRITICAL: {MAX_CONSECUTIVE_ERRORS} errors! Emergency recovery...[/]");
+                            if (!string.IsNullOrEmpty(currentState.ActiveCodespaceName)) { try { await CodeManager.DeleteCodespace(currentToken, currentState.ActiveCodespaceName); } catch {} } 
+                            currentState.ActiveCodespaceName = null; TokenManager.SaveState(currentState); currentToken = TokenManager.SwitchToNextToken(); consecutiveErrors = 0;
+                            AnsiConsole.MarkupLine($"[cyan]Recovery: Switched token. Waiting 30s...[/]");
+                            try { await Task.Delay(30000, cancellationToken); } catch (OperationCanceledException) { break; } 
+                        } else {
+                            AnsiConsole.MarkupLine($"[yellow]Retrying loop in {ErrorRetryDelay.TotalMinutes} min... (Error {consecutiveErrors}/{MAX_CONSECUTIVE_ERRORS})[/]");
+                            try { await Task.Delay(ErrorRetryDelay, cancellationToken); } catch (OperationCanceledException) { break; } 
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        panel.Header = new PanelHeader("ERROR").SetStyle(Style.Parse("red bold"));
-                        panel.Content = $"[red]Loop gagal: {ex.Message.EscapeMarkup()}[/]\nLihat log untuk detail.";
-                        AnsiConsole.WriteException(ex);
-                    }
-                });
-
-            if (_lastRun == DateTime.MinValue) return; 
-
-            while (!linkedCtsMenuToken.IsCancellationRequested)
+                } // End while loop
+            }
+            finally
             {
-                await Task.Delay(1000, linkedCtsMenuToken);
+                Program.SetLoopActive(false); 
+                AnsiConsole.MarkupLine("\n[cyan]Orchestrator Loop Stopped.[/]");
             }
         }
     }
