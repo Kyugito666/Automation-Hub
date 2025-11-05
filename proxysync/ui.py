@@ -212,7 +212,7 @@ def run_concurrent_checks_display(proxies, check_function, max_workers, fail_fil
     )
     
     with Live(progress, console=console, refresh_per_second=10):
-        task = progress.add_task("[cyan]Testing proxies via GitHub API...", total=len(proxies))
+        task = progress.add_task("[cyan]Testing proxies...", total=len(proxies)) # Deskripsi diubah
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_proxy = {executor.submit(check_function, p): p for p in proxies}
