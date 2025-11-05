@@ -1,92 +1,110 @@
-using System;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text.Json;
 using Spectre.Console;
+using System;
+using System.Linq; // Tambahkan
 
 namespace Orchestrator.Core
 {
+    // Model untuk menyimpan satu langkah interaksi
     public class ExpectStep
     {
+        [JsonPropertyName("expect")]
         public string Expect { get; set; } = string.Empty;
+
+        [JsonPropertyName("send")]
         public string Send { get; set; } = string.Empty;
     }
 
     public static class ExpectManager
     {
-        private const string SCRIPT_FILE_NAME = "expect_script.json";
-        private static readonly string _configDir = Path.Combine(AppContext.BaseDirectory, "config");
-
-        private static string GetScriptPath(string botPath)
+        private const string EXPECT_FILENAME = "autostart.json";
+        
+        private static readonly string ProjectRoot = GetProjectRoot();
+        
+        private static string GetProjectRoot()
         {
-            string botDirName = Path.GetFileName(botPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            return Path.Combine(_configDir, "expect_scripts", $"{botDirName}_{SCRIPT_FILE_NAME}");
-        }
-
-        public static bool CheckExpectScriptExists(string botPath)
-        {
-            return File.Exists(GetScriptPath(botPath));
-        }
-
-        public static List<ExpectStep>? LoadExpectScript(string botPath)
-        {
-            string filePath = GetScriptPath(botPath);
-            if (!File.Exists(filePath))
+            var currentDir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (currentDir != null)
             {
-                return null;
+                var configDir = Path.Combine(currentDir.FullName, "config");
+                var gitignore = Path.Combine(currentDir.FullName, ".gitignore");
+                
+                if (Directory.Exists(configDir) && File.Exists(gitignore))
+                {
+                    return currentDir.FullName;
+                }
+                currentDir = currentDir.Parent;
             }
-
-            try
-            {
-                string json = File.ReadAllText(filePath);
-                return JsonSerializer.Deserialize<List<ExpectStep>>(json);
-            }
-            catch (Exception ex)
-            {
-                AnsiConsole.MarkupLine($"[red]Error loading expect script {filePath}: {ex.Message.EscapeMarkup()}[/]");
-                return null;
-            }
+            return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory!, "..", "..", "..", ".."));
         }
 
         public static void SaveExpectScript(string botPath, List<ExpectStep> script)
         {
-            string filePath = GetScriptPath(botPath);
             try
             {
-                string dir = Path.GetDirectoryName(filePath) ?? throw new DirectoryNotFoundException("Could not get directory for expect script.");
-                Directory.CreateDirectory(dir);
+                var fullLocalPath = BotConfig.GetLocalBotPath(botPath);
+                var filePath = Path.Combine(fullLocalPath, EXPECT_FILENAME);
                 
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string json = JsonSerializer.Serialize(script, options);
+                // Pastikan folder ada
+                if (!Directory.Exists(fullLocalPath)) Directory.CreateDirectory(fullLocalPath);
+                
+                var json = JsonSerializer.Serialize(script, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(filePath, json);
-                AnsiConsole.MarkupLine($"[green]✓ Script setup disimpan ke {filePath.EscapeMarkup()}[/]");
+                AnsiConsole.MarkupLine($"\n[green]✓ Setup interaktif berhasil direkam ke '{Path.GetFileName(filePath)}'[/green]");
+                AnsiConsole.MarkupLine("[dim]   Bot akan otomatis menggunakan script ini untuk Autostart (di Codespace).[/dim]");
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]Error saving expect script {filePath}: {ex.Message.EscapeMarkup()}[/]");
+                AnsiConsole.MarkupLine($"[red]✗ Gagal menyimpan script expect: {ex.Message.EscapeMarkup()}[/]");
             }
         }
 
-        public static void DeleteExpectScript(string botPath)
+        public static List<ExpectStep>? LoadExpectScript(string botPath)
         {
-            string filePath = GetScriptPath(botPath);
-            try
+             try
             {
-                if (File.Exists(filePath))
-                {
-                    File.Delete(filePath);
-                    AnsiConsole.MarkupLine($"[green]✓ Script {filePath.EscapeMarkup()} dihapus.[/]");
-                }
-                else
-                {
-                    AnsiConsole.MarkupLine($"[yellow]Script {filePath.EscapeMarkup()} tidak ditemukan.[/]");
-                }
+                var fullLocalPath = BotConfig.GetLocalBotPath(botPath);
+                var filePath = Path.Combine(fullLocalPath, EXPECT_FILENAME);
+
+                if (!File.Exists(filePath)) return null;
+
+                var json = File.ReadAllText(filePath);
+                return JsonSerializer.Deserialize<List<ExpectStep>>(json);
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]Error deleting expect script {filePath}: {ex.Message.EscapeMarkup()}[/]");
+                AnsiConsole.MarkupLine($"[red]✗ Gagal memuat script expect: {ex.Message.EscapeMarkup()}[/]");
+                return null;
             }
+        }
+
+        public static bool CheckExpectScriptExists(string botPath)
+        {
+            var filePath = Path.Combine(BotConfig.GetLocalBotPath(botPath), EXPECT_FILENAME);
+            return File.Exists(filePath);
+        }
+        
+        public static bool DeleteExpectScript(string botPath)
+        {
+             try
+             {
+                var filePath = Path.Combine(BotConfig.GetLocalBotPath(botPath), EXPECT_FILENAME);
+                if (File.Exists(filePath))
+                {
+                    File.Delete(filePath);
+                    AnsiConsole.MarkupLine($"[green]✓ Script expect di {botPath} berhasil dihapus.[/]");
+                    return true;
+                }
+                return false;
+             }
+             catch (Exception ex)
+             {
+                AnsiConsole.MarkupLine($"[red]✗ Gagal menghapus script expect: {ex.Message.EscapeMarkup()}[/]");
+                return false;
+             }
         }
     }
 }
